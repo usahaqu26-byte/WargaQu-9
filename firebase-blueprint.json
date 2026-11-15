@@ -1,0 +1,239 @@
+{
+  "entities": {
+    "AccountRegistry": {
+      "title": "AccountRegistry",
+      "description": "Lightweight hybrid citizen metadata and module usage summary (~0.5-1 KB per account).",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID owning this account metadata."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160,
+          "description": "Verified account email."
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Display name shown in Admin governance view."
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Citizen WhatsApp or phone number."
+        },
+        "deviceMask": {
+          "type": "string",
+          "maxLength": 48,
+          "description": "Masked device fingerprint."
+        },
+        "activeModules": {
+          "type": "array",
+          "description": "Bounded list (max 8) of active WargaQu module IDs used on this account."
+        },
+        "trahNames": {
+          "type": "array",
+          "description": "Bounded list (max 15) of Trah names joined by this account."
+        },
+        "communityNames": {
+          "type": "array",
+          "description": "Bounded list (max 15) of RT/Paguyuban names joined by this account."
+        },
+        "activeScreen": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Last active module screen."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when account metadata was created."
+        },
+        "lastSeenAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest login or module activity."
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "displayName",
+        "phone",
+        "deviceMask",
+        "activeModules",
+        "trahNames",
+        "communityNames",
+        "activeScreen",
+        "createdAt",
+        "lastSeenAt"
+      ]
+    },
+    "AccountPolicy": {
+      "title": "AccountPolicy",
+      "description": "Admin moderation and VIP Free access override for a specific account.",
+      "type": "object",
+      "properties": {
+        "targetEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160,
+          "description": "Normalized lowercase target account email."
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Optional target phone number."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["normal", "free", "warning", "banned"],
+          "description": "Account access status enforced across devices."
+        },
+        "freeModules": {
+          "type": "array",
+          "description": "Bounded list (max 6) of monetizable module IDs granted free when allModulesFree is false."
+        },
+        "allModulesFree": {
+          "type": "boolean",
+          "description": "True if all monetizable modules are free for this account."
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Moderation warning or ban reason shown to user."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when policy was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when policy was updated."
+        },
+        "updatedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Admin UID who modified this policy."
+        }
+      },
+      "required": [
+        "targetEmail",
+        "phone",
+        "status",
+        "freeModules",
+        "allModulesFree",
+        "note",
+        "createdAt",
+        "updatedAt",
+        "updatedByUid"
+      ]
+    },
+    "GovernanceConfig": {
+      "title": "GovernanceConfig",
+      "description": "Shared non-PII community free rules (Trah / RT / Paguyuban).",
+      "type": "object",
+      "properties": {
+        "communityFreeRules": {
+          "type": "array",
+          "description": "Bounded list (max 50) of community free modular rules."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest update."
+        },
+        "updatedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Admin UID who updated governance config."
+        }
+      },
+      "required": ["communityFreeRules", "updatedAt", "updatedByUid"]
+    },
+    "MonetizationConfig": {
+      "title": "MonetizationConfig",
+      "description": "Shared non-PII modular monetization toggles and fee configuration.",
+      "type": "object",
+      "properties": {
+        "rules": {
+          "type": "array",
+          "description": "Bounded list (max 10) of module monetization rules."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest update."
+        },
+        "updatedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Admin UID who updated monetization config."
+        }
+      },
+      "required": ["rules", "updatedAt", "updatedByUid"]
+    },
+    "AdminMarker": {
+      "title": "AdminMarker",
+      "description": "Admin role assignment document keyed by Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Admin Firebase Auth UID."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160,
+          "description": "Verified admin email."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["super_admin"],
+          "description": "Role label."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin marker was created."
+        }
+      },
+      "required": ["uid", "email", "role", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/accountRegistry/{uid}": {
+      "schema": { "$ref": "#/entities/AccountRegistry" },
+      "description": "Lightweight account metadata & module activity per authenticated citizen."
+    },
+    "/accountPolicies/{policyId}": {
+      "schema": { "$ref": "#/entities/AccountPolicy" },
+      "description": "Per-account moderation & VIP Free policies managed by Admins."
+    },
+    "/appConfig/governance": {
+      "schema": { "$ref": "#/entities/GovernanceConfig" },
+      "description": "Non-PII community free rules (Trah/RT/Paguyuban) managed by Admins."
+    },
+    "/appConfig/monetization": {
+      "schema": { "$ref": "#/entities/MonetizationConfig" },
+      "description": "Non-PII modular monetization settings managed by Admins."
+    },
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminMarker" },
+      "description": "Admin lookup table by UID."
+    }
+  }
+}

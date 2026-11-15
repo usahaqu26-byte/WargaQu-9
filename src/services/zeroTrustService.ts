@@ -69,6 +69,8 @@ export function maskDeviceFingerprint(deviceId: string): string {
   return `DEV-••••${clean.slice(-4)}`;
 }
 
+const ADMIN_OWNER_EMAILS = ['usahaqu2026@gmail.com', 'usahaqu26@gmail.com'];
+
 const DEFAULT_POLICY: ZeroTrustPolicy = {
   adminEmail: 'usahaqu2026@gmail.com',
   adminPin: '202600',
@@ -117,11 +119,25 @@ export const ZeroTrustService = {
     return next;
   },
 
+  isAdminEmail(email?: string): boolean {
+    const clean = (email || '').trim().toLowerCase();
+    if (!clean) return false;
+    const policyAdmin = this.getPolicy().adminEmail.trim().toLowerCase();
+    return ADMIN_OWNER_EMAILS.includes(clean) || (Boolean(policyAdmin) && clean === policyAdmin);
+  },
+
+  isCurrentUserAdminAccount(): boolean {
+    const acc = AuthService.getAccount();
+    return this.isAdminEmail(acc?.email);
+  },
+
   isAdminSessionActive(): boolean {
     try {
+      if (!this.isCurrentUserAdminAccount()) return false;
       const raw = sessionStorage.getItem(ADMIN_SESSION_KEY);
       if (!raw) return false;
       const parsed = JSON.parse(raw) as { verifiedAt: number; email: string };
+      if (!this.isAdminEmail(parsed.email)) return false;
       const policy = this.getPolicy();
       const elapsedMin = (Date.now() - parsed.verifiedAt) / 60000;
       if (elapsedMin > policy.autoLockMinutes) {
@@ -154,7 +170,7 @@ export const ZeroTrustService = {
       };
     }
 
-    if (!cleanEmail || cleanEmail !== policy.adminEmail.toLowerCase()) {
+    if (!this.isCurrentUserAdminAccount() || !cleanEmail || !this.isAdminEmail(cleanEmail)) {
       this.appendAudit(
         cleanEmail || 'Tamu',
         'Percobaan Akses Admin Ditolak',
@@ -163,7 +179,7 @@ export const ZeroTrustService = {
       );
       return {
         ok: false,
-        message: `Email tidak terdaftar sebagai Admin Zero Trust (${policy.adminEmail}).`,
+        message: 'Akses ditolak: Email tidak terdaftar sebagai Admin.',
       };
     }
 

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Mail, Phone, ShieldCheck, X, KeyRound, Smartphone, AlertTriangle } from 'lucide-react';
+import { Mail, Phone, ShieldCheck, X, KeyRound, Smartphone, AlertTriangle, Cloud } from 'lucide-react';
 import { AuthAccount, AuthService } from '../../services/authService';
 import { RtSiagaStorage } from '../../services/rtSiagaStorage';
 import { ZeroTrustService } from '../../services/zeroTrustService';
+import { FirebaseSyncService } from '../../services/firebaseSyncService';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -27,6 +28,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [recoveryCode, setRecoveryCode] = useState<string>('');
   const [guardianContact, setGuardianContact] = useState<string>('');
   const [recoveryNote, setRecoveryNote] = useState<string>('');
+  const [googleLoading, setGoogleLoading] = useState<boolean>(false);
 
   if (!isOpen) return null;
 
@@ -58,6 +60,33 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     ZeroTrustService.registerOrTouchCurrentDevice(account.email, account.phone);
     showNotification(`Masuk sebagai ${account.email}`);
     onSuccess(account);
+  };
+
+  const handleGoogleLogin = async () => {
+    if (isCurrentFrozen) {
+      showNotification(
+        'Perangkat ini dibekukan (status HP Hilang). Hubungi pengurus atau Admin untuk membuka blokir.'
+      );
+      return;
+    }
+    setGoogleLoading(true);
+    try {
+      const user = await FirebaseSyncService.signInWithGoogle(phone);
+      const acc = AuthService.getAccount();
+      if (acc) {
+        RtSiagaStorage.syncAuthAccount(acc);
+        ZeroTrustService.registerOrTouchCurrentDevice(acc.email, acc.phone);
+        onSuccess(acc);
+      }
+      showNotification(`Terhubung Google Cloud: ${user.email || 'Berhasil'}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (!msg.includes('popup-closed-by-user')) {
+        showNotification('Gagal masuk dengan Google. Coba lagi atau gunakan form manual.');
+      }
+    } finally {
+      setGoogleLoading(false);
+    }
   };
 
   const handleRecoverSubmit = (e: React.FormEvent) => {
@@ -150,6 +179,24 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 {reasonMessage}
               </div>
             )}
+
+            <button
+              type="button"
+              onClick={handleGoogleLogin}
+              disabled={googleLoading}
+              className="w-full min-h-[44px] border border-slate-300 bg-white hover:bg-slate-50 text-slate-900 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition disabled:opacity-60"
+            >
+              <Cloud className="w-4 h-4 text-emerald-700" />
+              <span>
+                {googleLoading ? 'Menghubungkan Google...' : 'Masuk dengan Google (Sync Cloud)'}
+              </span>
+            </button>
+
+            <div className="flex items-center gap-2 text-[10px] text-slate-400">
+              <div className="h-px flex-1 bg-slate-200" />
+              <span>atau isi manual (mode lokal)</span>
+              <div className="h-px flex-1 bg-slate-200" />
+            </div>
 
             <div>
               <label className="font-bold text-slate-700 block mb-1">Email</label>

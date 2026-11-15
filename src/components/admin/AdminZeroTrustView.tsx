@@ -44,7 +44,12 @@ import { SmartCareAdminTriagePanel } from '../bantuan/SmartCareAdminTriagePanel'
 import {
   ACCOUNT_GOV_SYNC_EVENT,
   AccountGovernanceService,
+  GovernanceModuleId,
 } from '../../services/accountGovernanceService';
+import {
+  FIREBASE_AUTH_SYNC_EVENT,
+  FirebaseSyncService,
+} from '../../services/firebaseSyncService';
 import { AccountGovernancePanel } from './AccountGovernancePanel';
 
 interface AdminZeroTrustViewProps {
@@ -101,6 +106,11 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
     () => SmartCareService.getLogs().filter(l => l.triageStatus === 'new').length
   );
   const [govTick, setGovTick] = useState<number>(0);
+  const [selectedModuleFilter, setSelectedModuleFilter] = useState<GovernanceModuleId | 'all'>('all');
+  const [cloudAdminConnected, setCloudAdminConnected] = useState<boolean>(() =>
+    FirebaseSyncService.isCloudAdmin()
+  );
+  const [connectingCloudAdmin, setConnectingCloudAdmin] = useState<boolean>(false);
 
   // Local editing states
   const [settlementRefInput, setSettlementRefInput] = useState<string>('');
@@ -124,24 +134,30 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
         SmartCareService.getLogs().filter(l => l.triageStatus === 'new').length
       );
       setGovTick(t => t + 1);
+      setCloudAdminConnected(FirebaseSyncService.isCloudAdmin());
     };
     window.addEventListener(ZERO_TRUST_SYNC_EVENT, refreshAll);
     window.addEventListener(MONETIZATION_SYNC_EVENT, refreshAll);
     window.addEventListener(SMART_CARE_SYNC_EVENT, refreshAll);
     window.addEventListener(ACCOUNT_GOV_SYNC_EVENT, refreshAll);
+    window.addEventListener(FIREBASE_AUTH_SYNC_EVENT, refreshAll);
     return () => {
       window.removeEventListener(ZERO_TRUST_SYNC_EVENT, refreshAll);
       window.removeEventListener(MONETIZATION_SYNC_EVENT, refreshAll);
       window.removeEventListener(SMART_CARE_SYNC_EVENT, refreshAll);
       window.removeEventListener(ACCOUNT_GOV_SYNC_EVENT, refreshAll);
+      window.removeEventListener(FIREBASE_AUTH_SYNC_EVENT, refreshAll);
     };
   }, []);
 
   useEffect(() => {
     if (isUnlocked) {
       AccountGovernanceService.fetchVolatileServerPresence().catch(() => {});
+      if (cloudAdminConnected) {
+        FirebaseSyncService.fetchAdminCloudSnapshot().catch(() => {});
+      }
     }
-  }, [isUnlocked]);
+  }, [isUnlocked, cloudAdminConnected]);
 
   const summary = useMemo(() => MonetizationService.getSummary(), [ledger, rules]);
   const rtMembers = useMemo(() => RtSiagaStorage.getMembers(), [isUnlocked]);
@@ -153,6 +169,10 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
   );
   const moduleAccountStats = useMemo(
     () => AccountGovernanceService.getModuleAccountStats(),
+    [knownAccounts]
+  );
+  const healthMetrics = useMemo(
+    () => AccountGovernanceService.getAccountHealthMetrics(),
     [knownAccounts]
   );
 
@@ -231,6 +251,47 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
   };
 
   // ===========================================================================
+  // NON-ADMIN HARD GUARD
+  // ===========================================================================
+  if (!ZeroTrustService.isCurrentUserAdminAccount()) {
+    return (
+      <div className="w-full h-full bg-white text-slate-900 flex flex-col overflow-hidden">
+        <header className="px-4 pt-4 pb-3 border-b border-slate-200 flex items-center gap-2 shrink-0">
+          <button
+            onClick={onBack}
+            className="w-10 h-10 -ml-1 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-700"
+            aria-label="Kembali"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <div>
+            <h1 className="text-sm font-extrabold text-slate-900">Akses Terbatas</h1>
+            <p className="text-[11px] text-slate-500">Hanya tersedia untuk akun Admin terdaftar</p>
+          </div>
+        </header>
+        <main className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-3">
+          <div className="w-12 h-12 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center">
+            <Lock className="w-6 h-6 text-slate-500" />
+          </div>
+          <div className="text-sm font-bold text-slate-900">
+            Panel Admin Hanya untuk Akun Super Admin
+          </div>
+          <p className="text-xs text-slate-500 max-w-xs leading-relaxed">
+            Halaman ini disembunyikan dari akun warga biasa dan tamu. Silakan kembali ke beranda WargaQu.
+          </p>
+          <button
+            type="button"
+            onClick={onBack}
+            className="min-h-[40px] px-4 bg-slate-900 text-white rounded-xl text-xs font-bold"
+          >
+            Kembali ke Beranda
+          </button>
+        </main>
+      </div>
+    );
+  }
+
+  // ===========================================================================
   // ZERO TRUST GATE SCREEN
   // ===========================================================================
   if (!isUnlocked) {
@@ -292,9 +353,6 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
                   placeholder="Masukkan PIN Admin"
                   className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 text-white font-mono tracking-widest focus:outline-none focus:border-emerald-500"
                 />
-                <p className="text-[11px] text-slate-500 mt-1">
-                  PIN bawaan demo: <span className="font-mono text-slate-300">202600</span> (ubah di tab Zero Trust).
-                </p>
               </div>
 
               {challengeError && (
@@ -471,6 +529,99 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
               </div>
             </section>
 
+            {/* Efektivitas & Kesehatan Akun */}
+            <section className="p-4 space-y-2.5 bg-white">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-xs font-extrabold text-slate-900">
+                    Efektivitas &amp; Kesehatan Akun
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Segmentasi akun terverifikasi, keaktifan harian, dan retensi multi-modul
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedModuleFilter('all');
+                    setActiveTab('akun_modul');
+                  }}
+                  className="min-h-[30px] px-2.5 border border-slate-300 hover:bg-slate-50 text-slate-800 rounded-lg text-[10px] font-bold shrink-0"
+                >
+                  Kelola Akun →
+                </button>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div className="border border-slate-200 rounded-xl p-2.5">
+                  <div className="text-[10px] text-slate-500">Terverifikasi vs Tamu</div>
+                  <div className="text-sm font-extrabold text-slate-900 font-mono tabular-nums mt-0.5">
+                    {healthMetrics.verifiedCount}{' '}
+                    <span className="text-xs font-semibold text-slate-400">
+                      / {healthMetrics.guestCount} tamu
+                    </span>
+                  </div>
+                </div>
+                <div className="border border-slate-200 rounded-xl p-2.5">
+                  <div className="text-[10px] text-slate-500">Aktif 24j / 7 Hari</div>
+                  <div className="text-sm font-extrabold text-emerald-700 font-mono tabular-nums mt-0.5">
+                    {healthMetrics.active24hCount}{' '}
+                    <span className="text-xs font-semibold text-slate-400">
+                      / {healthMetrics.active7dCount}
+                    </span>
+                  </div>
+                </div>
+                <div className="border border-slate-200 rounded-xl p-2.5">
+                  <div className="text-[10px] text-slate-500">Pasif &gt;7h / Multi-Modul</div>
+                  <div className="text-sm font-extrabold text-amber-700 font-mono tabular-nums mt-0.5">
+                    {healthMetrics.dormantCount}{' '}
+                    <span className="text-xs font-semibold text-indigo-700">
+                      / {healthMetrics.multiModuleCount} multi
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 text-[10px] bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 leading-relaxed">
+                <span className="text-slate-600">
+                  {cloudAdminConnected ? (
+                    <>
+                      <strong className="text-emerald-700">Firestore Cloud Aktif:</strong> Statistik
+                      akun &amp; kebijakan tersimpan permanen secara ringan (~0,5 KB/akun).
+                    </>
+                  ) : (
+                    <>
+                      <strong className="text-amber-700">Cloud Belum Terhubung:</strong> Hubungkan
+                      Google Admin agar data akun tersimpan permanen di Firestore.
+                    </>
+                  )}
+                </span>
+                {!cloudAdminConnected && (
+                  <button
+                    type="button"
+                    disabled={connectingCloudAdmin}
+                    onClick={async () => {
+                      setConnectingCloudAdmin(true);
+                      try {
+                        await FirebaseSyncService.signInWithGoogle();
+                        const res = await FirebaseSyncService.fetchAdminCloudSnapshot();
+                        showNotification(
+                          `Cloud Admin aktif (${res.accountsCount} akun, ${res.policiesCount} kebijakan).`
+                        );
+                      } catch {
+                        showNotification('Gagal menghubungkan Google Admin.');
+                      } finally {
+                        setConnectingCloudAdmin(false);
+                      }
+                    }}
+                    className="min-h-[28px] px-2.5 bg-emerald-700 text-white rounded-md font-bold shrink-0 disabled:opacity-60"
+                  >
+                    {connectingCloudAdmin ? '...' : 'Hubungkan Google'}
+                  </button>
+                )}
+              </div>
+            </section>
+
             {/* Per-Module Active/Registered Account Summary */}
             <section className="p-4 space-y-2.5 bg-slate-50/50">
               <div className="flex items-center justify-between gap-2">
@@ -479,13 +630,16 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
                     Akun Terdaftar / Aktif Per Modul
                   </h3>
                   <p className="text-[11px] text-slate-500">
-                    {knownAccounts.length} akun terpantau ·{' '}
-                    {knownAccounts.filter(a => a.isOnlineNow).length} live online
+                    {healthMetrics.totalAccounts} akun terpantau ·{' '}
+                    {healthMetrics.onlineCount} live online (ketuk modul untuk filter)
                   </p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setActiveTab('akun_modul')}
+                  onClick={() => {
+                    setSelectedModuleFilter('all');
+                    setActiveTab('akun_modul');
+                  }}
                   className="min-h-[30px] px-2.5 bg-slate-900 text-white rounded-lg text-[10px] font-bold shrink-0"
                 >
                   Atur Free / Warning / Ban →
@@ -493,9 +647,14 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
               </div>
               <div className="grid grid-cols-2 gap-2">
                 {moduleAccountStats.map(st => (
-                  <div
+                  <button
                     key={st.moduleId}
-                    className="bg-white border border-slate-200 rounded-xl px-3 py-2 flex items-center justify-between gap-1.5"
+                    type="button"
+                    onClick={() => {
+                      setSelectedModuleFilter(st.moduleId);
+                      setActiveTab('akun_modul');
+                    }}
+                    className="bg-white border border-slate-200 hover:border-emerald-400 hover:bg-emerald-50/40 rounded-xl px-3 py-2 flex items-center justify-between gap-1.5 text-left transition"
                   >
                     <span className="text-[11px] font-bold text-slate-800 truncate">
                       {st.label}
@@ -504,7 +663,7 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
                       {st.registeredCount}
                       {st.onlineNowCount > 0 ? ` (${st.onlineNowCount} live)` : ''}
                     </span>
-                  </div>
+                  </button>
                 ))}
               </div>
             </section>
@@ -1219,7 +1378,11 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
 
         {/* TAB: AKUN & AKSES MODULAR (FREE / WARNING / BANNED & KOMUNITAS) */}
         {activeTab === 'akun_modul' && (
-          <AccountGovernancePanel showNotification={showNotification} />
+          <AccountGovernancePanel
+            showNotification={showNotification}
+            initialModuleFilter={selectedModuleFilter}
+            onModuleFilterChange={setSelectedModuleFilter}
+          />
         )}
 
         {/* TAB: SMART CARE LOG & PROMPT TRIAGE */}

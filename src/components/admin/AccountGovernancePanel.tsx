@@ -16,17 +16,33 @@ import {
   ACCOUNT_GOV_SYNC_EVENT,
   AccountGovernanceService,
   AccountModerationStatus,
+  GOVERNANCE_MODULES,
+  GovernanceModuleId,
   KnownAccountSummary,
   MONETIZABLE_MODULE_OPTIONS,
 } from '../../services/accountGovernanceService';
+import { FirebaseSyncService } from '../../services/firebaseSyncService';
 import type { MonetizableModuleId } from '../../services/monetizationService';
+
+type ExtendedAccountFilter =
+  | 'all'
+  | 'online'
+  | 'verified'
+  | 'guest'
+  | 'active_24h'
+  | 'dormant'
+  | AccountModerationStatus;
 
 interface AccountGovernancePanelProps {
   showNotification: (msg: string) => void;
+  initialModuleFilter?: GovernanceModuleId | 'all';
+  onModuleFilterChange?: (mod: GovernanceModuleId | 'all') => void;
 }
 
 export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
   showNotification,
+  initialModuleFilter = 'all',
+  onModuleFilterChange,
 }) => {
   const [, setTick] = useState(0);
   const [connectedClients, setConnectedClients] = useState<number>(0);
@@ -34,7 +50,17 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
 
   // Filters & search
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | AccountModerationStatus>('all');
+  const [statusFilter, setStatusFilter] = useState<ExtendedAccountFilter>('all');
+  const [moduleFilter, setModuleFilter] = useState<GovernanceModuleId | 'all'>(initialModuleFilter);
+
+  useEffect(() => {
+    setModuleFilter(initialModuleFilter);
+  }, [initialModuleFilter]);
+
+  const handleSelectModuleFilter = (nextMod: GovernanceModuleId | 'all') => {
+    setModuleFilter(nextMod);
+    onModuleFilterChange?.(nextMod);
+  };
 
   // Add custom Community Free rule
   const [newCommKind, setNewCommKind] = useState<'trah' | 'rt_paguyuban'>('trah');
@@ -51,13 +77,23 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
 
   const syncFromRelay = async (quiet = false) => {
     setRefreshing(true);
-    const res = await AccountGovernanceService.fetchVolatileServerPresence();
+    const [res, cloudRes] = await Promise.all([
+      AccountGovernanceService.fetchVolatileServerPresence(),
+      FirebaseSyncService.isCloudAdmin()
+        ? FirebaseSyncService.fetchAdminCloudSnapshot().catch(() => ({
+            accountsCount: 0,
+            policiesCount: 0,
+          }))
+        : Promise.resolve({ accountsCount: 0, policiesCount: 0 }),
+    ]);
     setConnectedClients(res.connectedClients);
     setTick(t => t + 1);
     setRefreshing(false);
     if (!quiet) {
       showNotification(
-        `Sinkronisasi live relay selesai (${res.connectedClients} koneksi aktif, ${res.count} presence).`
+        FirebaseSyncService.isCloudAdmin()
+          ? `Sinkronisasi selesai (${cloudRes.accountsCount} akun Cloud, ${res.connectedClients} koneksi live).`
+          : `Sinkronisasi live relay selesai (${res.connectedClients} koneksi aktif, ${res.count} presence).`
       );
     }
   };
@@ -72,15 +108,50 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
   const bundle = AccountGovernanceService.getBundle();
   const accounts = useMemo(() => AccountGovernanceService.getCombinedKnownAccounts(), [bundle, refreshing]);
   const moduleStats = useMemo(() => AccountGovernanceService.getModuleAccountStats(), [accounts]);
+  const healthMetrics = useMemo(() => AccountGovernanceService.getAccountHealthMetrics(), [accounts]);
   const adminWorkspaces = useMemo(() => AccountGovernanceService.getAdminOwnWorkspaces(), []);
 
   const filteredAccounts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
+    const now = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const weekMs = 7 * dayMs;
+
     return accounts.filter(acc => {
+      if (moduleFilter !== 'all' && !acc.activeModules.includes(moduleFilter)) {
+        return false;
+      }
       if (statusFilter === 'online' && !acc.isOnlineNow) return false;
       if (
-        statusFilter !== 'all' &&
-        statusFilter !== 'online' &&
+        statusFilter === 'verified' &&
+        (acc.email === 'tamu@perangkat-lokal' || !acc.email.includes('@'))
+      ) {
+        return false;
+      }
+      if (
+        statusFilter === 'guest' &&
+        acc.email !== 'tamu@perangkat-lokal' &&
+        acc.email.includes('@')
+      ) {
+        return false;
+      }
+      if (
+        statusFilter === 'active_24h' &&
+        now - new Date(acc.lastSeenAt).getTime() > dayMs
+      ) {
+        return false;
+      }
+      if (
+        statusFilter === 'dormant' &&
+        now - new Date(acc.lastSeenAt).getTime() <= weekMs
+      ) {
+        return false;
+      }
+      if (
+        (statusFilter === 'normal' ||
+          statusFilter === 'free' ||
+          statusFilter === 'warning' ||
+          statusFilter === 'banned') &&
         acc.effectiveStatus !== statusFilter
       ) {
         return false;
@@ -99,7 +170,7 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [accounts, searchQuery, statusFilter]);
+  }, [accounts, searchQuery, statusFilter, moduleFilter]);
 
   const maxModuleCount = Math.max(1, ...moduleStats.map(m => m.registeredCount));
   const onlineCount = accounts.filter(a => a.isOnlineNow).length;
@@ -223,8 +294,9 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
               </h2>
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-              Mode Zero-DB: akun yang sedang online di relay RAM, perangkat terikat, dan anggota
-              Trah/RT tercatat otomatis. Pengaturan Free/Warning/Banned disiarkan real-time ke HP warga.
+              {FirebaseSyncService.isCloudAdmin()
+                ? 'Mode Hybrid Firestore: metadata akun & status Free/Warning/Banned tersimpan permanen (~0,5 KB/akun) plus status live relay.'
+                : 'Mode Relay + Lokal: akun online, perangkat terikat, dan anggota Trah/RT tercatat otomatis. Hubungkan Google Admin untuk sync Firestore permanen.'}
             </p>
           </div>
           <button
@@ -270,6 +342,25 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
             <div className="text-[10px] text-slate-500">Diblokir</div>
           </div>
         </div>
+
+        {/* Kesehatan Akun Mini-Bar */}
+        <div className="bg-white border border-slate-200 rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-600">
+          <span>
+            Terverifikasi: <strong className="text-slate-900 font-mono">{healthMetrics.verifiedCount}</strong>
+          </span>
+          <span>
+            Tamu: <strong className="text-slate-900 font-mono">{healthMetrics.guestCount}</strong>
+          </span>
+          <span>
+            Aktif 24j: <strong className="text-emerald-700 font-mono">{healthMetrics.active24hCount}</strong>
+          </span>
+          <span>
+            Pasif &gt;7h: <strong className="text-amber-700 font-mono">{healthMetrics.dormantCount}</strong>
+          </span>
+          <span>
+            Multi-Modul: <strong className="text-indigo-700 font-mono">{healthMetrics.multiModuleCount}</strong>
+          </span>
+        </div>
       </section>
 
       {/* 2. Per-Module Account Breakdown */}
@@ -279,16 +370,27 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
             <Users className="w-3.5 h-3.5 text-slate-700" />
             <span>Akun Terdaftar / Aktif per Modul</span>
           </h3>
-          <span className="text-[10px] text-slate-500 font-mono">8 Modul WargaQu</span>
+          <span className="text-[10px] text-slate-500 font-mono">
+            {moduleFilter === 'all' ? 'Ketuk modul untuk filter' : 'Filter aktif'}
+          </span>
         </div>
 
         <div className="grid grid-cols-1 gap-2">
           {moduleStats.map(mod => {
             const pct = Math.round((mod.registeredCount / maxModuleCount) * 100);
+            const isSelected = moduleFilter === mod.moduleId;
             return (
-              <div
+              <button
                 key={mod.moduleId}
-                className="border border-slate-200 rounded-xl p-2.5 bg-white space-y-1.5"
+                type="button"
+                onClick={() =>
+                  handleSelectModuleFilter(isSelected ? 'all' : mod.moduleId)
+                }
+                className={`w-full text-left border rounded-xl p-2.5 space-y-1.5 transition ${
+                  isSelected
+                    ? 'border-emerald-600 bg-emerald-50/50 ring-1 ring-emerald-500'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
               >
                 <div className="flex items-center justify-between gap-2 text-[11px]">
                   <div className="min-w-0">
@@ -315,11 +417,13 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
                 </div>
                 <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-emerald-600 rounded-full transition-all"
+                    className={`h-full rounded-full transition-all ${
+                      isSelected ? 'bg-emerald-700' : 'bg-emerald-600'
+                    }`}
                     style={{ width: `${mod.registeredCount > 0 ? Math.max(8, pct) : 0}%` }}
                   />
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
@@ -606,10 +710,14 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
               [
                 { id: 'all', label: `Semua (${accounts.length})` },
                 { id: 'online', label: `Online (${onlineCount})` },
+                { id: 'verified', label: `Terverifikasi (${healthMetrics.verifiedCount})` },
+                { id: 'guest', label: `Tamu (${healthMetrics.guestCount})` },
+                { id: 'active_24h', label: `Aktif 24j (${healthMetrics.active24hCount})` },
+                { id: 'dormant', label: `Pasif >7h (${healthMetrics.dormantCount})` },
                 { id: 'free', label: `Free (${freeCount})` },
                 { id: 'warning', label: `Warning (${warningCount})` },
                 { id: 'banned', label: `Banned (${bannedCount})` },
-              ] as Array<{ id: 'all' | 'online' | AccountModerationStatus; label: string }>
+              ] as Array<{ id: ExtendedAccountFilter; label: string }>
             ).map(f => (
               <button
                 key={f.id}
@@ -625,6 +733,22 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
               </button>
             ))}
           </div>
+
+          {moduleFilter !== 'all' && (
+            <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 text-[11px]">
+              <span className="font-bold text-emerald-900">
+                Filter Modul:{' '}
+                {GOVERNANCE_MODULES.find(m => m.id === moduleFilter)?.label || moduleFilter}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleSelectModuleFilter('all')}
+                className="font-bold text-emerald-700 hover:underline text-[10px]"
+              >
+                Tampilkan Semua ×
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Account Cards */}

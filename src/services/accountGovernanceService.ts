@@ -254,7 +254,25 @@ function detectActiveModulesForCurrentDevice(
   return Array.from(mods);
 }
 
+type GovernanceCloudHooks = {
+  onSaveGovernanceConfig?: (rules: CommunityFreeRule[]) => Promise<void> | void;
+  onSaveAccountPolicy?: (params: {
+    email: string;
+    phone?: string;
+    status: AccountModerationStatus;
+    freeModules?: 'all' | MonetizableModuleId[];
+    note?: string;
+  }) => Promise<void> | void;
+  onSyncPresence?: (activeScreen?: string) => Promise<void> | void;
+};
+
+let cloudHooks: GovernanceCloudHooks = {};
+
 export const AccountGovernanceService = {
+  registerCloudHooks(hooks: GovernanceCloudHooks): void {
+    cloudHooks = { ...cloudHooks, ...hooks };
+  },
+
   getBundle(): AccountGovernanceBundle {
     const raw = loadJson<Partial<AccountGovernanceBundle>>(GOV_BUNDLE_KEY, {});
     return {
@@ -273,8 +291,101 @@ export const AccountGovernanceService = {
     emitGovernanceSync(true);
     if (broadcast) {
       RealtimeRelayService.publish('admin:policy', 'admin:account_policies', next);
+      if (typeof fetch !== 'undefined') {
+        void fetch('/api/relay-policy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountPolicies: next }),
+        }).catch(() => {});
+      }
+      if (cloudHooks.onSaveGovernanceConfig) {
+        void Promise.resolve(cloudHooks.onSaveGovernanceConfig(next.communityFreeRules)).catch(
+          () => {}
+        );
+      }
     }
     return next;
+  },
+
+  applyCloudSelfPolicies(email: string, policies: Record<string, AccountPolicyRule>): void {
+    const cleanEmail = normalizeEmail(email);
+    if (!cleanEmail) return;
+    const current = this.getBundle();
+    const nextRules = { ...current.accountRules };
+    if (policies[cleanEmail]) {
+      nextRules[cleanEmail] = policies[cleanEmail];
+    } else {
+      delete nextRules[cleanEmail];
+    }
+    saveJson(GOV_BUNDLE_KEY, {
+      ...current,
+      accountRules: nextRules,
+      updatedAt: new Date().toISOString(),
+    });
+    emitGovernanceSync(true);
+  },
+
+  applyCloudAdminPolicies(policies: Record<string, AccountPolicyRule>): void {
+    const current = this.getBundle();
+    saveJson(GOV_BUNDLE_KEY, {
+      ...current,
+      accountRules: { ...policies },
+      updatedAt: new Date().toISOString(),
+    });
+    emitGovernanceSync(true);
+  },
+
+  applyCloudCommunityRules(communityFreeRules: CommunityFreeRule[], updatedAt?: string): void {
+    if (!Array.isArray(communityFreeRules)) return;
+    const current = this.getBundle();
+    saveJson(GOV_BUNDLE_KEY, {
+      ...current,
+      communityFreeRules,
+      updatedAt: updatedAt || new Date().toISOString(),
+    });
+    emitGovernanceSync(true);
+  },
+
+  ingestCloudRegistryBatch(records: AccountPresenceRecord[]): void {
+    if (!Array.isArray(records) || records.length === 0) return;
+    const current = this.getCachedPresences();
+    const byKey = new Map<string, AccountPresenceRecord>();
+    for (const item of current) {
+      byKey.set(item.accountKey, item);
+    }
+    for (const r of records) {
+      const prev = byKey.get(r.accountKey);
+      const prevTs = prev ? new Date(prev.lastSeenAt).getTime() : 0;
+      const incTs = new Date(r.lastSeenAt).getTime();
+      const mergedMods = Array.from(
+        new Set<GovernanceModuleId>([...(prev?.activeModules || []), ...(r.activeModules || [])])
+      );
+      byKey.set(r.accountKey, {
+        ...(prev || r),
+        ...r,
+        phone: r.phone && r.phone !== '-' ? r.phone : prev?.phone || '-',
+        activeModules: mergedMods,
+        trahList: r.trahList.length > 0 ? r.trahList : prev?.trahList || [],
+        communityList: r.communityList.length > 0 ? r.communityList : prev?.communityList || [],
+        lastSeenAt: prevTs > incTs ? prev!.lastSeenAt : r.lastSeenAt,
+        source: prev?.source === 'online_relay' ? 'online_relay' : 'local_registry',
+      });
+    }
+    saveJson(PRESENCE_CACHE_KEY, Array.from(byKey.values()).slice(0, 500));
+    emitGovernanceSync(false);
+  },
+
+  async syncPolicyFromServer(): Promise<void> {
+    try {
+      const resp = await fetch('/api/relay-policy');
+      if (!resp.ok) return;
+      const data = (await resp.json()) as { accountPolicies?: unknown };
+      if (data?.accountPolicies) {
+        this.applyRemotePolicies(data.accountPolicies);
+      }
+    } catch {
+      // ignore offline
+    }
   },
 
   applyRemotePolicies(remote: unknown): void {
@@ -331,6 +442,10 @@ export const AccountGovernanceService = {
       `${cleanEmail || cleanPhone}${params.note ? ` · ${params.note}` : ''}`,
       params.status === 'banned' ? 'critical' : params.status === 'warning' ? 'warning' : 'info'
     );
+
+    if (cleanEmail && cleanEmail.includes('@') && cloudHooks.onSaveAccountPolicy) {
+      void Promise.resolve(cloudHooks.onSaveAccountPolicy(params)).catch(() => {});
+    }
 
     return this.saveBundle({ ...bundle, accountRules: nextRules }, true);
   },
@@ -536,6 +651,16 @@ export const AccountGovernanceService = {
     const presence = this.collectCurrentUserPresence(activeScreen);
     this.ingestRemotePresence({ ...presence, source: 'online_relay' });
     RealtimeRelayService.publish('admin:policy', 'presence:heartbeat', presence);
+    if (typeof fetch !== 'undefined') {
+      void fetch('/api/relay-presence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...presence, source: 'online_relay' }),
+      }).catch(() => {});
+    }
+    if (cloudHooks.onSyncPresence) {
+      void Promise.resolve(cloudHooks.onSyncPresence(activeScreen)).catch(() => {});
+    }
     return presence;
   },
 
@@ -885,5 +1010,39 @@ export const AccountGovernanceService = {
         freeAccountsCount: matched.filter(a => a.effectiveStatus === 'free').length,
       };
     });
+  },
+
+  getAccountHealthMetrics() {
+    const accounts = this.getCombinedKnownAccounts();
+    const now = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const weekMs = 7 * dayMs;
+
+    const verifiedCount = accounts.filter(
+      a => a.email !== 'tamu@perangkat-lokal' && a.email.includes('@')
+    ).length;
+    const guestCount = accounts.length - verifiedCount;
+    const active24hCount = accounts.filter(
+      a => now - new Date(a.lastSeenAt).getTime() <= dayMs
+    ).length;
+    const active7dCount = accounts.filter(
+      a => now - new Date(a.lastSeenAt).getTime() <= weekMs
+    ).length;
+    const dormantCount = accounts.filter(
+      a => now - new Date(a.lastSeenAt).getTime() > weekMs
+    ).length;
+    const onlineCount = accounts.filter(a => a.isOnlineNow).length;
+    const multiModuleCount = accounts.filter(a => a.activeModules.length >= 2).length;
+
+    return {
+      totalAccounts: accounts.length,
+      verifiedCount,
+      guestCount,
+      active24hCount,
+      active7dCount,
+      dormantCount,
+      onlineCount,
+      multiModuleCount,
+    };
   },
 };

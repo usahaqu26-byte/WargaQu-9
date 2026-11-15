@@ -43,6 +43,7 @@ import {
   RelayIncomingEvent,
   RealtimeRelayService,
 } from './services/realtimeRelayService';
+import { FirebaseSyncService } from './services/firebaseSyncService';
 
 type AppScreen = 'warga' | 'akun' | 'admin_zero_trust' | 'leluhurqu' | 'rtqu' | 'siagaqu' | 'chatqu' | 'muamalahqu' | 'areaqu' | 'usahaqu' | 'modularqu' | 'bantuan' | 'empty_module';
 
@@ -89,20 +90,27 @@ export default function App() {
     const extractInviteFromLocation = () => {
       try {
         const params = new URLSearchParams(window.location.search);
-        const trahVal = params.get('trah');
-        if (trahVal && trahVal.trim()) return `?trah=${trahVal.trim()}`;
-        const fromQuery = params.get('t') || params.get('trahInvite');
-        if (fromQuery && fromQuery.trim()) return fromQuery.trim();
-        const pathMatch = window.location.pathname.match(/^\/trah\/([^/?#]+)/i);
-        if (pathMatch?.[1]) return `?trah=${decodeURIComponent(pathMatch[1]).trim()}`;
         const hash = window.location.hash || '';
         const tIdx = hash.search(/(?:trah|t)=/);
-        if (tIdx !== -1) {
-          const hp = new URLSearchParams(hash.slice(tIdx));
-          if (hp.get('trah')?.trim()) return `?trah=${hp.get('trah')!.trim()}`;
-          const fromHash = hp.get('t') || hp.get('trahInvite');
-          if (fromHash && fromHash.trim()) return fromHash.trim();
+        const hp = tIdx !== -1 ? new URLSearchParams(hash.slice(tIdx)) : null;
+
+        const trahVal = (params.get('trah') || hp?.get('trah') || '').trim();
+        const fromQuery = (
+          params.get('t') ||
+          params.get('trahInvite') ||
+          hp?.get('t') ||
+          hp?.get('trahInvite') ||
+          ''
+        ).trim();
+
+        if (trahVal && fromQuery) {
+          return `?trah=${encodeURIComponent(trahVal)}&t=${encodeURIComponent(fromQuery)}`;
         }
+        if (trahVal) return `?trah=${encodeURIComponent(trahVal)}`;
+        if (fromQuery) return fromQuery;
+
+        const pathMatch = window.location.pathname.match(/\/trah\/([^/?#]+)/i);
+        if (pathMatch?.[1]) return `?trah=${encodeURIComponent(decodeURIComponent(pathMatch[1]).trim())}`;
       } catch {
         // ignore URL errors
       }
@@ -121,7 +129,7 @@ export default function App() {
           const v = rtVal.trim();
           return v.startsWith('WQR') || /^R[A-Za-z0-9]{5,12}$/.test(v) ? v : `?rt=${v}`;
         }
-        const pathMatch = window.location.pathname.match(/^\/(rt|paguyuban|grup)\/([^/?#]+)/i);
+        const pathMatch = window.location.pathname.match(/\/(rt|paguyuban|grup)\/([^/?#]+)/i);
         if (pathMatch?.[2]) {
           return `?${pathMatch[1].toLowerCase()}=${decodeURIComponent(pathMatch[2]).trim()}`;
         }
@@ -149,11 +157,11 @@ export default function App() {
       if (trahInvite) {
         localStorage.setItem('wargaqu_pending_trah_invite_v1', trahInvite);
         setCurrentScreen('leluhurqu');
-        window.history.replaceState({ screen: 'leluhurqu' }, '', `/#leluhurqu`);
+        window.history.replaceState({ screen: 'leluhurqu' }, '', '#leluhurqu');
       } else if (rtInvite) {
         localStorage.setItem('wargaqu_pending_rt_invite_v1', rtInvite);
         setCurrentScreen('rtqu');
-        window.history.replaceState({ screen: 'rtqu' }, '', `/#rtqu`);
+        window.history.replaceState({ screen: 'rtqu' }, '', '#rtqu');
       }
     } catch {
       // ignore URL/storage errors
@@ -213,6 +221,11 @@ export default function App() {
           return updated;
         });
       }
+      if (!ZeroTrustService.isAdminEmail(nextAcc?.email) && currentScreenRef.current === 'admin_zero_trust') {
+        ZeroTrustService.lockAdminSession();
+        setCurrentScreen('warga');
+        window.history.replaceState({ screen: 'warga' }, '', '#warga');
+      }
       refreshGovernanceState();
       AccountGovernanceService.publishCurrentPresence(currentScreenRef.current);
     };
@@ -221,6 +234,8 @@ export default function App() {
     window.addEventListener(ACCOUNT_GOV_SYNC_EVENT, refreshGovernanceState);
 
     RealtimeRelayService.start();
+    FirebaseSyncService.init();
+    void AccountGovernanceService.syncPolicyFromServer();
     AccountGovernanceService.publishCurrentPresence(currentScreenRef.current);
     const presenceInterval = window.setInterval(() => {
       AccountGovernanceService.publishCurrentPresence(currentScreenRef.current);
@@ -478,6 +493,10 @@ export default function App() {
   };
 
   const handleOpenAdminZeroTrust = () => {
+    if (!ZeroTrustService.isCurrentUserAdminAccount()) {
+      showNotification('Panel Admin hanya tersedia untuk akun Admin terdaftar.');
+      return;
+    }
     setCurrentScreen('admin_zero_trust');
     window.history.pushState({ screen: 'admin_zero_trust' }, '', '#admin-zero-trust');
   };
@@ -614,8 +633,8 @@ export default function App() {
         />
       )}
 
-      {/* Screen Panel Admin Zero Trust, Monetisasi & HP Hilang/Rusak */}
-      {currentScreen === 'admin_zero_trust' && (
+      {/* Screen Panel Admin Zero Trust, Monetisasi & HP Hilang/Rusak (Hanya Akun Admin) */}
+      {currentScreen === 'admin_zero_trust' && ZeroTrustService.isCurrentUserAdminAccount() && (
         <AdminZeroTrustView
           onBack={handleBackToWarga}
           showNotification={showNotification}

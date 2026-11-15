@@ -42,7 +42,7 @@ async function startServer() {
   app.use(express.json({ limit: '256kb' }));
 
   const server = http.createServer(app);
-  const wss = new WebSocketServer({ server, path: '/ws-relay' });
+  const wss = new WebSocketServer({ noServer: true });
 
   // Volatile RAM routing tables ONLY (no persistent database / zero citizen storage)
   const clients = new Set<ConnectedClient>();
@@ -390,6 +390,34 @@ async function startServer() {
     });
   });
 
+  app.post('/api/relay-presence', (req, res) => {
+    const p = req.body as Record<string, unknown>;
+    const key = typeof p?.accountKey === 'string' ? p.accountKey.trim() : '';
+    if (!key) {
+      res.status(400).json({ error: 'Invalid accountKey' });
+      return;
+    }
+    pruneExpiredPresence();
+    volatilePresenceMap.set(key, { data: p, lastSeenMs: Date.now() });
+    res.json({ ok: true });
+  });
+
+  app.get('/api/relay-policy', (_req, res) => {
+    res.json({
+      accountPolicies: volatileAccountPolicies,
+      monetizeRules: volatileMonetizeRules,
+      frozenDeviceMasks: Array.from(volatileFrozenDeviceMasks),
+    });
+  });
+
+  app.post('/api/relay-policy', (req, res) => {
+    const body = req.body as { accountPolicies?: unknown };
+    if (body?.accountPolicies && typeof body.accountPolicies === 'object') {
+      volatileAccountPolicies = body.accountPolicies;
+    }
+    res.json({ ok: true });
+  });
+
   // Lightweight health endpoint (zero citizen PII)
   app.get('/api/relay-health', (_req, res) => {
     pruneExpiredPresence();
@@ -406,12 +434,34 @@ async function startServer() {
 
   const isProd = process.env.NODE_ENV === 'production';
 
+  server.on('upgrade', (request, socket, head) => {
+    try {
+      const pathname = new URL(request.url || '/', 'http://localhost').pathname;
+      if (pathname === '/ws-relay') {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          wss.emit('connection', ws, request);
+        });
+        return;
+      }
+      if (isProd) {
+        socket.destroy();
+      }
+    } catch {
+      socket.destroy();
+    }
+  });
+
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
+        allowedHosts: true,
         hmr: process.env.DISABLE_HMR !== 'true',
+        ws: {
+          server,
+        },
+        watch: process.env.DISABLE_HMR === 'true' ? null : {},
       },
       appType: 'spa',
     });

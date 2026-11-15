@@ -58,6 +58,7 @@ import {
   BookOpen,
   History,
   HelpCircle,
+  ScanLine,
 } from 'lucide-react';
 import { ModuleOnboardingService } from '../../services/moduleOnboardingService';
 import { InteractiveGridCanvasView } from './InteractiveGridCanvasView';
@@ -69,15 +70,19 @@ import {
 } from './LeluhurSettingsView';
 import { AUTH_SYNC_EVENT, AuthService } from '../../services/authService';
 import { LeluhurBookModal } from './LeluhurBookModal';
+import { TrahQrCodeCard, TrahQrScannerModal } from './TrahInviteQrModal';
 import { MonetizationService } from '../../services/monetizationService';
 import { ModularFeeSheet } from '../monetization/ModularFeeSheet';
 import {
   canonicalInviteSlug,
+  getCustomPublicBaseUrl,
   getSyncChannelName,
   InviteRelayService,
+  isPrivateDevHost,
   parseInviteInput,
   REALTIME_RELAY_EVENT_NAME,
   RELAY_REGISTER_CHANNELS_EVENT,
+  setCustomPublicBaseUrl,
 } from '../../services/inviteRelayService';
 
 export interface SpouseInfo {
@@ -392,13 +397,26 @@ async function decodeTrahInviteInputAsync(
   let resolvedInput = rawInput;
   if (parsedHint?.mode === 'short_code') {
     resolvedInput = await InviteRelayService.resolveInviteTokenIfShort(rawInput);
+    if (resolvedInput === rawInput && parsedHint.fallbackSlug) {
+      const syncRes = await InviteRelayService.syncRoomOnEntry({
+        kind: 'trah',
+        slugOrTitle: parsedHint.fallbackSlug,
+      });
+      if (syncRes.ok && syncRes.snapshot) {
+        resolvedInput = syncRes.snapshot;
+      }
+    }
   } else if (parsedHint?.mode === 'room_slug') {
+    // Jika link membawa token mandiri (?trah=...&t=LQH2_...), coba sinkron cepat lalu fallback otomatis ke token mandiri
     const syncRes = await InviteRelayService.syncRoomOnEntry({
       kind: 'trah',
       slugOrTitle: parsedHint.canonicalSlug,
+      timeoutMs: parsedHint.embeddedToken ? 900 : 1700,
     });
     if (syncRes.ok && syncRes.snapshot) {
       resolvedInput = syncRes.snapshot;
+    } else if (parsedHint.embeddedToken) {
+      resolvedInput = parsedHint.embeddedToken;
     } else {
       return null;
     }
@@ -1529,11 +1547,16 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   const [newTrahCreateIntroPost, setNewTrahCreateIntroPost] = useState<boolean>(true);
   const [newTrahTargetView, setNewTrahTargetView] = useState<'stay' | 'grid' | 'excel' | 'feed'>('grid');
 
-  // Modal Undangan Silsilah Trah Medsos (WA / ChatQu / Salin Link)
+  // Modal Undangan Silsilah Trah Medsos (WA / ChatQu / Salin Link / Barcode QR)
   const [isInviteModalOpen, setIsInviteModalOpen] = useState<boolean>(false);
   const [inviteTrahTarget, setInviteTrahTarget] = useState<TrahCategory | null>(null);
   const [compactInviteToken, setCompactInviteToken] = useState<string>('');
   const [shortInviteUrl, setShortInviteUrl] = useState<string>('');
+  const [inviteShareTab, setInviteShareTab] = useState<'barcode' | 'link'>('barcode');
+  const [inviteLinkMode, setInviteLinkMode] = useState<'self_contained' | 'title_sync'>('self_contained');
+  const [customPublicBaseInput, setCustomPublicBaseInput] = useState<string>(() => getCustomPublicBaseUrl());
+  const [showDomainConfig, setShowDomainConfig] = useState<boolean>(false);
+  const [isQrScannerOpen, setIsQrScannerOpen] = useState<boolean>(false);
   const [autoJoinedBanner, setAutoJoinedBanner] = useState<{
     trahId: string;
     trahName: string;
@@ -3567,6 +3590,15 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             <Plus className="w-3 h-3 text-amber-300" />
             <span>Taut Pasangan</span>
           </button>
+
+          <button
+            onClick={() => setIsQrScannerOpen(true)}
+            className="py-1 px-2 rounded-xl bg-emerald-800/80 hover:bg-emerald-700 text-white text-[11px] font-bold flex items-center gap-1 border border-emerald-700 shrink-0"
+            title="Scan Barcode QR atau Tempel Link Undangan Trah Lain"
+          >
+            <QrCode className="w-3 h-3 text-amber-300" />
+            <span>Scan / Gabung</span>
+          </button>
         </div>
       </div>
       )}
@@ -3768,17 +3800,27 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                 <span>Buat Trah Keluarga Baru</span>
               </button>
 
-              <div className="p-3.5 rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
-                <label className="text-[11px] font-extrabold text-stone-800 flex items-center gap-1.5">
-                  <Link2 className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>Punya Link / Kode Undangan dari Saudara?</span>
-                </label>
+              <div className="p-3.5 rounded-2xl bg-stone-50 border border-stone-200 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-[11px] font-extrabold text-stone-800 flex items-center gap-1.5">
+                    <Link2 className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>Punya Barcode / Link Undangan dari Saudara?</span>
+                  </label>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsQrScannerOpen(true)}
+                  className="w-full py-2.5 px-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-98 transition"
+                >
+                  <QrCode className="w-4 h-4 text-amber-300" />
+                  <span>Scan Kamera / Unggah Gambar Barcode QR</span>
+                </button>
                 <div className="flex gap-1.5">
                   <input
                     type="text"
                     value={inviteJoinInput}
                     onChange={(e) => setInviteJoinInput(e.target.value)}
-                    placeholder="Tempel link (?trah=Nama-Trah), judul trah, atau kode offline..."
+                    placeholder="Atau tempel link (?trah=... / ?t=LQH2_...) atau kode..."
                     className="flex-1 min-w-0 px-3 py-2 text-xs bg-white border border-stone-300 rounded-xl focus:border-emerald-600 outline-hidden"
                   />
                   <button
@@ -4875,13 +4917,28 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                       setIsInviteModalOpen(true);
                     }}
                     className="w-full py-2 px-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold text-xs flex items-center justify-between border border-stone-700 shadow-xs active:scale-95 transition"
-                    title="Bagikan Undangan Medsos (WhatsApp, ChatQu, dll)"
+                    title="Bagikan Barcode QR & Undangan Medsos (WhatsApp, ChatQu, dll)"
                   >
                     <span className="flex items-center gap-2">
                       <Share2 className="w-3.5 h-3.5 text-amber-300" />
-                      <span>Bagikan Undangan Medsos</span>
+                      <span>Undangan Barcode &amp; Link</span>
                     </span>
-                    <span className="text-[9px] bg-stone-900 text-stone-400 px-1.5 py-0.5 rounded font-bold">WA / Chat</span>
+                    <span className="text-[9px] bg-stone-900 text-amber-300 px-1.5 py-0.5 rounded font-bold">QR / WA</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsSidebarOpen(false);
+                      setIsQrScannerOpen(true);
+                    }}
+                    className="w-full py-2 px-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold text-xs flex items-center justify-between border border-stone-700 shadow-xs active:scale-95 transition"
+                    title="Scan Barcode QR atau Tempel Link Undangan Trah Saudara"
+                  >
+                    <span className="flex items-center gap-2">
+                      <ScanLine className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Gabung / Scan Barcode Trah</span>
+                    </span>
+                    <span className="text-[9px] bg-emerald-950/70 text-emerald-300 px-1.5 py-0.5 rounded font-bold">Scan QR</span>
                   </button>
 
                   <button
@@ -5885,11 +5942,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       )}
 
       {/* ========================================================= */}
-      {/* 8. MODAL UNDANGAN MEDSOS (WHATSAPP, CHATQU, SALIN LINK) */}
+      {/* 8. MODAL UNDANGAN MEDSOS (BARCODE QR, WHATSAPP, SALIN LINK) */}
       {/* ========================================================= */}
       {isInviteModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-3xl max-w-md w-full p-5 space-y-4 shadow-2xl border border-stone-200 relative text-stone-800">
+          <div className="bg-white rounded-3xl max-w-md w-full p-5 space-y-3.5 shadow-2xl border border-stone-200 relative text-stone-800 max-h-[92vh] overflow-y-auto">
             <button
               onClick={() => setIsInviteModalOpen(false)}
               className="absolute top-4 right-4 p-1.5 rounded-full text-stone-400 hover:text-stone-700 bg-stone-100 transition"
@@ -5899,19 +5956,91 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white flex items-center justify-center shadow">
-                <Share2 className="w-5 h-5" />
+                <QrCode className="w-5 h-5" />
               </div>
               <div>
                 <h3 className="font-extrabold text-sm sm:text-base text-stone-900">
-                  Undangan Medsos Silsilah Trah
+                  Undangan Silsilah &amp; Barcode QR
                 </h3>
                 <p className="text-[11px] text-stone-500">
-                  Ajak sanak saudara bergabung & melengkapi silsilah keluarga
+                  Bagikan Barcode QR (anti-gagal / offline) atau Link ke saudara
                 </p>
               </div>
             </div>
 
-            {/* Pilihan Trah Yang Ingin Diundang (Ayah / Ibu / Ayah Pasangan / Ibu Pasangan) */}
+            {/* Peringatan jika dibuka dari URL Developer Privat (ais-dev-*) */}
+            {isPrivateDevHost() && !customPublicBaseInput && (
+              <div className="p-2.5 rounded-2xl bg-amber-50 border border-amber-200 text-[11px] text-amber-950 space-y-1.5">
+                <div className="flex items-start gap-1.5">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-extrabold">Kenapa link tidak bisa diakses orang lain?</span>{' '}
+                    Domain saat ini adalah URL preview privat (<code className="font-mono text-[10px]">ais-dev-...</code>) yang terkunci akun developer.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowDomainConfig((v) => !v)}
+                  className="text-[10px] font-extrabold text-emerald-800 underline"
+                >
+                  {showDomainConfig ? 'Tutup Pengaturan URL Publik' : 'Atur URL Publik Aplikasi (ais-pre / GitHub Pages)'}
+                </button>
+              </div>
+            )}
+
+            {(showDomainConfig || customPublicBaseInput) && (
+              <div className="p-2.5 rounded-2xl bg-stone-50 border border-stone-200 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-extrabold text-stone-700 uppercase">
+                    URL Publik Tujuan Undangan
+                  </span>
+                  {customPublicBaseInput && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomPublicBaseUrl('');
+                        setCustomPublicBaseInput('');
+                        const target = inviteTrahTarget || activeTrah;
+                        setShortInviteUrl(InviteRelayService.buildTitleInviteUrl('trah', target.name).url);
+                        showNotification('URL publik dikembalikan ke alamat browser saat ini.');
+                      }}
+                      className="text-[10px] font-bold text-rose-600 hover:underline"
+                    >
+                      Reset Default
+                    </button>
+                  )}
+                </div>
+                <div className="flex gap-1.5">
+                  <input
+                    type="url"
+                    value={customPublicBaseInput}
+                    onChange={(e) => setCustomPublicBaseInput(e.target.value)}
+                    placeholder="Contoh: https://ais-pre-...run.app/ atau https://user.github.io/WargaQu/"
+                    className="flex-1 min-w-0 px-2.5 py-1.5 text-[11px] bg-white border border-stone-300 rounded-xl outline-hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const saved = setCustomPublicBaseUrl(customPublicBaseInput);
+                      setCustomPublicBaseInput(saved);
+                      const target = inviteTrahTarget || activeTrah;
+                      setShortInviteUrl(InviteRelayService.buildTitleInviteUrl('trah', target.name).url);
+                      if (saved) {
+                        setShowDomainConfig(false);
+                        showNotification(`URL publik disetel ke ${saved}`);
+                      } else {
+                        showNotification('Masukkan URL lengkap diawali https://');
+                      }
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-emerald-700 text-white text-[10px] font-extrabold shrink-0"
+                  >
+                    Simpan
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Pilihan Trah Yang Ingin Diundang */}
             <div>
               <label className="text-[11px] font-bold text-stone-700 block mb-1.5">
                 Pilih Trah yang Diundang:
@@ -5949,6 +6078,34 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
               </div>
             </div>
 
+            {/* Tab Pilihan: Barcode QR vs Link Undangan */}
+            <div className="grid grid-cols-2 gap-1.5 p-1 bg-stone-100 rounded-2xl border border-stone-200">
+              <button
+                type="button"
+                onClick={() => setInviteShareTab('barcode')}
+                className={`py-2 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition ${
+                  inviteShareTab === 'barcode'
+                    ? 'bg-emerald-700 text-white shadow-xs'
+                    : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                <QrCode className="w-3.5 h-3.5" />
+                <span>Barcode / QR Code</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setInviteShareTab('link')}
+                className={`py-2 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition ${
+                  inviteShareTab === 'link'
+                    ? 'bg-emerald-700 text-white shadow-xs'
+                    : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                <Link2 className="w-3.5 h-3.5" />
+                <span>Link &amp; Pesan WA</span>
+              </button>
+            </div>
+
             {(() => {
               const target = inviteTrahTarget || activeTrah;
               const fallbackToken = encodeTrahInviteToken(
@@ -5957,8 +6114,25 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
               );
               const activeToken = compactInviteToken || fallbackToken;
               const titleLinkObj = InviteRelayService.buildTitleInviteUrl('trah', target.name);
-              const inviteLink = shortInviteUrl || titleLinkObj.url;
-              const inviteText = `Undangan Silsilah *${target.name}* (${target.members.length} anggota) di LeluhurQu.\nKlik link judul (sinkronisasi saat masuk):\n${inviteLink}`;
+              const titleSyncLink = shortInviteUrl || titleLinkObj.url;
+              const selfContainedLink = InviteRelayService.buildSelfContainedTrahUrl(
+                target.name,
+                activeToken
+              );
+              const inviteLink =
+                inviteLinkMode === 'self_contained' ? selfContainedLink : titleSyncLink;
+
+              // Untuk QR: pakai URL mandiri jika muat (<= 1950 char), atau token langsung jika <= 2200 char, selain itu link sinkronisasi
+              const qrPayload =
+                selfContainedLink.length <= 1950
+                  ? selfContainedLink
+                  : activeToken.length <= 2200
+                  ? activeToken
+                  : titleSyncLink;
+              const isQrSelfContained =
+                selfContainedLink.length <= 1950 || activeToken.length <= 2200;
+
+              const inviteText = `Undangan Silsilah *${target.name}* (${target.members.length} anggota) di LeluhurQu.\nKlik link berikut untuk langsung membuka silsilah:\n${inviteLink}`;
 
               const recordShareLog = (channel: string) => {
                 appendActivityLog({
@@ -5966,68 +6140,108 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                   trahName: target.name,
                   actionType: 'invite_share',
                   targetName: channel,
-                  summary: `Membagikan link undangan Trah "${target.name}" via ${channel}`,
-                  details: `${target.members.length} anggota disertakan untuk sinkronisasi saat masuk.`,
+                  summary: `Membagikan undangan Trah "${target.name}" via ${channel}`,
+                  details: `${target.members.length} anggota disertakan.`,
                 });
               };
 
               return (
                 <>
-                  {/* Link Judul Trah (Sinkronisasi Saat Masuk) */}
-                  <div className="bg-emerald-50/70 p-3 rounded-2xl border border-emerald-200 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-extrabold text-emerald-900 uppercase tracking-wider flex items-center gap-1">
-                        <Link2 className="w-3.5 h-3.5 text-emerald-700" />
-                        <span>Link Judul Trah (Sinkronisasi Saat Masuk)</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(activeToken);
-                          recordShareLog('Salin Kode Offline');
-                          showNotification('Kode offline lengkap disalin!');
-                        }}
-                        className="text-[10px] font-bold text-emerald-800 hover:underline"
-                      >
-                        Salin Kode Offline
-                      </button>
-                    </div>
+                  {inviteShareTab === 'barcode' ? (
+                    <TrahQrCodeCard
+                      trahName={target.name}
+                      memberCount={target.members.length}
+                      qrPayload={qrPayload}
+                      isSelfContained={isQrSelfContained}
+                      onNotify={showNotification}
+                      onAfterDownload={() => recordShareLog('Barcode QR PNG')}
+                    />
+                  ) : (
+                    <>
+                      {/* Pemilih Jenis Link */}
+                      <div className="bg-emerald-50/70 p-3 rounded-2xl border border-emerald-200 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-extrabold text-emerald-900 uppercase tracking-wider flex items-center gap-1">
+                            <Link2 className="w-3.5 h-3.5 text-emerald-700" />
+                            <span>Pilih Format Link Undangan</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(activeToken);
+                              recordShareLog('Salin Kode Offline');
+                              showNotification('Kode offline lengkap disalin!');
+                            }}
+                            className="text-[10px] font-bold text-emerald-800 hover:underline"
+                          >
+                            Salin Kode Offline
+                          </button>
+                        </div>
 
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        readOnly
-                        value={inviteLink}
-                        onClick={(e) => (e.target as HTMLInputElement).select()}
-                        className="flex-1 min-w-0 px-2.5 py-1.5 text-[11px] font-mono bg-white border border-emerald-300 rounded-xl text-stone-700 outline-hidden select-all"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(inviteLink);
-                          recordShareLog('Salin Link');
-                          showNotification('Link judul Trah disalin!');
-                        }}
-                        className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-[11px] shrink-0 transition"
-                      >
-                        Salin Link
-                      </button>
-                    </div>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setInviteLinkMode('self_contained')}
+                            className={`px-2 py-1.5 rounded-xl text-[10px] font-extrabold border text-left transition ${
+                              inviteLinkMode === 'self_contained'
+                                ? 'bg-emerald-700 text-white border-emerald-700'
+                                : 'bg-white text-stone-700 border-emerald-200'
+                            }`}
+                          >
+                            <div>Link Mandiri (Anti-Gagal)</div>
+                            <div className="text-[9px] font-normal opacity-85">
+                              Bisa dibuka meski host offline / beda server
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setInviteLinkMode('title_sync')}
+                            className={`px-2 py-1.5 rounded-xl text-[10px] font-extrabold border text-left transition ${
+                              inviteLinkMode === 'title_sync'
+                                ? 'bg-emerald-700 text-white border-emerald-700'
+                                : 'bg-white text-stone-700 border-emerald-200'
+                            }`}
+                          >
+                            <div>Link Judul Ringkas</div>
+                            <div className="text-[9px] font-normal opacity-85">
+                              URL pendek (?trah=...), butuh host/relay aktif
+                            </div>
+                          </button>
+                        </div>
 
-                    <p className="text-[10px] text-emerald-800 leading-snug">
-                      Link hanya menampilkan judul <strong>{target.name}</strong>. Saat keluarga membuka link, data silsilah otomatis disinkronkan langsung (tanpa DB server).
-                    </p>
-                  </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="text"
+                            readOnly
+                            value={inviteLink}
+                            onClick={(e) => (e.target as HTMLInputElement).select()}
+                            className="flex-1 min-w-0 px-2.5 py-1.5 text-[11px] font-mono bg-white border border-emerald-300 rounded-xl text-stone-700 outline-hidden select-all"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(inviteLink);
+                              recordShareLog('Salin Link');
+                              showNotification('Link undangan Trah disalin!');
+                            }}
+                            className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-[11px] shrink-0 transition"
+                          >
+                            Salin Link
+                          </button>
+                        </div>
+                      </div>
 
-                  {/* Preview Pesan WhatsApp */}
-                  <div className="bg-stone-50 p-3 rounded-2xl border border-stone-200 space-y-1.5">
-                    <span className="text-[10px] font-bold text-stone-500 uppercase tracking-wider block">
-                      Pratinjau Pesan Siap Kirim:
-                    </span>
-                    <div className="bg-white p-2.5 rounded-xl border border-stone-200 text-xs text-stone-700 leading-relaxed font-sans shadow-2xs whitespace-pre-wrap select-text max-h-28 overflow-y-auto">
-                      {inviteText}
-                    </div>
-                  </div>
+                      {/* Preview Pesan WhatsApp */}
+                      <div className="bg-stone-50 p-3 rounded-2xl border border-stone-200 space-y-1.5">
+                        <span className="text-[10px] font-bold text-stone-500 uppercase tracking-wider block">
+                          Pratinjau Pesan Siap Kirim:
+                        </span>
+                        <div className="bg-white p-2.5 rounded-xl border border-stone-200 text-xs text-stone-700 leading-relaxed font-sans shadow-2xs whitespace-pre-wrap select-text max-h-24 overflow-y-auto">
+                          {inviteText}
+                        </div>
+                      </div>
+                    </>
+                  )}
 
                   {/* Tombol Bagikan ke WhatsApp, ChatQu Warga, dan Salin Pesan */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
@@ -6068,7 +6282,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                       onClick={() => {
                         navigator.clipboard.writeText(inviteText);
                         recordShareLog('Salin Pesan');
-                        showNotification('Pesan & link ringkas berhasil disalin! 📋');
+                        showNotification('Pesan & link berhasil disalin! 📋');
                       }}
                       className="py-2.5 px-3 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 font-extrabold text-xs flex items-center justify-center gap-1.5 active:scale-95 transition border border-stone-300"
                     >
@@ -6425,6 +6639,13 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         activeTrah={activeTrah}
         accountProfile={accountProfile}
         showNotification={showNotification}
+      />
+
+      <TrahQrScannerModal
+        open={isQrScannerOpen}
+        onClose={() => setIsQrScannerOpen(false)}
+        onDetectedPayload={(rawPayload) => handleAcceptTrahInvite(rawPayload, true)}
+        onNotify={showNotification}
       />
 
       <ModularFeeSheet

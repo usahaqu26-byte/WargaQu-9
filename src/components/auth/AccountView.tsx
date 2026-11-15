@@ -13,10 +13,15 @@ import {
   ShieldAlert,
   Lock,
   Smartphone,
+  Cloud,
 } from 'lucide-react';
 import { AUTH_SYNC_EVENT, AuthAccount, AuthService } from '../../services/authService';
 import { RT_SYNC_EVENT, RtSiagaStorage, WargaMember } from '../../services/rtSiagaStorage';
 import { ZERO_TRUST_SYNC_EVENT, ZeroTrustService } from '../../services/zeroTrustService';
+import {
+  FIREBASE_AUTH_SYNC_EVENT,
+  FirebaseSyncService,
+} from '../../services/firebaseSyncService';
 import { EncryptedBackupPanel } from '../common/EncryptedBackupPanel';
 
 interface AccountViewProps {
@@ -36,6 +41,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
 }) => {
   const [account, setAccount] = useState<AuthAccount | null>(() => AuthService.getAccount());
   const [rtMember, setRtMember] = useState<WargaMember>(() => RtSiagaStorage.getCurrentMember());
+  const isAdminAccount = ZeroTrustService.isAdminEmail(account?.email);
 
   const [emailInput, setEmailInput] = useState<string>(account?.email || '');
   const [phoneInput, setPhoneInput] = useState<string>(account?.phone || '');
@@ -46,6 +52,10 @@ export const AccountView: React.FC<AccountViewProps> = ({
       : { code: '', guardianContact: '' }
   );
   const [guardianInput, setGuardianInput] = useState<string>(recoveryCfg.guardianContact || '');
+  const [cloudEmail, setCloudEmail] = useState<string>(
+    () => FirebaseSyncService.getCurrentUser()?.email || ''
+  );
+  const [cloudConnecting, setCloudConnecting] = useState<boolean>(false);
 
   useEffect(() => {
     const sync = () => {
@@ -53,6 +63,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
       setAccount(acc);
       setRtMember(RtSiagaStorage.getCurrentMember());
       setIsFrozen(ZeroTrustService.isCurrentDeviceFrozen());
+      setCloudEmail(FirebaseSyncService.getCurrentUser()?.email || '');
       if (acc) {
         setEmailInput(acc.email);
         setPhoneInput(acc.phone);
@@ -64,10 +75,12 @@ export const AccountView: React.FC<AccountViewProps> = ({
     window.addEventListener(AUTH_SYNC_EVENT, sync);
     window.addEventListener(RT_SYNC_EVENT, sync);
     window.addEventListener(ZERO_TRUST_SYNC_EVENT, sync);
+    window.addEventListener(FIREBASE_AUTH_SYNC_EVENT, sync);
     return () => {
       window.removeEventListener(AUTH_SYNC_EVENT, sync);
       window.removeEventListener(RT_SYNC_EVENT, sync);
       window.removeEventListener(ZERO_TRUST_SYNC_EVENT, sync);
+      window.removeEventListener(FIREBASE_AUTH_SYNC_EVENT, sync);
     };
   }, []);
 
@@ -88,13 +101,34 @@ export const AccountView: React.FC<AccountViewProps> = ({
     const saved = AuthService.login(emailInput, phoneInput);
     RtSiagaStorage.syncAuthAccount(saved);
     ZeroTrustService.registerOrTouchCurrentDevice(saved.email, saved.phone);
+    if (FirebaseSyncService.isCloudSignedIn()) {
+      void FirebaseSyncService.syncMyAccountRegistry('akun', true);
+    }
     showNotification('Akun utama diperbarui & disinkronkan ke seluruh modul.');
+  };
+
+  const handleConnectGoogleCloud = async () => {
+    setCloudConnecting(true);
+    try {
+      const user = await FirebaseSyncService.signInWithGoogle(phoneInput);
+      setCloudEmail(user.email || '');
+      showNotification(`Cloud Firebase terhubung (${user.email}).`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (!msg.includes('popup-closed-by-user')) {
+        showNotification('Gagal menghubungkan akun Google Cloud.');
+      }
+    } finally {
+      setCloudConnecting(false);
+    }
   };
 
   const handleLogout = () => {
     AuthService.logout();
+    void FirebaseSyncService.signOutCloud().catch(() => {});
     setEmailInput('');
     setPhoneInput('');
+    setCloudEmail('');
     showNotification('Anda telah keluar dari akun.');
   };
 
@@ -162,8 +196,10 @@ export const AccountView: React.FC<AccountViewProps> = ({
             <div className="p-3 rounded-xl border border-rose-300 bg-rose-50 text-rose-800 text-[11px] flex items-start gap-2">
               <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
-                Perangkat ini sedang dibekukan oleh kebijakan Zero Trust (status HP Hilang). Buka lewat
-                Panel Admin Zero Trust jika ini perangkat sah Anda.
+                Perangkat ini sedang dibekukan oleh kebijakan keamanan (status HP Hilang).{' '}
+                {isAdminAccount
+                  ? 'Buka lewat Panel Admin Zero Trust jika ini perangkat sah Anda.'
+                  : 'Hubungi pengurus komunitas atau dukungan warga jika ini perangkat sah Anda.'}
               </span>
             </div>
           )}
@@ -219,6 +255,37 @@ export const AccountView: React.FC<AccountViewProps> = ({
               {account ? 'Simpan & Sinkronkan Modul' : 'Masuk Sekarang'}
             </button>
           </form>
+
+          {/* Hybrid Cloud Sync Strip */}
+          <div className="border border-slate-200 bg-slate-50 rounded-xl p-3 flex items-center justify-between gap-2 text-[11px]">
+            <div className="flex items-start gap-2 min-w-0">
+              <Cloud
+                className={`w-4 h-4 shrink-0 mt-0.5 ${
+                  cloudEmail ? 'text-emerald-700' : 'text-slate-400'
+                }`}
+              />
+              <div className="min-w-0">
+                <div className="font-bold text-slate-900 truncate">
+                  {cloudEmail ? `Cloud Aktif: ${cloudEmail}` : 'Sinkronisasi Cloud Firebase'}
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {cloudEmail
+                    ? 'Metadata akun & status akses tersimpan ringan di Firestore.'
+                    : 'Hubungkan Google agar status akun & akses lintas perangkat tersinkron.'}
+                </div>
+              </div>
+            </div>
+            {!cloudEmail && (
+              <button
+                type="button"
+                onClick={handleConnectGoogleCloud}
+                disabled={cloudConnecting}
+                className="min-h-[34px] px-2.5 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg font-bold text-slate-800 shrink-0 disabled:opacity-60"
+              >
+                {cloudConnecting ? '...' : 'Hubungkan'}
+              </button>
+            )}
+          </div>
         </section>
 
         {/* Keamanan & Solusi HP Hilang / Rusak */}
@@ -311,29 +378,31 @@ export const AccountView: React.FC<AccountViewProps> = ({
           />
         </section>
 
-        {/* Panel Admin Zero Trust */}
-        <section className="divide-y divide-slate-200">
-          <div className="px-4 py-2.5 bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-            Konsol Developer &amp; Keamanan
-          </div>
-          <button
-            onClick={onOpenAdminZeroTrust}
-            className="w-full px-4 py-3.5 flex items-center justify-between text-left hover:bg-slate-50"
-          >
-            <div className="flex items-start gap-2.5 min-w-0">
-              <ShieldAlert className="w-4 h-4 mt-0.5 text-slate-900 shrink-0" />
-              <div>
-                <div className="text-xs font-extrabold text-slate-900">
-                  Panel Admin Zero Trust
-                </div>
-                <div className="text-[11px] text-slate-500 mt-0.5">
-                  Kontrol Keamanan Perangkat, Akses Akun, Smart Care &amp; Pemulihan HP
+        {/* Panel Admin Zero Trust — Hanya tampil pada akun Admin */}
+        {isAdminAccount && (
+          <section className="divide-y divide-slate-200">
+            <div className="px-4 py-2.5 bg-slate-50 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+              Konsol Developer &amp; Keamanan
+            </div>
+            <button
+              onClick={onOpenAdminZeroTrust}
+              className="w-full px-4 py-3.5 flex items-center justify-between text-left hover:bg-slate-50"
+            >
+              <div className="flex items-start gap-2.5 min-w-0">
+                <ShieldAlert className="w-4 h-4 mt-0.5 text-slate-900 shrink-0" />
+                <div>
+                  <div className="text-xs font-extrabold text-slate-900">
+                    Panel Admin Zero Trust
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    Kontrol Keamanan Perangkat, Akses Akun, Smart Care &amp; Pemulihan HP
+                  </div>
                 </div>
               </div>
-            </div>
-            <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
-          </button>
-        </section>
+              <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+            </button>
+          </section>
+        )}
 
         {/* Status SiagaQu & Otoritas RTQu */}
         <section className="divide-y divide-slate-200">

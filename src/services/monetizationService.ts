@@ -164,7 +164,14 @@ function saveJson<T>(key: string, val: T): void {
   }
 }
 
+let onSaveMonetizationCloudHook: ((rules: ModuleMonetizationRule[]) => Promise<void> | void) | null =
+  null;
+
 export const MonetizationService = {
+  registerCloudSaveHook(hook: (rules: ModuleMonetizationRule[]) => Promise<void> | void): void {
+    onSaveMonetizationCloudHook = hook;
+  },
+
   getRules(): ModuleMonetizationRule[] {
     const saved = loadJson<ModuleMonetizationRule[] | null>(RULES_KEY, null);
     if (!saved || !Array.isArray(saved) || saved.length === 0) {
@@ -214,6 +221,9 @@ export const MonetizationService = {
     }
     emitMonetizationSync();
     RealtimeRelayService.publish('admin:policy', 'admin:monetize_rules', next);
+    if (onSaveMonetizationCloudHook) {
+      void Promise.resolve(onSaveMonetizationCloudHook(next)).catch(() => {});
+    }
     return next;
   },
 

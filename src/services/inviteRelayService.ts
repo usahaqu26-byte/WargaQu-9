@@ -20,9 +20,11 @@ interface StoredRoomSnapshot {
   updatedAt: number;
 }
 
+const CUSTOM_PUBLIC_BASE_URL_KEY = 'wargaqu_public_invite_base_url_v1';
+
 export type ParsedInviteInput =
-  | { mode: 'legacy_token'; kind?: 'trah' | 'rt'; token: string }
-  | { mode: 'short_code'; kind?: 'trah' | 'rt'; code: string }
+  | { mode: 'legacy_token'; kind?: 'trah' | 'rt'; token: string; fallbackSlug?: string }
+  | { mode: 'short_code'; kind?: 'trah' | 'rt'; code: string; fallbackSlug?: string }
   | {
       mode: 'room_slug';
       kind: 'trah' | 'rt';
@@ -30,6 +32,7 @@ export type ParsedInviteInput =
       slug: string;
       canonicalSlug: string;
       titleGuess: string;
+      embeddedToken?: string;
     };
 
 export interface RoomSyncResult {
@@ -194,14 +197,51 @@ export function parseInviteInput(
           ? `?${trimmed}`
           : '';
       if (sliceFrom) {
-        const params = new URLSearchParams(sliceFrom.split('#')[0]);
-        const trahParam = params.get('trah') || params.get('t') || params.get('trahInvite');
+        const [queryPart, hashPartRaw] = sliceFrom.split('#');
+        const params = new URLSearchParams(queryPart);
+        const hashParams =
+          hashPartRaw && hashPartRaw.includes('=')
+            ? new URLSearchParams(hashPartRaw.replace(/^[/?]+/, ''))
+            : null;
+        const trahSlugParam = params.get('trah') || hashParams?.get('trah');
+        const trahTokenOrShort =
+          params.get('t') ||
+          params.get('trahInvite') ||
+          hashParams?.get('t') ||
+          hashParams?.get('trahInvite');
+
+        if (trahTokenOrShort && trahTokenOrShort.trim()) {
+          const v = trahTokenOrShort.trim();
+          if (isLegacyCompressedToken(v)) {
+            if (trahSlugParam && trahSlugParam.trim()) {
+              return {
+                mode: 'room_slug',
+                kind: 'trah',
+                slug: slugifyInviteTitle(trahSlugParam.trim()),
+                canonicalSlug: canonicalInviteSlug(trahSlugParam.trim()),
+                titleGuess: readableTitleFromSlug(trahSlugParam.trim()),
+                embeddedToken: v,
+              };
+            }
+            return { mode: 'legacy_token', kind: 'trah', token: v };
+          }
+          if (/^Q[A-Za-z0-9]{5,12}$/.test(v)) {
+            return {
+              mode: 'short_code',
+              kind: 'trah',
+              code: v,
+              fallbackSlug: trahSlugParam ? canonicalInviteSlug(trahSlugParam) : undefined,
+            };
+          }
+        }
+
+        const trahParam = trahSlugParam || trahTokenOrShort;
         if (trahParam && trahParam.trim()) {
           const v = trahParam.trim();
           if (isLegacyCompressedToken(v)) {
             return { mode: 'legacy_token', kind: 'trah', token: v };
           }
-          if (/^Q[A-Za-z0-9]{5,12}$/.test(v) && !params.get('trah')) {
+          if (/^Q[A-Za-z0-9]{5,12}$/.test(v) && !trahSlugParam) {
             return { mode: 'short_code', kind: 'trah', code: v };
           }
           const canonical = canonicalInviteSlug(v);
@@ -214,9 +254,13 @@ export function parseInviteInput(
           };
         }
 
-        const paguyubanParam = params.get('paguyuban');
-        const grupParam = params.get('grup') || params.get('organisasi') || params.get('sosial');
-        const rtParam = params.get('rt') || params.get('rtInvite');
+        const paguyubanParam = params.get('paguyuban') || hashParams?.get('paguyuban');
+        const grupParam =
+          params.get('grup') ||
+          params.get('organisasi') ||
+          params.get('sosial') ||
+          hashParams?.get('grup');
+        const rtParam = params.get('rt') || params.get('rtInvite') || hashParams?.get('rt');
         const anyRtVal = paguyubanParam || grupParam || rtParam;
         if (anyRtVal && anyRtVal.trim()) {
           const v = anyRtVal.trim();
@@ -297,13 +341,72 @@ function publishRelayEvent(channel: string, eventName: string, payload: unknown)
   );
 }
 
+export function normalizeInviteBaseUrl(rawUrl: string): string {
+  const trimmed = (rawUrl || '').trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed);
+    let cleanPath = parsed.pathname || '/';
+    cleanPath = cleanPath
+      .replace(/\/index\.html$/i, '/')
+      .replace(/\/(trah|rt|paguyuban|grup)\/[^/]*$/i, '/');
+    if (!cleanPath.endsWith('/')) cleanPath += '/';
+    return `${parsed.origin}${cleanPath}`;
+  } catch {
+    return '';
+  }
+}
+
+export function getCurrentAppBaseUrl(): string {
+  if (typeof window === 'undefined') return '';
+  const override = getCustomPublicBaseUrl();
+  if (override) return override;
+  const { origin, pathname } = window.location;
+  if (!origin || origin === 'null' || origin.startsWith('capacitor://') || origin.startsWith('file://')) {
+    return 'https://wargaqu.app/';
+  }
+  let cleanPath = (pathname || '/')
+    .replace(/\/index\.html$/i, '/')
+    .replace(/\/(trah|rt|paguyuban|grup)\/[^/]*$/i, '/');
+  if (!cleanPath.endsWith('/')) cleanPath += '/';
+  return `${origin}${cleanPath}`;
+}
+
+export function getCustomPublicBaseUrl(): string {
+  try {
+    const raw = localStorage.getItem(CUSTOM_PUBLIC_BASE_URL_KEY) || '';
+    return raw ? normalizeInviteBaseUrl(raw) : '';
+  } catch {
+    return '';
+  }
+}
+
+export function setCustomPublicBaseUrl(rawUrl: string): string {
+  try {
+    const normalized = normalizeInviteBaseUrl(rawUrl);
+    if (!normalized) {
+      localStorage.removeItem(CUSTOM_PUBLIC_BASE_URL_KEY);
+      return '';
+    }
+    localStorage.setItem(CUSTOM_PUBLIC_BASE_URL_KEY, normalized);
+    return normalized;
+  } catch {
+    return '';
+  }
+}
+
+export function isPrivateDevHost(): boolean {
+  if (typeof window === 'undefined') return false;
+  return /^ais-dev-/i.test(window.location.hostname || '');
+}
+
 export const InviteRelayService = {
   buildTitleInviteUrl(
     kind: 'trah' | 'rt',
     title: string,
     orgType?: string
   ): { url: string; queryKey: 'trah' | 'rt' | 'paguyuban' | 'grup'; slug: string; canonicalSlug: string } {
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const baseUrl = getCurrentAppBaseUrl();
     const slug = slugifyInviteTitle(title);
     const canonicalSlug = slug.toLowerCase();
     let queryKey: 'trah' | 'rt' | 'paguyuban' | 'grup' = 'trah';
@@ -313,11 +416,17 @@ export const InviteRelayService = {
       else queryKey = 'rt';
     }
     return {
-      url: `${origin}/?${queryKey}=${slug}`,
+      url: `${baseUrl}?${queryKey}=${slug}`,
       queryKey,
       slug,
       canonicalSlug,
     };
+  },
+
+  buildSelfContainedTrahUrl(title: string, compactToken: string): string {
+    const baseUrl = getCurrentAppBaseUrl();
+    const slug = slugifyInviteTitle(title);
+    return `${baseUrl}?trah=${slug}&t=${encodeURIComponent(compactToken)}`;
   },
 
   async publishRoomSnapshot(params: {
@@ -511,8 +620,8 @@ export const InviteRelayService = {
     queryKey: 't' | 'rt',
     fullCompressedToken: string
   ): Promise<{ url: string; shortCode: string; isShort: boolean }> {
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const fallbackUrl = `${origin}/?${queryKey}=${encodeURIComponent(fullCompressedToken)}`;
+    const baseUrl = getCurrentAppBaseUrl();
+    const fallbackUrl = `${baseUrl}?${queryKey}=${encodeURIComponent(fullCompressedToken)}`;
 
     try {
       const res = await fetch('/api/relay-ticket', {
@@ -525,7 +634,7 @@ export const InviteRelayService = {
         if (data?.code) {
           saveIssuedShortInvite(data.code, fullCompressedToken);
           return {
-            url: `${origin}/?${queryKey}=${data.code}`,
+            url: `${baseUrl}?${queryKey}=${data.code}`,
             shortCode: data.code,
             isShort: true,
           };
