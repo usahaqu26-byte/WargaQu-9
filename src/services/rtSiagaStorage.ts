@@ -21,6 +21,84 @@ export interface PaguyubanProfile {
   inviteCode?: string;
   creatorName?: string;
   createdAt?: string;
+  termStartDate?: string;
+  termEndDate?: string;
+  gracePeriodDays?: number;
+  skNumber?: string;
+}
+
+export interface RtOfficerAccount {
+  id: string;
+  name: string;
+  role: string;
+  division: string;
+  email: string;
+  phone: string;
+  canVerifySiaga: boolean;
+  appointedAt: string;
+}
+
+export type RtTermHealthStatus =
+  | 'active'
+  | 'warning_90'
+  | 'warning_30'
+  | 'grace'
+  | 'expired';
+
+export interface RtTermHealth {
+  status: RtTermHealthStatus;
+  daysRemaining: number;
+  graceDaysRemaining: number;
+  termStartDate: string;
+  termEndDate: string;
+  gracePeriodDays: number;
+  periodLabel: string;
+  isReadOnlyLocked: boolean;
+  isSertijabOnly: boolean;
+  headline: string;
+  detail: string;
+}
+
+export interface RtHandoverRecord {
+  id: string;
+  handoverDate: string;
+  periodLabel: string;
+  outgoingOfficerEmails: string[];
+  incomingOfficerEmails: string[];
+  incomingOfficers: RtOfficerAccount[];
+  closingBalance: number;
+  memberCount: number;
+  skNumber: string;
+  note: string;
+  approvedByEmails: string[];
+}
+
+export type RtGovernanceActionType =
+  | 'update_officers'
+  | 'extend_term'
+  | 'sertijab'
+  | 'collective_recovery';
+
+export type RtGovernanceActionStatus =
+  | 'pending'
+  | 'approved'
+  | 'executed'
+  | 'rejected';
+
+export interface RtGovernanceAction {
+  id: string;
+  actionType: RtGovernanceActionType;
+  status: RtGovernanceActionStatus;
+  title: string;
+  note: string;
+  proposedByEmail: string;
+  proposedOfficers: RtOfficerAccount[];
+  proposedTermStartDate: string;
+  proposedTermEndDate: string;
+  proposedGracePeriodDays: number;
+  proposedSkNumber: string;
+  approverEmails: string[];
+  createdAt: string;
 }
 
 export interface CoordinatorMember {
@@ -121,6 +199,9 @@ export interface KasTransaction {
   amount: number;
   date: string;
   recordedBy: string;
+  recordedByEmail?: string;
+  isCorrection?: boolean;
+  correctsTxId?: string;
 }
 
 export interface SiagaAuditLog {
@@ -192,6 +273,7 @@ export interface RtCommunityWorkspace {
   joinedAt: string;
   profile: PaguyubanProfile;
   coordinators: CoordinatorMember[];
+  officers?: RtOfficerAccount[];
   members: WargaMember[];
   transactions: KasTransaction[];
   auditLogs: SiagaAuditLog[];
@@ -199,6 +281,10 @@ export interface RtCommunityWorkspace {
   guestReports: GuestReport[];
   archives: HistoricalArchiveYear[];
   invitations: CommunityInvitation[];
+  handovers?: RtHandoverRecord[];
+  governanceActions?: RtGovernanceAction[];
+  lastGovernanceActionId?: string;
+  cloudSyncedAt?: string;
 }
 
 export const MONTHS_12: Array<{ key: string; short: string; full: string }> = [
@@ -427,7 +513,13 @@ const DEFAULT_PROFILE: PaguyubanProfile = {
   year: 2026,
   pengurusPin: '0305',
   inviteCode: 'WQR-RT03-0305',
+  termStartDate: '2024-01-01',
+  termEndDate: '2026-12-31',
+  gracePeriodDays: 14,
+  skNumber: 'SK-03/RW05/I/2024',
 };
+
+const DEFAULT_OFFICERS: RtOfficerAccount[] = [];
 
 const EMPTY_NEUTRAL_PROFILE: PaguyubanProfile = {
   orgType: 'RT',
@@ -699,6 +791,7 @@ function buildOwnerSeedWorkspace(): RtCommunityWorkspace {
     joinedAt: new Date().toISOString(),
     profile,
     coordinators,
+    officers: [...DEFAULT_OFFICERS],
     members,
     transactions,
     auditLogs,
@@ -706,6 +799,8 @@ function buildOwnerSeedWorkspace(): RtCommunityWorkspace {
     guestReports,
     archives,
     invitations,
+    handovers: [],
+    governanceActions: [],
   };
 }
 
@@ -724,17 +819,18 @@ function loadScopedWorkspaces(): RtCommunityWorkspace[] {
     // ignore
   }
 
-  // Hanya akun pemilik utama yang mendapat data contoh / migrasi RT 03 awal.
-  // User baru & akun tamu dimulai bersih ([]) — hanya melihat komunitas hasil undangan atau buatan sendiri.
+  // Migrasi hanya jika data legacy asli benar-benar pernah disimpan sebelumnya; jika baru, mulai bersih ([]).
   if (isOwner) {
-    const seeded = [buildOwnerSeedWorkspace()];
     try {
-      localStorage.setItem(key, JSON.stringify(seeded));
-      localStorage.setItem(getScopedActiveIdKey(scopeKey), seeded[0].id);
+      if (localStorage.getItem(LEGACY_KEYS.PROFILE)) {
+        const migrated = [buildOwnerSeedWorkspace()];
+        localStorage.setItem(key, JSON.stringify(migrated));
+        localStorage.setItem(getScopedActiveIdKey(scopeKey), migrated[0].id);
+        return migrated;
+      }
     } catch {
       // ignore
     }
-    return seeded;
   }
 
   return [];
@@ -1001,6 +1097,11 @@ export const RtSiagaStorage = {
     creatorBlock: string;
     creatorPhone?: string;
     creatorRole?: string;
+    termStartDate?: string;
+    termEndDate?: string;
+    gracePeriodDays?: number;
+    skNumber?: string;
+    coOfficers?: Array<{ name: string; role: string; email: string; phone?: string }>;
   }): RtCommunityWorkspace {
     const { acc } = getCurrentAccountScope();
     const cleanOrg = params.orgName.trim() || 'Komunitas Baru';
@@ -1016,6 +1117,16 @@ export const RtSiagaStorage = {
       sampah: Math.round(monthlyAmount * 0.3),
       kas: Math.max(0, monthlyAmount - Math.round(monthlyAmount * 0.5) - Math.round(monthlyAmount * 0.3)),
     };
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const defaultEndDate = new Date();
+    defaultEndDate.setFullYear(defaultEndDate.getFullYear() + 3);
+    const termStartDate = params.termStartDate?.trim() || todayIso;
+    const termEndDate = params.termEndDate?.trim() || defaultEndDate.toISOString().slice(0, 10);
+    const gracePeriodDays =
+      typeof params.gracePeriodDays === 'number'
+        ? Math.min(60, Math.max(0, params.gracePeriodDays))
+        : 14;
 
     const todayLabel = new Date().toLocaleDateString('id-ID', {
       day: '2-digit',
@@ -1054,20 +1165,48 @@ export const RtSiagaStorage = {
         ? 'Ketua DKM / Yayasan'
         : 'Ketua Organisasi');
 
-    const coordinator: CoordinatorMember = {
-      id: `coord-${Date.now()}`,
+    const creatorEmail = (acc?.email || '').trim().toLowerCase();
+    const primaryOfficer: RtOfficerAccount = {
+      id: `off-${Date.now()}-1`,
+      name: creatorName,
       role: roleLabel,
       division: 'Pimpinan & Pengesahan',
-      name: creatorName,
+      email: creatorEmail,
       phone: creatorPhone,
       canVerifySiaga: true,
+      appointedAt: termStartDate,
     };
+
+    const extraOfficers: RtOfficerAccount[] = (params.coOfficers || [])
+      .filter(co => co.email.trim().includes('@') && co.email.trim().toLowerCase() !== creatorEmail)
+      .slice(0, 8)
+      .map((co, idx) => ({
+        id: `off-${Date.now()}-${idx + 2}`,
+        name: co.name.trim() || co.email.split('@')[0],
+        role: co.role.trim() || (idx === 0 ? 'Sekretaris' : 'Bendahara'),
+        division: idx === 0 ? 'Administrasi & Surat Warga' : 'Iuran & Transparansi Kas',
+        email: co.email.trim().toLowerCase(),
+        phone: co.phone?.trim() || '-',
+        canVerifySiaga: true,
+        appointedAt: termStartDate,
+      }));
+
+    const officers = [primaryOfficer, ...extraOfficers];
+
+    const coordinators: CoordinatorMember[] = officers.map(o => ({
+      id: o.id,
+      role: o.role,
+      division: o.division,
+      name: o.name,
+      phone: o.phone,
+      canVerifySiaga: o.canVerifySiaga,
+    }));
 
     const welcomePost: ForumPost = {
       id: `post-init-${Date.now()}`,
       category: 'info',
       title: `Selamat Datang di ${params.customBrandName?.trim() || cleanOrg}`,
-      content: `Komunitas ${cleanOrg} (${params.areaName.trim() || 'Wilayah Warga'}) telah resmi dibuka. Gunakan menu Bagikan Link Undangan untuk mengundang warga/anggota bergabung.`,
+      content: `Komunitas ${cleanOrg} (${params.areaName.trim() || 'Wilayah Warga'}) telah resmi dibuka untuk masa bakti ${termStartDate} s.d. ${termEndDate}. Gunakan menu Bagikan Link Undangan untuk mengundang warga/anggota bergabung.`,
       authorName: creatorName,
       authorRole: roleLabel,
       createdAt: 'Baru saja',
@@ -1092,8 +1231,13 @@ export const RtSiagaStorage = {
         inviteCode,
         creatorName,
         createdAt: todayLabel,
+        termStartDate,
+        termEndDate,
+        gracePeriodDays,
+        skNumber: params.skNumber?.trim() || '',
       },
-      coordinators: [coordinator],
+      coordinators,
+      officers,
       members: [creatorMember],
       transactions: [],
       auditLogs: [],
@@ -1101,6 +1245,8 @@ export const RtSiagaStorage = {
       guestReports: [],
       archives: [],
       invitations: [],
+      handovers: [],
+      governanceActions: [],
     };
 
     const current = loadScopedWorkspaces();
@@ -1626,7 +1772,7 @@ export const RtSiagaStorage = {
     this.saveMembers(updated);
   },
 
-  addTransaction(tx: Omit<KasTransaction, 'id'>) {
+  addTransaction(tx: Omit<KasTransaction, 'id'>): KasTransaction {
     const newTx: KasTransaction = {
       ...tx,
       id: `kas-${Date.now()}`,
@@ -1635,6 +1781,33 @@ export const RtSiagaStorage = {
       ...ws,
       transactions: [newTx, ...(ws.transactions || [])],
     }));
+    return newTx;
+  },
+
+  addCorrectionTransaction(
+    originalTx: KasTransaction,
+    reason: string,
+    actorName: string,
+    actorEmail?: string
+  ): KasTransaction {
+    const todayLabel = new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+    const oppositeType: 'masuk' | 'keluar' = originalTx.type === 'masuk' ? 'keluar' : 'masuk';
+    const cleanReason = reason.trim() || 'Koreksi kesalahan pencatatan';
+    return this.addTransaction({
+      type: oppositeType,
+      category: originalTx.category,
+      title: `[Koreksi] ${originalTx.title} — ${cleanReason}`,
+      amount: originalTx.amount,
+      date: todayLabel,
+      recordedBy: actorName,
+      recordedByEmail: actorEmail,
+      isCorrection: true,
+      correctsTxId: originalTx.id,
+    });
   },
 
   addSiagaAuditLog(log: Omit<SiagaAuditLog, 'auditStatus'>) {
@@ -1970,5 +2143,385 @@ export const RtSiagaStorage = {
           ]
         : [];
     this.saveTransactions(txs);
+  },
+
+  // --- Governance: Tenure Health, Multi-Officer (>2), Quorum & Sertijab ---
+  getTermHealth(profile: PaguyubanProfile, nowMs = Date.now()): RtTermHealth {
+    const defaultStart = `${profile.year || new Date().getFullYear()}-01-01`;
+    const defaultEnd = `${(profile.year || new Date().getFullYear()) + 2}-12-31`;
+    const termStartDate = profile.termStartDate || defaultStart;
+    const termEndDate = profile.termEndDate || defaultEnd;
+    const gracePeriodDays =
+      typeof profile.gracePeriodDays === 'number' ? Math.max(0, profile.gracePeriodDays) : 14;
+
+    const endTs = new Date(`${termEndDate}T23:59:59`).getTime();
+    const safeEndTs = Number.isFinite(endTs) ? endTs : nowMs + 365 * 86400000;
+    const graceEndTs = safeEndTs + gracePeriodDays * 86400000;
+
+    const dayMs = 86400000;
+    const daysRemaining = Math.ceil((safeEndTs - nowMs) / dayMs);
+    const graceDaysRemaining = Math.max(0, Math.ceil((graceEndTs - nowMs) / dayMs));
+    const periodLabel = `${termStartDate.slice(0, 4)}–${termEndDate.slice(0, 4)}`;
+
+    if (nowMs > graceEndTs) {
+      return {
+        status: 'expired',
+        daysRemaining,
+        graceDaysRemaining: 0,
+        termStartDate,
+        termEndDate,
+        gracePeriodDays,
+        periodLabel,
+        isReadOnlyLocked: true,
+        isSertijabOnly: false,
+        headline: 'Masa Bakti Berakhir · Terkunci Read-Only',
+        detail: `Masa bakti ${periodLabel} & masa tenggang ${gracePeriodDays} hari telah lewat. Segera lakukan Serah Terima Jabatan (Sertijab) atau Pemulihan Kolektif.`,
+      };
+    }
+
+    if (nowMs > safeEndTs) {
+      return {
+        status: 'grace',
+        daysRemaining,
+        graceDaysRemaining,
+        termStartDate,
+        termEndDate,
+        gracePeriodDays,
+        periodLabel,
+        isReadOnlyLocked: true,
+        isSertijabOnly: true,
+        headline: `Masa Demisioner · Sisa Tenggang Sertijab ${graceDaysRemaining} Hari`,
+        detail: `Periode ${periodLabel} berakhir pada ${termEndDate}. Input kas rutin dikunci otomatis—silakan selesaikan pemilihan & Sertijab pengurus baru.`,
+      };
+    }
+
+    if (daysRemaining <= 30) {
+      return {
+        status: 'warning_30',
+        daysRemaining,
+        graceDaysRemaining,
+        termStartDate,
+        termEndDate,
+        gracePeriodDays,
+        periodLabel,
+        isReadOnlyLocked: false,
+        isSertijabOnly: false,
+        headline: `Pemilihan Pengurus Baru · Sisa ${daysRemaining} Hari`,
+        detail: `Masa jabatan berakhir ${termEndDate}. Segera jadwalkan musyawarah pemilihan, tutup buku kas, dan siapkan Berita Acara Sertijab.`,
+      };
+    }
+
+    if (daysRemaining <= 90) {
+      return {
+        status: 'warning_90',
+        daysRemaining,
+        graceDaysRemaining,
+        termStartDate,
+        termEndDate,
+        gracePeriodDays,
+        periodLabel,
+        isReadOnlyLocked: false,
+        isSertijabOnly: false,
+        headline: `Menjelang Akhir Masa Bakti (${daysRemaining} Hari Lagi)`,
+        detail: `Periode ${periodLabel} berakhir ${termEndDate}. Mulai siapkan panitia pemilihan & undangan rapat warga.`,
+      };
+    }
+
+    return {
+      status: 'active',
+      daysRemaining,
+      graceDaysRemaining,
+      termStartDate,
+      termEndDate,
+      gracePeriodDays,
+      periodLabel,
+      isReadOnlyLocked: false,
+      isSertijabOnly: false,
+      headline: `Masa Bakti Aktif · ${periodLabel}`,
+      detail: `Berlaku hingga ${termEndDate} (${daysRemaining} hari tersisa).`,
+    };
+  },
+
+  getOfficers(ws?: RtCommunityWorkspace | null): RtOfficerAccount[] {
+    const target = ws ?? this.getActiveCommunity();
+    if (!target) return [];
+    if (target.officers && target.officers.length > 0) {
+      return target.officers;
+    }
+    // Derive fallback from legacy coordinators without fabricating fake emails
+    return (target.coordinators || []).map((c, idx) => ({
+      id: c.id || `off-legacy-${idx}`,
+      name: c.name,
+      role: c.role,
+      division: c.division,
+      email:
+        idx === 0
+          ? AuthService.getAccount()?.email?.toLowerCase() || ''
+          : '',
+      phone: c.phone,
+      canVerifySiaga: c.canVerifySiaga,
+      appointedAt: target.profile.termStartDate || '2024-01-01',
+    }));
+  },
+
+  isCurrentUserOfficer(ws?: RtCommunityWorkspace | null): boolean {
+    const { email } = getCurrentAccountScope();
+    if (!email) return false;
+    const officers = this.getOfficers(ws);
+    return officers.some(o => o.email.trim().toLowerCase() === email);
+  },
+
+  getHandovers(): RtHandoverRecord[] {
+    return this.getActiveCommunity()?.handovers || [];
+  },
+
+  getGovernanceActions(): RtGovernanceAction[] {
+    return this.getActiveCommunity()?.governanceActions || [];
+  },
+
+  saveOfficersDirectSetup(officers: RtOfficerAccount[]) {
+    const coordinators: CoordinatorMember[] = officers.map(o => ({
+      id: o.id,
+      role: o.role,
+      division: o.division,
+      name: o.name,
+      phone: o.phone,
+      canVerifySiaga: o.canVerifySiaga,
+    }));
+    updateActiveWorkspace(ws => ({
+      ...ws,
+      officers,
+      coordinators,
+    }));
+  },
+
+  upsertLocalGovernanceAction(communityId: string, action: RtGovernanceAction) {
+    const list = loadScopedWorkspaces();
+    const nextList = list.map(ws => {
+      if (ws.id !== communityId) return ws;
+      const prev = ws.governanceActions || [];
+      const exists = prev.some(a => a.id === action.id);
+      const nextActions = exists
+        ? prev.map(a => (a.id === action.id ? action : a))
+        : [action, ...prev];
+      return {
+        ...ws,
+        governanceActions: nextActions.slice(0, 20),
+      };
+    });
+    saveScopedWorkspaces(nextList);
+  },
+
+  applyGovernanceExecution(
+    communityId: string,
+    params: {
+      officers: RtOfficerAccount[];
+      termStartDate: string;
+      termEndDate: string;
+      gracePeriodDays: number;
+      skNumber: string;
+      actionId: string;
+      handover?: RtHandoverRecord;
+    }
+  ) {
+    const list = loadScopedWorkspaces();
+    const coordinators: CoordinatorMember[] = params.officers.map(o => ({
+      id: o.id,
+      role: o.role,
+      division: o.division,
+      name: o.name,
+      phone: o.phone,
+      canVerifySiaga: o.canVerifySiaga,
+    }));
+
+    const nextList = list.map(ws => {
+      if (ws.id !== communityId) return ws;
+      const nextHandovers = params.handover
+        ? [params.handover, ...(ws.handovers || [])].slice(0, 20)
+        : ws.handovers || [];
+      const nextActions = (ws.governanceActions || []).map(a =>
+        a.id === params.actionId ? { ...a, status: 'executed' as const } : a
+      );
+
+      // Lock previous period kas into archives on Sertijab handover
+      let nextArchives = ws.archives || [];
+      if (params.handover) {
+        const masuk = (ws.transactions || [])
+          .filter(t => t.type === 'masuk')
+          .reduce((s, t) => s + t.amount, 0);
+        const keluar = (ws.transactions || [])
+          .filter(t => t.type === 'keluar')
+          .reduce((s, t) => s + t.amount, 0);
+        const lockYear = parseInt(params.handover.periodLabel.slice(-4), 10) || ws.profile.year;
+        const lockEntry: HistoricalArchiveYear = {
+          id: `arc-sertijab-${params.handover.id}`,
+          year: lockYear,
+          totalIncome: masuk,
+          totalExpense: keluar,
+          endingBalance: params.handover.closingBalance,
+          note: `[Terkunci Sertijab ${params.handover.handoverDate}] ${params.handover.note}`,
+          source: 'Manual',
+        };
+        nextArchives = [lockEntry, ...nextArchives.filter(a => a.id !== lockEntry.id)];
+      }
+
+      return {
+        ...ws,
+        profile: {
+          ...ws.profile,
+          termStartDate: params.termStartDate,
+          termEndDate: params.termEndDate,
+          gracePeriodDays: params.gracePeriodDays,
+          skNumber: params.skNumber,
+        },
+        officers: params.officers,
+        coordinators,
+        handovers: nextHandovers,
+        governanceActions: nextActions,
+        archives: nextArchives,
+        lastGovernanceActionId: params.actionId,
+      };
+    });
+    saveScopedWorkspaces(nextList);
+  },
+
+  mergeCloudCommunityRecord(cloudData: {
+    communityId: string;
+    orgType: OrgType;
+    customBrandName?: string;
+    orgName: string;
+    areaName: string;
+    monthlyDuesAmount: number;
+    year: number;
+    inviteCode: string;
+    termStartDate: string;
+    termEndDate: string;
+    gracePeriodDays: number;
+    skNumber: string;
+    officers: RtOfficerAccount[];
+    recentTransactions?: KasTransaction[];
+    handoverHistory?: RtHandoverRecord[];
+    governanceActions?: RtGovernanceAction[];
+    lastGovernanceActionId?: string;
+    cloudSyncedAt: string;
+  }) {
+    const list = loadScopedWorkspaces();
+    const idx = list.findIndex(w => w.id === cloudData.communityId);
+    const coordinators: CoordinatorMember[] = (cloudData.officers || []).map(o => ({
+      id: o.id,
+      role: o.role,
+      division: o.division,
+      name: o.name,
+      phone: o.phone,
+      canVerifySiaga: o.canVerifySiaga,
+    }));
+
+    if (idx === -1) {
+      const { acc } = getCurrentAccountScope();
+      const memberName = acc ? AuthService.getDisplayName(acc) : 'Pengurus';
+      const selfMember: WargaMember = {
+        id: `warga-cloud-${Date.now()}`,
+        wargaId: `WQ-SRV-001`,
+        name: memberName,
+        block: 'Pengurus / Warga Terdaftar',
+        email: acc?.email,
+        phone: acc?.phone || '-',
+        deviceId: acc?.deviceId,
+        residentType: 'Tetap',
+        isCurrentUser: true,
+        claimStatus: 'claimed',
+        siagaStatus: 'active',
+        falseAlarmCount: 0,
+        monthlyPayments: buildInitialPayments(0, cloudData.monthlyDuesAmount || 0),
+      };
+
+      const newWs: RtCommunityWorkspace = {
+        id: cloudData.communityId,
+        joinedVia: 'invited',
+        invitedBy: 'Server Cloud RTQu',
+        joinedAt: cloudData.cloudSyncedAt,
+        profile: {
+          id: cloudData.communityId,
+          orgType: cloudData.orgType,
+          customBrandName: cloudData.customBrandName || undefined,
+          orgName: cloudData.orgName,
+          areaName: cloudData.areaName,
+          monthlyDuesAmount: cloudData.monthlyDuesAmount,
+          duesBreakdown: {
+            keamanan: Math.round((cloudData.monthlyDuesAmount || 0) * 0.5),
+            sampah: Math.round((cloudData.monthlyDuesAmount || 0) * 0.3),
+            kas: Math.max(
+              0,
+              (cloudData.monthlyDuesAmount || 0) -
+                Math.round((cloudData.monthlyDuesAmount || 0) * 0.5) -
+                Math.round((cloudData.monthlyDuesAmount || 0) * 0.3)
+            ),
+          },
+          year: cloudData.year,
+          pengurusPin: '0000',
+          inviteCode: cloudData.inviteCode,
+          termStartDate: cloudData.termStartDate,
+          termEndDate: cloudData.termEndDate,
+          gracePeriodDays: cloudData.gracePeriodDays,
+          skNumber: cloudData.skNumber,
+        },
+        coordinators,
+        officers: cloudData.officers,
+        members: [selfMember],
+        transactions: cloudData.recentTransactions || [],
+        auditLogs: [],
+        forumPosts: [],
+        guestReports: [],
+        archives: [],
+        invitations: [],
+        handovers: cloudData.handoverHistory || [],
+        governanceActions: cloudData.governanceActions || [],
+        lastGovernanceActionId: cloudData.lastGovernanceActionId,
+        cloudSyncedAt: cloudData.cloudSyncedAt,
+      };
+      saveScopedWorkspaces([newWs, ...list]);
+      return;
+    }
+
+    const existing = list[idx];
+    // Merge transactions by ID preserving local + cloud
+    const txMap = new Map<string, KasTransaction>();
+    (cloudData.recentTransactions || []).forEach(t => txMap.set(t.id, t));
+    (existing.transactions || []).forEach(t => {
+      if (!txMap.has(t.id)) txMap.set(t.id, t);
+    });
+
+    const updatedWs: RtCommunityWorkspace = {
+      ...existing,
+      profile: {
+        ...existing.profile,
+        orgType: cloudData.orgType,
+        customBrandName: cloudData.customBrandName || existing.profile.customBrandName,
+        orgName: cloudData.orgName,
+        areaName: cloudData.areaName,
+        monthlyDuesAmount: cloudData.monthlyDuesAmount,
+        year: cloudData.year,
+        inviteCode: cloudData.inviteCode || existing.profile.inviteCode,
+        termStartDate: cloudData.termStartDate,
+        termEndDate: cloudData.termEndDate,
+        gracePeriodDays: cloudData.gracePeriodDays,
+        skNumber: cloudData.skNumber,
+      },
+      coordinators: coordinators.length > 0 ? coordinators : existing.coordinators,
+      officers: cloudData.officers.length > 0 ? cloudData.officers : existing.officers,
+      transactions: Array.from(txMap.values()),
+      handovers:
+        cloudData.handoverHistory && cloudData.handoverHistory.length > 0
+          ? cloudData.handoverHistory
+          : existing.handovers,
+      governanceActions:
+        cloudData.governanceActions !== undefined
+          ? cloudData.governanceActions
+          : existing.governanceActions,
+      lastGovernanceActionId: cloudData.lastGovernanceActionId || existing.lastGovernanceActionId,
+      cloudSyncedAt: cloudData.cloudSyncedAt,
+    };
+    const nextList = list.map((w, i) => (i === idx ? updatedWs : w));
+    saveScopedWorkspaces(nextList);
   },
 };

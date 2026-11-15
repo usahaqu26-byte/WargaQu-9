@@ -213,30 +213,23 @@ export const SiagaQuView: React.FC<SiagaQuViewProps> = ({
   const [beaconColor, setBeaconColor] = useState<string | null>(null);
   const beaconAbortRef = useRef<boolean>(false);
 
-  // Contacts
-  const [contacts, setContacts] = useState<EmergencyContact[]>([
-    {
-      id: 'c-1',
-      name: 'Pak RT Bambang (Ketua RT 03)',
-      phone: '0812-3456-7890',
-      role: 'Pengurus Utama',
-      priority: 'Prioritas',
-    },
-    {
-      id: 'c-2',
-      name: 'Istri / Keluarga Rumah',
-      phone: '0813-9988-7766',
-      role: 'Kontak Kerabat',
-      priority: 'Darurat',
-    },
-    {
-      id: 'c-3',
-      name: 'Bpk. Dedi (Koordinator Siskamling)',
-      phone: '0819-7788-9900',
-      role: 'Keamanan Lingkungan',
-      priority: 'Aktif',
-    },
-  ]);
+  // Contacts (persisted locally per device, starts clean [])
+  const [contacts, setContacts] = useState<EmergencyContact[]>(() => {
+    try {
+      const saved = localStorage.getItem('wargaqu_siaga_contacts_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('wargaqu_siaga_contacts_v1', JSON.stringify(contacts));
+    } catch {}
+  }, [contacts]);
 
   // Add contact modal
   const [isAddContactModalOpen, setIsAddContactModalOpen] = useState<boolean>(false);
@@ -244,23 +237,18 @@ export const SiagaQuView: React.FC<SiagaQuViewProps> = ({
   const [newContactPhone, setNewContactPhone] = useState<string>('');
   const [newContactRole, setNewContactRole] = useState<string>('Keluarga');
 
-  // Emergency History Logs
+  // Emergency History Logs (clean start [], no mock LOG-INIT)
   const [logs, setLogs] = useState<EmergencyLog[]>(() => {
     try {
       const saved = localStorage.getItem('siagaqu_logs');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return (parsed as EmergencyLog[]).filter((l) => l?.id !== 'LOG-INIT');
+        }
+      }
     } catch {}
-    return [
-      {
-        id: 'LOG-INIT',
-        timestamp: '19:45',
-        date: '28 Okt',
-        category: 'Maling / Kejahatan',
-        mode: 'Simulasi',
-        location: 'RT 03 / RW 05 - Blok A No. 12',
-        transcript: '"Simulasi respon pos ronda terkoordinasi lancar di pos utama RT 03."',
-      },
-    ];
+    return [];
   });
 
   useEffect(() => {
@@ -1669,7 +1657,12 @@ export const SiagaQuView: React.FC<SiagaQuViewProps> = ({
             </div>
 
             <div className="space-y-2.5">
-              {contacts.map((contact) => (
+              {contacts.length === 0 ? (
+                <div className="bg-slate-800/70 p-4 rounded-2xl border border-slate-700 text-center text-xs text-slate-400">
+                  Belum ada kontak Ring 1 tersimpan. Tekan <strong>+ Tambah</strong> untuk menyimpan nomor darurat keluarga atau pengurus RT Anda.
+                </div>
+              ) : (
+              contacts.map((contact) => (
                 <div
                   key={contact.id}
                   className="bg-slate-800 p-3 rounded-2xl border border-slate-700 flex items-center justify-between shadow-xs"
@@ -1706,7 +1699,8 @@ export const SiagaQuView: React.FC<SiagaQuViewProps> = ({
                     </a>
                   </div>
                 </div>
-              ))}
+              ))
+              )}
             </div>
 
             {/* Komunitas Pribadi, Keluarga & Perusahaan (Khusus Akun Terundang, Tanpa RT) */}

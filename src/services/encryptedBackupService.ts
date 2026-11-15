@@ -104,6 +104,87 @@ export const EncryptedBackupService = {
     );
   },
 
+  collectSnapshot(scope: BackupScope = 'all'): Record<string, string> {
+    return collectStorageSnapshot(scope);
+  },
+
+  applyRestoredEntries(
+    entries: Record<string, string>,
+    scope: BackupScope = 'all',
+    ownerEmail = 'wargaqu',
+    auditLabel = 'Pulihkan Backup'
+  ): number {
+    let restoredKeys = 0;
+    Object.entries(entries).forEach(([k, v]) => {
+      if (k === 'wargaqu_hidden_device_token_v1') return;
+      if (typeof v === 'string') {
+        try {
+          localStorage.setItem(k, v);
+          restoredKeys += 1;
+        } catch {
+          // ignore storage quota
+        }
+      }
+    });
+
+    const restoredAcc = AuthService.getAccount();
+    if (restoredAcc) {
+      ZeroTrustService.registerOrTouchCurrentDevice(
+        restoredAcc.email,
+        restoredAcc.phone,
+        'Perangkat Pemulihan Backup'
+      );
+    }
+
+    ZeroTrustService.appendAudit(
+      restoredAcc?.email || ownerEmail || 'WargaQu',
+      auditLabel,
+      `${restoredKeys} kunci dipulihkan (${scope})`,
+      'info'
+    );
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(AUTH_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(RT_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(SIAGA_CIRCLE_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(ZERO_TRUST_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(MONETIZATION_SYNC_EVENT));
+    }
+
+    return restoredKeys;
+  },
+
+  async decryptEnvelope(
+    envelope: EncryptedBackupEnvelope,
+    password: string
+  ): Promise<{ scope: BackupScope; ownerEmail: string; entries: Record<string, string> }> {
+    if (!this.isSupported()) {
+      throw new Error('Peramban tidak mendukung dekripsi WebCrypto AES-GCM.');
+    }
+    if (!password.trim()) {
+      throw new Error('Masukkan kata sandi cadangan terlebih dahulu.');
+    }
+    let decryptedBytes: ArrayBuffer;
+    try {
+      const salt = fromBase64(envelope.salt);
+      const iv = fromBase64(envelope.iv);
+      const ciphertext = fromBase64(envelope.ciphertext);
+      const aesKey = await deriveAesKey(password, salt);
+      decryptedBytes = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
+        aesKey,
+        ciphertext.buffer as ArrayBuffer
+      );
+    } catch {
+      throw new Error('Kata sandi salah atau file cadangan sudah termodifikasi.');
+    }
+    return JSON.parse(new TextDecoder().decode(decryptedBytes)) as {
+      scope: BackupScope;
+      ownerEmail: string;
+      entries: Record<string, string>;
+    };
+  },
+
   async createEncryptedBackupBlob(
     scope: BackupScope,
     password: string
@@ -215,65 +296,13 @@ export const EncryptedBackupService = {
       throw new Error('File ini bukan arsip cadangan terenkripsi WargaQu.');
     }
 
-    let decryptedBytes: ArrayBuffer;
-    try {
-      const salt = fromBase64(envelope.salt);
-      const iv = fromBase64(envelope.iv);
-      const ciphertext = fromBase64(envelope.ciphertext);
-      const aesKey = await deriveAesKey(password, salt);
-      decryptedBytes = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
-        aesKey,
-        ciphertext.buffer as ArrayBuffer
-      );
-    } catch {
-      throw new Error('Kata sandi salah atau file cadangan sudah termodifikasi.');
-    }
-
-    const decoded = JSON.parse(new TextDecoder().decode(decryptedBytes)) as {
-      scope: BackupScope;
-      ownerEmail: string;
-      entries: Record<string, string>;
-    };
-
-    const entries = decoded.entries || {};
-    let restoredKeys = 0;
-    Object.entries(entries).forEach(([k, v]) => {
-      if (k === 'wargaqu_hidden_device_token_v1') return;
-      if (typeof v === 'string') {
-        try {
-          localStorage.setItem(k, v);
-          restoredKeys += 1;
-        } catch {
-          // ignore storage quota
-        }
-      }
-    });
-
-    // Pastikan perangkat baru tetap terikat dengan akun yang baru dipulihkan
-    const restoredAcc = AuthService.getAccount();
-    if (restoredAcc) {
-      ZeroTrustService.registerOrTouchCurrentDevice(
-        restoredAcc.email,
-        restoredAcc.phone,
-        'Perangkat Pemulihan Backup Terenkripsi'
-      );
-    }
-
-    ZeroTrustService.appendAudit(
-      restoredAcc?.email || decoded.ownerEmail || 'WargaQu',
-      'Pulihkan Backup Terenkripsi',
-      `${restoredKeys} kunci dipulihkan (${decoded.scope})`,
-      'info'
+    const decoded = await this.decryptEnvelope(envelope, password);
+    const restoredKeys = this.applyRestoredEntries(
+      decoded.entries || {},
+      decoded.scope || envelope.scope,
+      decoded.ownerEmail || envelope.ownerEmail,
+      'Pulihkan Backup Terenkripsi'
     );
-
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent(AUTH_SYNC_EVENT));
-      window.dispatchEvent(new CustomEvent(RT_SYNC_EVENT));
-      window.dispatchEvent(new CustomEvent(SIAGA_CIRCLE_SYNC_EVENT));
-      window.dispatchEvent(new CustomEvent(ZERO_TRUST_SYNC_EVENT));
-      window.dispatchEvent(new CustomEvent(MONETIZATION_SYNC_EVENT));
-    }
 
     return {
       restoredKeys,

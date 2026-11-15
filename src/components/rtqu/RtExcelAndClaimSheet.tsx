@@ -30,6 +30,11 @@ interface RtExcelAndClaimSheetProps {
   brandTitle: string;
   currentUser: WargaMember;
   members: WargaMember[];
+  initialInvitationPrefill?: {
+    eventType?: InvitationEventType;
+    title?: string;
+    agenda?: string;
+  } | null;
   onClose: () => void;
   showNotification: (msg: string) => void;
 }
@@ -40,6 +45,7 @@ export const RtExcelAndClaimSheet: React.FC<RtExcelAndClaimSheetProps> = ({
   brandTitle,
   currentUser,
   members,
+  initialInvitationPrefill,
   onClose,
   showNotification,
 }) => {
@@ -66,12 +72,12 @@ export const RtExcelAndClaimSheet: React.FC<RtExcelAndClaimSheetProps> = ({
     targetAudience: string;
     agenda: string;
   }>({
-    eventType: 'Rapat Warga',
-    title: '',
+    eventType: initialInvitationPrefill?.eventType || 'Rapat Warga',
+    title: initialInvitationPrefill?.title || '',
     dateTime: '',
     location: 'Balai Warga',
     targetAudience: `Seluruh Warga ${profile.orgName}`,
-    agenda: '',
+    agenda: initialInvitationPrefill?.agenda || '',
   });
 
   // --- Add Historical Archive Year State ---

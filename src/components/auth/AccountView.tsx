@@ -23,6 +23,7 @@ import {
   FirebaseSyncService,
 } from '../../services/firebaseSyncService';
 import { EncryptedBackupPanel } from '../common/EncryptedBackupPanel';
+import { AutoBackupResetPanel } from '../common/AutoBackupResetPanel';
 
 interface AccountViewProps {
   onBack: () => void;
@@ -368,12 +369,16 @@ export const AccountView: React.FC<AccountViewProps> = ({
           </section>
         )}
 
-        {/* Cadangan Terenkripsi Offline (bisa dipakai juga untuk pulihkan di HP baru) */}
-        <section className="p-4">
+        {/* Auto-Backup HP & Google Drive (Sistem Timpa) + Safe Reset */}
+        <section className="p-4 space-y-3 bg-slate-50/40">
+          <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+            Auto-Backup, Restore &amp; Reset Aman
+          </div>
+          <AutoBackupResetPanel showNotification={showNotification} />
           <EncryptedBackupPanel
             scope="all"
-            title="Cadangan Terenkripsi Semua Data (.wqbak)"
-            description="Enkripsi seluruh data WargaQu (LeluhurQu, RTQu, SiagaQu & Akun) dengan kata sandi untuk disimpan ke Google Drive atau dipulihkan di HP pengganti."
+            title="Ekspor / Pulihkan Manual File Terenkripsi (.wqbak)"
+            description="Opsi manual: enkripsi seluruh data WargaQu dengan kata sandi untuk disimpan ke perangkat atau dipulihkan manual kapan saja."
             showNotification={showNotification}
           />
         </section>

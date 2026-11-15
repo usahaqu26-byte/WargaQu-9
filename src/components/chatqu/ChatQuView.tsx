@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { ModuleOnboardingService } from '../../services/moduleOnboardingService';
 import { AuthService } from '../../services/authService';
+import { RtSiagaStorage } from '../../services/rtSiagaStorage';
 import {
   REALTIME_RELAY_EVENT,
   RelayIncomingEvent,
@@ -92,157 +93,27 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Initial chat data (stored locally on user's phone)
+  // Chat rooms persisted locally on user's phone (starts clean [], no mock rooms)
   const [chats, setChats] = useState<ChatRoomData[]>(() => {
+    const legacyMockIds = new Set(['emergency-1', 'grup-rt03', 'ronda-malam', 'pak-rt-ahmad']);
+    const legacyMockMsgIds = new Set(['e1', 'g1', 'r1', 'p1']);
     try {
       const saved = localStorage.getItem('wargaqu_chat_rooms_v1');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          return (parsed as ChatRoomData[]).filter(
+            (r) =>
+              !(
+                legacyMockIds.has(r.id) &&
+                Array.isArray(r.messages) &&
+                r.messages.some((m) => legacyMockMsgIds.has(m.id))
+              )
+          );
+        }
       }
     } catch {}
-    return [
-    {
-      id: 'emergency-1',
-      title: 'DARURAT: Anak Hilang (Blok A)',
-      subtitle: 'SiagaQu System • Penanganan Aktif',
-      category: 'emergency',
-      isEmergency: true,
-      time: '2 mnt',
-      lastMessage: '[VOICE]: Tolong anak baju merah usia 5 thn di sekitar pos...',
-      avatarBg: 'bg-red-600',
-      avatarIcon: 'emergency',
-      messages: [
-        {
-          id: 'e1',
-          sender: 'SiagaQu Dispatcher',
-          isMe: false,
-          text: '🚨 PERINGATAN DARURAT WARGA: Anak laki-laki usia 5 tahun (baju merah, celana biru) terpantau keluar gerbang Blok A jam 10.35. Mohon warga di sekitar taman dan pos jaga membantu pengecekan.',
-          time: '10.36',
-          status: 'read'
-        },
-        {
-          id: 'e2',
-          sender: 'Bpk. Herman (Pos Ronda)',
-          isMe: false,
-          isVoice: true,
-          voiceDuration: '0:18',
-          text: 'Suara laporan saksi mata di depan pos ronda blok A.',
-          time: '10.38',
-          status: 'read'
-        },
-        {
-          id: 'e3',
-          sender: 'Anda',
-          isMe: true,
-          text: 'Saya sedang di taman bermain Blok B, kami bantu sisir area ayunan.',
-          time: '10.40',
-          status: 'read'
-        }
-      ]
-    },
-    {
-      id: 'grup-rt03',
-      title: 'Grup Resmi RT 03 / RW 05',
-      subtitle: 'Pak RT, Pengurus & 84 Warga',
-      category: 'group',
-      unreadCount: 5,
-      time: '10.42',
-      lastMessage: 'Pak RT Ahmad: Bapak/Ibu sekalian, jadwal kerja bakti Minggu jam 07.00...',
-      avatarBg: 'bg-sky-600',
-      avatarIcon: 'group',
-      messages: [
-        {
-          id: 'g1',
-          sender: 'Pak RT Ahmad',
-          isMe: false,
-          text: 'Assalamu’alaikum Bapak/Ibu warga RT 03. Mengingatkan kembali bahwa hari Minggu ini kita adakan kerja bakti massal pembersihan selokan pencegahan nyamuk.',
-          time: '10.30',
-          status: 'read'
-        },
-        {
-          id: 'g2',
-          sender: 'Bu Nur (Kader Dasawisma)',
-          isMe: false,
-          text: 'Siap Pak RT, konsumsi teh hangat dan kue basah nanti kami siapkan dari tim ibu-ibu PKK.',
-          time: '10.35',
-          status: 'read'
-        },
-        {
-          id: 'g3',
-          sender: 'Pak RT Ahmad',
-          isMe: false,
-          text: 'Alhamdulillah terima kasih Bu Nur. Mohon yang memiliki cangkul & gerobak sorong bisa dibawa.',
-          time: '10.42',
-          status: 'read'
-        }
-      ]
-    },
-    {
-      id: 'ronda-malam',
-      title: 'Pos Ronda & Siskamling',
-      subtitle: 'Regu A & Hansip RT 03',
-      category: 'group',
-      time: 'Kemarin',
-      lastMessage: 'Kunci portal malam ini dipegang oleh Pak Asep ya.',
-      avatarBg: 'bg-[#132232] border border-sky-400',
-      avatarIcon: 'security',
-      messages: [
-        {
-          id: 'r1',
-          sender: 'Pak Hendra (Koord Ronda)',
-          isMe: false,
-          text: 'Jadwal ronda malam Kamis: Regu A (Pak Asep, Pak Joko, Mas Hendri, Pak Danu).',
-          time: '20.15',
-          status: 'read'
-        },
-        {
-          id: 'r2',
-          sender: 'Pak Asep',
-          isMe: false,
-          text: 'Siap laksanakan, kunci portal malam ini dipegang oleh Pak Asep ya.',
-          time: '21.05',
-          status: 'read'
-        }
-      ]
-    },
-    {
-      id: 'pak-rt-ahmad',
-      title: 'Pak RT Ahmad (Ketua RT)',
-      subtitle: 'Online • Ketua RT 03',
-      category: 'personal',
-      time: 'Kemarin',
-      lastMessage: 'Surat Pengantar KTP sudah diterbitkan ya mas Hendri.',
-      avatarBg: 'bg-slate-700',
-      avatarIcon: 'personal',
-      messages: [
-        {
-          id: 'p1',
-          sender: 'Anda',
-          isMe: true,
-          text: 'Assalamu’alaikum Pak RT, mohon izin mengajukan surat pengantar pembuatan KTP baru untuk anak saya.',
-          time: '09.15',
-          status: 'read'
-        },
-        {
-          id: 'p2',
-          sender: 'Pak RT Ahmad',
-          isMe: false,
-          text: 'Wa’alaikumsalam mas Hendri. Berkas KK sudah saya cek di aplikasi RtQu, semuanya lengkap.',
-          time: '10.12',
-          status: 'read'
-        },
-        {
-          id: 'p3',
-          sender: 'Pak RT Ahmad',
-          isMe: false,
-          text: 'Surat Pengantar KTP sudah diterbitkan ya mas Hendri. Bisa langsung diunduh lewat RtQu atau diambil di rumah.',
-          time: '10.15',
-          status: 'read'
-        }
-      ]
-    }
-    ];
+    return [];
   });
 
   useEffect(() => {
@@ -251,42 +122,44 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
     } catch {}
   }, [chats]);
 
-  // Announcements list for Pengumuman tab
-  const announcements = [
-    {
-      id: 'ann-1',
-      title: 'Kerja Bakti Akbar & Bersih Saluran Air',
-      author: 'Pengurus RT 03',
-      date: 'Hari ini • 08:00 WIB',
-      content: 'Wajib hadir seluruh kepala keluarga dalam rangka mengantisipasi musim penghujan dan genangan air.',
-      badge: 'Penting'
-    },
-    {
-      id: 'ann-2',
-      title: 'Pelaksanaan Fogging DBD Wilayah RW 05',
-      author: 'Puskesmas & Seksi Kesehatan RT',
-      date: '28 Okt • 14:00 WIB',
-      content: 'Mohon warga menutup wadah makanan dan membuka jendela belakang saat petugas fogging berkeliling.',
-      badge: 'Kesehatan'
-    },
-    {
-      id: 'ann-3',
-      title: 'Iuran Sampah & Keamanan Periode November',
-      author: 'Bendahara RT 03',
-      date: '25 Okt • 10:00 WIB',
-      content: 'Bisa dibayarkan tunai melalui petugas ronda atau transfer digital lewat menu RtQu WargaPay.',
-      badge: 'Keuangan'
-    }
-  ];
+  const activeCommunity = RtSiagaStorage.getActiveCommunity();
 
-  // Citizen Directory for Community tab
-  const citizens = [
-    { name: 'Pak RT Ahmad Fauzi', role: 'Ketua RT 03', phone: '0812-3456-7890', block: 'Blok A No. 1' },
-    { name: 'Pak Hendra Kusuma', role: 'Sekretaris RT', phone: '0813-9876-5432', block: 'Blok B No. 4' },
-    { name: 'Ibu Hj. Aminah', role: 'Bendahara RT', phone: '0815-1122-3344', block: 'Blok A No. 8' },
-    { name: 'Pak Asep Sunandar', role: 'Kepala Keamanan & Ronda', phone: '0818-4455-6677', block: 'Pos Ronda Utama' },
-    { name: 'Bu Nurul Komariah', role: 'Ketua PKK / Dasawisma', phone: '0821-6677-8899', block: 'Blok C No. 12' }
-  ];
+  // Announcements derived from active community forum posts (real data only)
+  const announcements = activeCommunity
+    ? RtSiagaStorage.getForumPosts().map((post) => ({
+        id: post.id,
+        title: post.title,
+        author: post.authorName,
+        date: post.createdAt,
+        content: post.content,
+        badge:
+          post.category === 'jadwal'
+            ? 'Jadwal'
+            : post.category === 'polling'
+            ? 'Polling'
+            : post.category === 'aspirasi'
+            ? 'Aspirasi'
+            : 'Info',
+      }))
+    : [];
+
+  // Citizen Directory derived from real active community coordinators & members
+  const citizens = activeCommunity
+    ? [
+        ...RtSiagaStorage.getCoordinators().map((c) => ({
+          name: c.name,
+          role: c.role,
+          phone: c.phone || '-',
+          block: c.division,
+        })),
+        ...RtSiagaStorage.getMembers().map((m) => ({
+          name: m.name,
+          role: m.residentType === 'Tetap' ? 'Warga Tetap' : 'Warga',
+          phone: m.phone || '-',
+          block: m.block || '-',
+        })),
+      ]
+    : [];
 
   // Auto scroll to bottom in room
   useEffect(() => {
@@ -642,8 +515,12 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
             })}
 
             {filteredChats.length === 0 && (
-              <div className="p-8 text-center text-slate-400 text-xs">
-                Tidak ada obrolan yang sesuai dengan "{searchQuery}".
+              <div className="p-8 text-center text-slate-400 text-xs space-y-2">
+                <p>
+                  {searchQuery.trim()
+                    ? `Tidak ada obrolan yang sesuai dengan "${searchQuery}".`
+                    : 'Belum ada ruang obrolan. Tekan tombol + di kanan bawah untuk membuat grup atau obrolan baru.'}
+                </p>
               </div>
             )}
           </div>
@@ -655,12 +532,19 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
             <div className="bg-[#101e2c] border border-sky-500/30 rounded-xl p-3 text-xs text-sky-200 flex items-start gap-2.5">
               <Megaphone className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
               <div>
-                <span className="font-bold text-white block">Saluran Pengumuman Resmi RT 03</span>
-                Papan informasi satu arah dari pengurus RT untuk seluruh warga.
+                <span className="font-bold text-white block">
+                  Saluran Pengumuman Resmi {activeCommunity ? activeCommunity.profile.orgName : 'Komunitas'}
+                </span>
+                Papan informasi satu arah dari pengurus komunitas untuk seluruh warga.
               </div>
             </div>
 
-            {announcements.map(ann => (
+            {announcements.length === 0 ? (
+              <div className="bg-[#122232] border border-[#1d3348] rounded-xl p-6 text-center text-xs text-slate-400">
+                Belum ada pengumuman resmi. Pengumuman akan muncul otomatis setelah Anda bergabung atau membuat komunitas di RTQu.
+              </div>
+            ) : (
+            announcements.map(ann => (
               <div
                 key={ann.id}
                 className="bg-[#122232] border border-[#1d3348] hover:border-sky-500/40 rounded-xl p-4 space-y-2 transition shadow-sm"
@@ -685,7 +569,8 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
                   </button>
                 </div>
               </div>
-            ))}
+            ))
+            )}
           </div>
         )}
 
@@ -700,7 +585,12 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
               </div>
             </div>
 
-            {chats
+            {chats.filter(c => c.isEmergency).length === 0 ? (
+              <div className="bg-[#122232] border border-[#1d3348] rounded-xl p-6 text-center text-xs text-slate-400">
+                Tidak ada peringatan darurat SiagaQu yang aktif saat ini.
+              </div>
+            ) : (
+            chats
               .filter(c => c.isEmergency)
               .map(chat => (
                 <div
@@ -717,13 +607,14 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
                   <h3 className="text-sm font-black text-white">{chat.title}</h3>
                   <p className="text-xs text-slate-300 leading-relaxed">{chat.lastMessage}</p>
                   <div className="pt-2 flex justify-between items-center text-xs">
-                    <span className="text-slate-400 font-mono text-[10px]">Lokasi: Sekitar Blok A</span>
+                    <span className="text-slate-400 font-mono text-[10px]">Kanal Darurat Terverifikasi</span>
                     <button className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg text-xs flex items-center gap-1">
                       Buka Koordinasi
                     </button>
                   </div>
                 </div>
-              ))}
+              ))
+            )}
           </div>
         )}
 
@@ -731,12 +622,17 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
         {activeTab === 'community' && (
           <div className="p-4 space-y-3">
             <div className="bg-[#101e2c] border border-sky-500/30 rounded-xl p-3 text-xs text-sky-200">
-              <span className="font-bold text-white block mb-0.5">Direktori Kontak Warga & Pengurus</span>
-              RT 03 / RW 05 Kelurahan Gotong Royong
+              <span className="font-bold text-white block mb-0.5">Direktori Kontak Warga &amp; Pengurus</span>
+              {activeCommunity ? `${activeCommunity.profile.orgName} · ${activeCommunity.profile.areaName}` : 'Belum terhubung ke komunitas'}
             </div>
 
             <div className="space-y-2">
-              {citizens.map((citizen, idx) => (
+              {citizens.length === 0 ? (
+                <div className="bg-[#122232] border border-[#1d3348] rounded-xl p-6 text-center text-xs text-slate-400">
+                  Belum ada kontak warga terdaftar. Gabung atau buat komunitas di menu RTQu terlebih dahulu.
+                </div>
+              ) : (
+              citizens.map((citizen, idx) => (
                 <div
                   key={idx}
                   className="bg-[#122232] border border-[#1b2f42] rounded-xl p-3 flex items-center justify-between hover:border-sky-500/40 transition"
@@ -797,7 +693,8 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
                     </button>
                   </div>
                 </div>
-              ))}
+              ))
+              )}
             </div>
           </div>
         )}
@@ -1159,7 +1056,12 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
               <div className="pt-2">
                 <p className="text-[11px] font-bold text-sky-400 mb-1.5">PILIH DARI KONTAK PENGURUS RT:</p>
                 <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                  {citizens.map((c, i) => (
+                  {citizens.length === 0 ? (
+                    <div className="text-[11px] text-slate-400 py-2">
+                      Belum ada kontak pengurus RT. Gabung komunitas di RTQu untuk memuat direktori.
+                    </div>
+                  ) : (
+                  citizens.map((c, i) => (
                     <button
                       key={i}
                       onClick={() => {
@@ -1199,7 +1101,8 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
                         {c.role}
                       </span>
                     </button>
-                  ))}
+                  ))
+                  )}
                 </div>
               </div>
             </div>

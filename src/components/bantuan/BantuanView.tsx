@@ -23,6 +23,8 @@ import {
   SmartCareLogEntry,
   SmartCareService,
 } from '../../services/smartCareService';
+import { AUTH_SYNC_EVENT } from '../../services/authService';
+import { ZERO_TRUST_SYNC_EVENT, ZeroTrustService } from '../../services/zeroTrustService';
 import { SmartCareAdminTriagePanel } from './SmartCareAdminTriagePanel';
 import { SmartCareModuleGuidesPanel } from './SmartCareModuleGuidesPanel';
 
@@ -33,23 +35,70 @@ interface BantuanViewProps {
 
 type SmartCareViewTab = 'lapor' | 'panduan' | 'admin_triage';
 
+const USER_DRAFT_STORAGE_KEY = 'wargaqu_smartcare_user_draft_v1';
+
+interface SavedUserDraft {
+  text: string;
+  entryId: string | null;
+}
+
+function loadUserDraft(): SavedUserDraft {
+  try {
+    const raw = localStorage.getItem(USER_DRAFT_STORAGE_KEY);
+    if (!raw) return { text: '', entryId: null };
+    const parsed = JSON.parse(raw) as Partial<SavedUserDraft>;
+    return {
+      text: typeof parsed.text === 'string' ? parsed.text : '',
+      entryId: typeof parsed.entryId === 'string' ? parsed.entryId : null,
+    };
+  } catch {
+    return { text: '', entryId: null };
+  }
+}
+
+function saveUserDraft(draft: SavedUserDraft | null) {
+  try {
+    if (!draft || (!draft.text.trim() && !draft.entryId)) {
+      localStorage.removeItem(USER_DRAFT_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(USER_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+function checkIsAdmin(): boolean {
+  return (
+    ZeroTrustService.isCurrentUserAdminAccount() ||
+    SmartCareService.isDeveloperOrAdmin()
+  );
+}
+
 export const BantuanView: React.FC<BantuanViewProps> = ({
   onBackToWarga,
   showNotification,
 }) => {
-  const isDevAdmin = SmartCareService.isDeveloperOrAdmin();
+  const [isAdmin, setIsAdmin] = useState<boolean>(() => checkIsAdmin());
   const [activeViewTab, setActiveViewTab] = useState<SmartCareViewTab>('lapor');
 
   // Voice & Editable Entry States
+  const initialDraft = !checkIsAdmin() ? loadUserDraft() : { text: '', entryId: null };
   const [isRecording, setIsRecording] = useState<boolean>(false);
-  const [voiceText, setVoiceText] = useState<string>('');
+  const [voiceText, setVoiceText] = useState<string>(initialDraft.text);
   const [interimVoiceText, setInterimVoiceText] = useState<string>('');
   const [voiceStatus, setVoiceStatus] = useState<string>(
-    'Tekan mic untuk rekam suara atau ketik/edit langsung kendala teknis Anda'
+    initialDraft.text
+      ? 'Draft keluhan tersimpan dimuat. Edit bila perlu lalu klik Simpan atau Kirim.'
+      : 'Tekan mic untuk rekam suara atau ketik/edit langsung kendala teknis Anda'
   );
-  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(initialDraft.entryId);
+  const [lastSentTicketInfo, setLastSentTicketInfo] = useState<{
+    id: string;
+    sentAt: string;
+  } | null>(null);
 
-  // Synced Smart Care logs
+  // Synced Smart Care logs (admin-only visibility)
   const [logs, setLogs] = useState<SmartCareLogEntry[]>(() => SmartCareService.getLogs());
   const [selectedLogId, setSelectedLogId] = useState<string>(
     () => SmartCareService.getLogs()[0]?.id || ''
@@ -62,9 +111,16 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
   const [isCopied, setIsCopied] = useState<boolean>(false);
 
   const recognitionRef = useRef<any>(null);
-  const finalVoiceBufferRef = useRef<string>('');
+  const finalVoiceBufferRef = useRef<string>(initialDraft.text);
 
   useEffect(() => {
+    const syncAuth = () => {
+      const nextAdmin = checkIsAdmin();
+      setIsAdmin(nextAdmin);
+      if (!nextAdmin) {
+        setActiveViewTab((prev) => (prev === 'admin_triage' ? 'lapor' : prev));
+      }
+    };
     const syncLogs = () => {
       const next = SmartCareService.getLogs();
       setLogs(next);
@@ -72,11 +128,17 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
         setSelectedLogId(next[0].id);
       }
     };
+    window.addEventListener(AUTH_SYNC_EVENT, syncAuth);
+    window.addEventListener(ZERO_TRUST_SYNC_EVENT, syncAuth);
     window.addEventListener(SMART_CARE_SYNC_EVENT, syncLogs);
     window.addEventListener('focus', syncLogs);
+    window.addEventListener('focus', syncAuth);
     return () => {
+      window.removeEventListener(AUTH_SYNC_EVENT, syncAuth);
+      window.removeEventListener(ZERO_TRUST_SYNC_EVENT, syncAuth);
       window.removeEventListener(SMART_CARE_SYNC_EVENT, syncLogs);
       window.removeEventListener('focus', syncLogs);
+      window.removeEventListener('focus', syncAuth);
     };
   }, [selectedLogId]);
 
@@ -202,6 +264,10 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
     setInterimVoiceText('');
     finalVoiceBufferRef.current = '';
     setEditingEntryId(null);
+    setLastSentTicketInfo(null);
+    if (!isAdmin) {
+      saveUserDraft(null);
+    }
     setVoiceStatus('Kotak keluhan direset. Silakan rekam ulang atau ketik kendala Anda.');
   };
 
@@ -231,6 +297,34 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
       sendToAdmin,
       existingId: editingEntryId || undefined,
     });
+
+    if (!isAdmin) {
+      if (sendToAdmin) {
+        saveUserDraft(null);
+        setVoiceText('');
+        finalVoiceBufferRef.current = '';
+        setEditingEntryId(null);
+        setLastSentTicketInfo({
+          id: saved.id,
+          sentAt: saved.sentToAdminAt || saved.updatedAt,
+        });
+        setVoiceStatus(
+          `Laporan ${saved.id} berhasil dikirim ke Admin. Anda dapat merekam keluhan baru bila diperlukan.`
+        );
+        showNotification(`Keluhan ${saved.id} berhasil dikirim ke Admin!`);
+      } else {
+        saveUserDraft({ text: combinedText, entryId: saved.id });
+        setVoiceText(combinedText);
+        finalVoiceBufferRef.current = combinedText;
+        setEditingEntryId(saved.id);
+        setLastSentTicketInfo(null);
+        setVoiceStatus(
+          `Draft keluhan tersimpan (${saved.id}). Edit kapan saja lalu klik Kirim ke Admin.`
+        );
+        showNotification(`Draft keluhan disimpan (${saved.id}). Klik Kirim saat sudah siap.`);
+      }
+      return;
+    }
 
     const similarity = SmartCareService.analyzeSimilarity(saved);
     setSelectedLogId(saved.id);
@@ -333,7 +427,9 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
                 UsahaQu Smart Care
               </h1>
               <p className="text-[10px] text-slate-400">
-                Rekam/Edit Keluhan &amp; Auto-Fix Prompt Developer
+                {isAdmin
+                  ? 'Rekam/Edit Keluhan & Auto-Fix Prompt Developer'
+                  : 'Rekam, Simpan & Kirim Keluhan serta Panduan Modul'}
               </p>
             </div>
           </div>
@@ -344,7 +440,7 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
           </span>
         </div>
 
-        {/* Mode Tabs: Keluhan User, Panduan Modul, dan Log/Triage */}
+        {/* Mode Tabs: User hanya Entry/Rekam-Simpan-Kirim & Panduan Modul; Log & Prompt khusus Admin */}
         <div className="flex gap-1.5 bg-slate-900 p-1 rounded-xl text-[11px] font-bold">
           <button
             type="button"
@@ -356,7 +452,7 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
             }`}
           >
             <Mic className="w-3.5 h-3.5 shrink-0" />
-            <span>Entry Keluhan</span>
+            <span>{isAdmin ? 'Entry Keluhan' : 'Rekam & Kirim'}</span>
           </button>
           <button
             type="button"
@@ -370,27 +466,29 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
             <BookOpen className="w-3.5 h-3.5 shrink-0" />
             <span>Panduan Modul</span>
           </button>
-          <button
-            type="button"
-            onClick={() => setActiveViewTab('admin_triage')}
-            className={`flex-1 py-1.5 px-2 rounded-lg transition flex items-center justify-center gap-1 whitespace-nowrap ${
-              activeViewTab === 'admin_triage'
-                ? 'bg-amber-400 text-slate-950 font-extrabold'
-                : 'text-slate-300 hover:text-white'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5 shrink-0" />
-            <span>
-              {isDevAdmin ? 'Log & Triage' : 'Log & Prompt'}
-              {newIncomingCount > 0 ? ` (${newIncomingCount})` : ''}
-            </span>
-          </button>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setActiveViewTab('admin_triage')}
+              className={`flex-1 py-1.5 px-2 rounded-lg transition flex items-center justify-center gap-1 whitespace-nowrap ${
+                activeViewTab === 'admin_triage'
+                  ? 'bg-amber-400 text-slate-950 font-extrabold'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5 shrink-0" />
+              <span>
+                Log &amp; Triage
+                {newIncomingCount > 0 ? ` (${newIncomingCount})` : ''}
+              </span>
+            </button>
+          )}
         </div>
       </header>
 
       {/* MAIN CONTAINER */}
       <main className="flex-1 overflow-y-auto no-scrollbar p-3 sm:p-4 space-y-3.5 pb-16">
-        {activeViewTab === 'admin_triage' ? (
+        {isAdmin && activeViewTab === 'admin_triage' ? (
           <SmartCareAdminTriagePanel showNotification={showNotification} />
         ) : activeViewTab === 'panduan' ? (
           <SmartCareModuleGuidesPanel showNotification={showNotification} />
@@ -402,12 +500,12 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
                 <h2 className="font-bold text-slate-200 text-xs flex items-center gap-2 uppercase tracking-wider">
                   <Mic className="w-4 h-4 text-emerald-400" />
                   <span>
-                    {editingEntryId
+                    {isAdmin && editingEntryId
                       ? `Edit Keluhan (${editingEntryId})`
                       : 'Rekam / Ketik Keluhan Teknis'}
                   </span>
                 </h2>
-                {liveSimilarityPreview && liveSimilarityPreview.matchedEntry && (
+                {isAdmin && liveSimilarityPreview && liveSimilarityPreview.matchedEntry && (
                   <span
                     className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
                       liveSimilarityPreview.level === 'sama'
@@ -505,8 +603,10 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
                   onClick={() => handleSaveOrSendReport(true)}
                   className="grow bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-extrabold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 active:scale-95 shadow-md shadow-emerald-600/20 transition"
                 >
-                  <Zap className="w-4 h-4" />
-                  <span>Simpan, Analisa AI &amp; Kirim ke Admin</span>
+                  {isAdmin ? <Zap className="w-4 h-4" /> : <Send className="w-4 h-4" />}
+                  <span>
+                    {isAdmin ? 'Simpan, Analisa AI & Kirim ke Admin' : 'Kirim ke Admin'}
+                  </span>
                 </button>
                 <button
                   type="button"
@@ -517,9 +617,28 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
                   <RotateCcw className="w-4 h-4" />
                 </button>
               </div>
+
+              {!isAdmin && lastSentTicketInfo && (
+                <div className="bg-emerald-950/70 border border-emerald-500/40 rounded-xl p-3 flex items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2 text-emerald-300">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>
+                      Laporan <strong>{lastSentTicketInfo.id}</strong> terkirim ke Admin ({lastSentTicketInfo.sentAt}).
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveViewTab('panduan')}
+                    className="text-[11px] font-bold text-sky-300 hover:underline shrink-0"
+                  >
+                    Buka Panduan
+                  </button>
+                </div>
+              )}
             </section>
 
-            {/* TICKET LIST & EDITABLE AUTO-FIX OUTPUT */}
+            {/* TICKET LIST & EDITABLE AUTO-FIX OUTPUT (HANYA AKUN ADMIN) */}
+            {isAdmin && (
             <section className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
               {/* LEFT: DAFTAR TIKET KELUHAN */}
               <div className="bg-slate-800 border border-slate-700 rounded-2xl p-4 space-y-3 shadow-md">
@@ -786,6 +905,7 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
                 )}
               </div>
             </section>
+            )}
           </>
         )}
       </main>

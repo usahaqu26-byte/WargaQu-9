@@ -107,384 +107,35 @@ function calculateDistanceMeters(lat1: number, lon1: number, lat2: number, lon2:
 
 const INITIAL_LAPAKS: LapakItem[] = [
   {
-    id: 'lapak-baksoqu',
-    name: 'Bakso Qu 1.0 (Pusat & Gerobak Keliling)',
-    ownerName: 'Hendriana',
-    ownerWargaId: 'WQ-RT03-012',
-    rtRw: 'RT 03 / RW 05',
-    isVerifiedWarga: true,
-    lapakType: 'keliling',
+    id: 'lapak-saya',
+    name: 'Lapak Usaha Saya',
+    ownerName: 'Pemilik Lapak',
+    ownerWargaId: '',
+    rtRw: '',
+    isVerifiedWarga: false,
+    lapakType: 'menetap',
     category: 'kuliner',
-    categoryLabel: 'Kuliner & Makanan',
-    lat: -6.974,
-    lng: 108.4867,
-    address: 'Depan Balai Warga RT 03 & Keliling Blok A-C',
-    phone: '0812-3456-7890',
-    status: 'keliling',
+    categoryLabel: 'Kuliner & Usaha',
+    lat: DEFAULT_COORDS[0],
+    lng: DEFAULT_COORDS[1],
+    address: 'Atur lokasi lapak di tab Lapak Saya',
+    phone: '',
+    status: 'tutup',
     operationalHours: '09:00 - 21:00 WIB',
     rating: 5.0,
-    description: 'Bakso urat jumbo daging sapi asli, kuah kaldu rempah, siap dipanggil ke depan rumah warga.',
-    avatarIcon: '🍲',
-    vehicleType: 'Gerobak Motor Siaga Qu',
-    isMyLapak: true,
-    isPublished: true,
-    catalog: [
-      {
-        id: 'bq-1',
-        name: 'Bakso Urat Jumbo Super',
-        price: 25000,
-        category: 'Makanan',
-        description: '1 Bakso urat jumbo kenyal berdaging + 2 bakso halus, bihun, mie kuning & kuah gurih.',
-        isAvailable: true
-      },
-      {
-        id: 'bq-2',
-        name: 'Bakso Komplit Telur',
-        price: 28000,
-        category: 'Makanan',
-        description: 'Bakso isi telur ayam utuh, tahu bakso gurih, pangsit renyah & seledri bawang goreng.',
-        isAvailable: true
-      },
-      {
-        id: 'bq-3',
-        name: 'Es Jeruk Peras Murni',
-        price: 7000,
-        category: 'Minuman',
-        description: 'Jeruk peras manis segar kaya vitamin C, es kristal higienis.',
-        isAvailable: true
-      },
-      {
-        id: 'bq-4',
-        name: 'Es Teh Manis Jumbo',
-        price: 5000,
-        category: 'Minuman',
-        description: 'Teh melati wangi khas seduh tubruk, manis pas porsi jumbo 22oz.',
-        isAvailable: true
-      }
-    ]
-  },
-  {
-    id: 'lapak-warung-madura',
-    name: 'Warung Madura Berkah 24 Jam',
-    ownerName: 'Cak Imron',
-    ownerWargaId: 'WQ-RT03-004',
-    rtRw: 'RT 03 / RW 05',
-    isVerifiedWarga: true,
-    lapakType: 'menetap',
-    category: 'warung',
-    categoryLabel: 'Warung & Sembako',
-    lat: -6.9749,
-    lng: 108.4856,
-    address: 'Jl. Melati Blok B No. 01 (Samping Gapura)',
-    phone: '0813-1122-3344',
-    status: 'buka',
-    operationalHours: '24 Jam Non-Stop',
-    rating: 4.9,
-    description: 'Sembako komplit, bensin eceran pertamax, pulsa & token, galon aqua, rokok, dan es batu.',
+    description: 'Lengkapi profil dan katalog lapak Anda agar warga sekitar dapat memesan langsung.',
     avatarIcon: '🏪',
-    isPublished: true,
-    catalog: [
-      {
-        id: 'wm-1',
-        name: 'Beras Ramos Super 5 Kg',
-        price: 74000,
-        category: 'Sembako',
-        description: 'Beras putih bersih pulen tanpa pemutih kemasan 5 kg.',
-        isAvailable: true
-      },
-      {
-        id: 'wm-2',
-        name: 'Minyak Goreng Sawit 2 Liter',
-        price: 35000,
-        category: 'Sembako',
-        description: 'Minyak goreng pouch 2L jernih untuk menggoreng renyah.',
-        isAvailable: true
-      },
-      {
-        id: 'wm-3',
-        name: 'Telur Ayam Negeri 1 Kg',
-        price: 29000,
-        category: 'Sembako',
-        description: 'Telur segar peternakan lokal, isi sekitar 16 butir.',
-        isAvailable: true
-      },
-      {
-        id: 'wm-4',
-        name: 'Air Mineral Galon Aqua (Isi Ulang)',
-        price: 21000,
-        category: 'Sembako',
-        description: 'Tukar galon Aqua asli resmi, gratis antar ke teras rumah.',
-        isAvailable: true
-      }
-    ]
-  },
-  {
-    id: 'lapak-pecellele',
-    name: 'Pecel Lele & Bebek Kremes Mbak Sri',
-    ownerName: 'Sri Wahyuni',
-    ownerWargaId: 'WQ-RT03-018',
-    rtRw: 'RT 03 / RW 05',
-    isVerifiedWarga: true,
-    lapakType: 'menetap',
-    category: 'pkl',
-    categoryLabel: 'PKL & Kaki Lima',
-    lat: -6.9735,
-    lng: 108.4872,
-    address: 'Tenda Kaki Lima Depan Pos Ronda Utama',
-    phone: '0821-3322-1100',
-    status: 'buka',
-    operationalHours: '16:30 - 23:30 WIB',
-    rating: 4.8,
-    description: 'Sambal terasi dadak ulek pedas nagih, lele goreng garing, bebek kremes gurih empuk, nasi uduk.',
-    avatarIcon: '🍗',
-    isPublished: true,
-    catalog: [
-      {
-        id: 'pl-1',
-        name: 'Paket Pecel Lele + Nasi Uduk',
-        price: 22000,
-        category: 'Makanan',
-        description: '2 ekor lele renyah + nasi uduk tabur bawang + lalapan + sambal dadak.',
-        isAvailable: true
-      },
-      {
-        id: 'pl-2',
-        name: 'Paket Bebek Goreng Kremes',
-        price: 32000,
-        category: 'Makanan',
-        description: 'Potongan bebek paha/dada ungkep bumbu rempah + sambal ijo + kremesan.',
-        isAvailable: true
-      },
-      {
-        id: 'pl-3',
-        name: 'Tahu & Tempe Goreng (Isi 4)',
-        price: 6000,
-        category: 'Camilan',
-        description: 'Tahu tempe goreng gurih bumbu bawang ketumbar.',
-        isAvailable: true
-      }
-    ]
-  },
-  {
-    id: 'lapak-bengkel',
-    name: 'Bengkel Motor & Tambal Tubeless Mas Joko',
-    ownerName: 'Joko Santoso',
-    ownerWargaId: 'WQ-RT02-009',
-    rtRw: 'RT 02 / RW 05',
-    isVerifiedWarga: true,
-    lapakType: 'jasa_panggilan',
-    category: 'bengkel',
-    categoryLabel: 'Bengkel & Servis',
-    lat: -6.9752,
-    lng: 108.4878,
-    address: 'Portal Gang RT 03 Selatan No. 12',
-    phone: '0818-7788-9900',
-    status: 'buka',
-    operationalHours: '08:00 - 18:00 WIB',
-    rating: 4.9,
-    description: 'Tambal ban tubeless cepat, servis matic/karbu, ganti oli, aki, siap jemput motor mogok perumahan.',
-    avatarIcon: '🔧',
-    isPublished: true,
-    catalog: [
-      {
-        id: 'bk-1',
-        name: 'Tambal Ban Tubeless Presisi',
-        price: 15000,
-        category: 'Jasa',
-        description: 'Tambal cacing/press anti bocor ulang bergaransi.',
-        isAvailable: true
-      },
-      {
-        id: 'bk-2',
-        name: 'Ganti Oli Mesin Matic (MPX/Castrol)',
-        price: 58000,
-        category: 'Oli & Sparepart',
-        description: 'Termasuk jasa kuras oli dan cek tekanan angin nitrogen gratis.',
-        isAvailable: true
-      },
-      {
-        id: 'bk-3',
-        name: 'Jasa Panggilan Motor Mogok di Rumah',
-        price: 30000,
-        category: 'Jasa',
-        description: 'Teknisi datang ke garasi rumah membawa toolkit lengkap.',
-        isAvailable: true
-      }
-    ]
-  },
-  {
-    id: 'lapak-sayur',
-    name: 'Sayur Segar Keliling Mas Dedi',
-    ownerName: 'Dedi Haryadi',
-    ownerWargaId: 'WQ-RT04-021',
-    rtRw: 'RT 04 / RW 05',
-    isVerifiedWarga: true,
-    lapakType: 'keliling',
-    category: 'keliling',
-    categoryLabel: 'Pedagang Keliling',
-    lat: -6.9732,
-    lng: 108.4851,
-    address: 'Sedang Berkeliling di Blok C & D',
-    phone: '0812-9988-7766',
-    status: 'keliling',
-    operationalHours: '05:30 - 11:30 WIB',
-    rating: 5.0,
-    description: 'Sayuran hijau panen subuh, ikan basah segar, ayam potong, tempe tahu, cabai bawang siap masak.',
-    avatarIcon: '🥦',
-    vehicleType: 'Motor Roda Tiga Viar Box',
-    isPublished: true,
-    catalog: [
-      {
-        id: 'sy-1',
-        name: 'Paket Sayur Asem Lengkap',
-        price: 8000,
-        category: 'Sayuran',
-        description: 'Jagung manis, labu siam, kacang panjang, daun melinjo + bumbu asem.',
-        isAvailable: true
-      },
-      {
-        id: 'sy-2',
-        name: 'Ikan Kembung Segar (500 gr)',
-        price: 23000,
-        category: 'Lauk Pauk',
-        description: 'Ikan laut segar mata bening siap goreng atau bumbu kuning.',
-        isAvailable: true
-      },
-      {
-        id: 'sy-3',
-        name: 'Tempe Daun Tradisional (1 Papan)',
-        price: 6000,
-        category: 'Lauk Pauk',
-        description: 'Tempe kedelai padat dibungkus daun pisang harum alami.',
-        isAvailable: true
-      }
-    ]
-  },
-  {
-    id: 'lapak-kopi',
-    name: 'Kopi & Es Teh Warga Barokah',
-    ownerName: 'Kevin Pratama',
-    ownerWargaId: 'WQ-RT03-025',
-    rtRw: 'RT 03 / RW 05',
-    isVerifiedWarga: true,
-    lapakType: 'menetap',
-    category: 'minuman',
-    categoryLabel: 'Minuman & Kopi',
-    lat: -6.9745,
-    lng: 108.4861,
-    address: 'Booth Container Depan Taman Bermain Anak',
-    phone: '0857-4433-2211',
-    status: 'buka',
-    operationalHours: '10:00 - 22:00 WIB',
-    rating: 4.8,
-    description: 'Es kopi susu gula aren kampung, es coklat kental, matcha latte, dan mocktail segar murah meriah.',
-    avatarIcon: '☕',
-    isPublished: true,
-    catalog: [
-      {
-        id: 'kp-1',
-        name: 'Es Kopi Susu Gula Aren Asli',
-        price: 12000,
-        category: 'Kopi',
-        description: 'Espresso robusta lokal + susu fresh milk + gula aren organik.',
-        isAvailable: true
-      },
-      {
-        id: 'kp-2',
-        name: 'Es Coklat Klasik Creamy',
-        price: 10000,
-        category: 'Non-Kopi',
-        description: 'Coklat pekat manis legit tabur serutan coklat.',
-        isAvailable: true
-      }
-    ]
-  },
-  {
-    id: 'lapak-ac',
-    name: 'Jasa Servis AC & Cuci Rumah Mas Rangga',
-    ownerName: 'Rangga Prasetyo',
-    ownerWargaId: 'WQ-RT03-015',
-    rtRw: 'RT 03 / RW 05',
-    isVerifiedWarga: true,
-    lapakType: 'jasa_panggilan',
-    category: 'jasa',
-    categoryLabel: 'Jasa Panggilan',
-    lat: -6.9758,
-    lng: 108.4849,
-    address: 'Rumah Blok C No. 04',
-    phone: '0822-4455-6677',
-    status: 'buka',
-    operationalHours: '08:00 - 17:00 WIB',
-    rating: 4.9,
-    description: 'Cuci AC bersih tanpa semprot berantakan, isi freon R32/R410, perbaikan bocor bergaransi 30 hari.',
-    avatarIcon: '❄️',
-    isPublished: true,
-    catalog: [
-      {
-        id: 'ac-1',
-        name: 'Cuci AC Split 1/2 PK - 1 PK',
-        price: 65000,
-        category: 'Jasa AC',
-        description: 'Pembersihan indoor, outdoor, pipa pembuangan, dan cek tekanan angin.',
-        isAvailable: true
-      },
-      {
-        id: 'ac-2',
-        name: 'Isi / Tambah Freon R32',
-        price: 120000,
-        category: 'Jasa AC',
-        description: 'Pengisian freon berkualitas dingin maksimal dan cek kebocoran nepel.',
-        isAvailable: true
-      }
-    ]
-  },
-  {
-    id: 'lapak-ojol',
-    name: 'Ojol & Ekspedisi Siaga Warga (Pak Slamet)',
-    ownerName: 'Slamet Wibowo',
-    ownerWargaId: 'WQ-RT03-002',
-    rtRw: 'RT 03 / RW 05',
-    isVerifiedWarga: true,
-    lapakType: 'jasa_panggilan',
-    category: 'transportasi',
-    categoryLabel: 'Transportasi Warga',
-    lat: -6.9738,
-    lng: 108.4875,
-    address: 'Pangkalan Pos RT 03 Siaga',
-    phone: '0819-2233-4455',
-    status: 'buka',
-    operationalHours: '06:00 - 22:00 WIB',
-    rating: 5.0,
-    description: 'Antar jemput sekolah anak, belanja pasar, antar dokumen, dan kirim barang cepat area warga.',
-    avatarIcon: '🛵',
-    vehicleType: 'Honda Vario 160 Putih',
-    isPublished: true,
-    catalog: [
-      {
-        id: 'oj-1',
-        name: 'Antar Jemput Dalam Lingkup RT/RW',
-        price: 10000,
-        category: 'Transportasi',
-        description: 'Aman, santun, helm bersih ganda, siap jemput depan pintu.',
-        isAvailable: true
-      },
-      {
-        id: 'oj-2',
-        name: 'Jasa Titip Beli Pasar Tradisional',
-        price: 15000,
-        category: 'Jasa Titip',
-        description: 'Bantu belanjakan daftar belanjaan ibu-ibu di pasar subuh sampai rumah.',
-        isAvailable: true
-      }
-    ]
+    isMyLapak: true,
+    isPublished: false,
+    catalog: []
   }
 ];
 
 const DEFAULT_CONSUMER_IDENTITY: ConsumerIdentity = {
-  fullName: 'Hendriana',
-  wargaId: 'WQ-RT03-012',
-  rtRw: 'RT 03 / RW 05',
-  addressDetail: 'Blok A No. 12',
+  fullName: 'Warga',
+  wargaId: '',
+  rtRw: '',
+  addressDetail: '',
   landmark: '',
   phone: '',
   residentStatus: 'warga',
@@ -494,19 +145,19 @@ const DEFAULT_CONSUMER_IDENTITY: ConsumerIdentity = {
 };
 
 const DEFAULT_MERCHANT_IDENTITY: MerchantIdentity = {
-  ownerName: 'Hendriana',
-  wargaId: 'WQ-RT03-012',
-  rtRw: 'RT 03 / RW 05',
-  lapakName: 'Bakso Qu 1.0 (Pusat & Gerobak Keliling)',
+  ownerName: 'Pemilik Lapak',
+  wargaId: '',
+  rtRw: '',
+  lapakName: 'Lapak Usaha Saya',
   category: 'kuliner',
-  lapakType: 'keliling',
-  baseAddress: 'Depan Balai Warga RT 03 & Keliling Blok A-C',
-  phone: '0812-3456-7890',
+  lapakType: 'menetap',
+  baseAddress: '',
+  phone: '',
   operationalHours: '09:00 - 21:00 WIB',
-  description: 'Bakso urat jumbo daging sapi asli, kuah kaldu rempah, siap dipanggil ke depan rumah warga.',
-  avatarIcon: '🍲',
-  vehicleType: 'Gerobak Motor Siaga Qu',
-  isVerified: true,
+  description: '',
+  avatarIcon: '🏪',
+  vehicleType: '',
+  isVerified: false,
   updatedAt: new Date().toISOString()
 };
 
@@ -644,11 +295,26 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
   // 4. MERCHANTS / LAPAK DATASET, ORDERS, FAVORITES
   // ---------------------------------------------------------------------------
   const [lapaks, setLapaks] = useState<LapakItem[]>(() => {
+    const legacyFakeIds = new Set([
+      'lapak-baksoqu',
+      'lapak-warung-madura',
+      'lapak-pecellele',
+      'lapak-bengkel',
+      'lapak-sayur',
+      'lapak-kopi',
+      'lapak-ac',
+      'lapak-ojol',
+    ]);
     const saved = localStorage.getItem('wargaqu_areaqu_lapaks_v2');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const cleaned = (parsed as LapakItem[]).filter(
+            (l) => !legacyFakeIds.has(l.id)
+          );
+          if (cleaned.length > 0) return cleaned;
+        }
       } catch {
         // ignore parse error
       }
@@ -682,12 +348,14 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          return (parsed as string[]).filter((id) => id !== 'lapak-warung-madura');
+        }
       } catch {
         // ignore parse error
       }
     }
-    return ['lapak-warung-madura'];
+    return [];
   });
 
   useEffect(() => {

@@ -59,11 +59,18 @@ import {
   GuestReport,
   HistoricalArchiveYear,
   CommunityInvitation,
-  InvitationRsvpStatus
+  InvitationEventType,
+  InvitationRsvpStatus,
+  RtOfficerAccount,
+  RtHandoverRecord,
+  RtGovernanceAction
 } from '../../services/rtSiagaStorage';
 import { AuthService, AUTH_SYNC_EVENT } from '../../services/authService';
 import { RtExcelService } from '../../services/rtExcelService';
 import { RtExcelAndClaimSheet, ExtraSheetType } from './RtExcelAndClaimSheet';
+import { RtGovernanceManager, RtTenureBanner } from './RtGovernancePanel';
+import { RtGovernanceCloudService } from '../../services/rtGovernanceCloudService';
+import { FIREBASE_AUTH_SYNC_EVENT, FirebaseSyncService } from '../../services/firebaseSyncService';
 import { MonetizationService } from '../../services/monetizationService';
 import { EncryptedBackupPanel } from '../common/EncryptedBackupPanel';
 import { RealtimeRelayService } from '../../services/realtimeRelayService';
@@ -93,6 +100,7 @@ type SheetModalType =
   | 'tamu'
   | 'buat_post'
   | 'catat_kas'
+  | 'koreksi_kas'
   | 'pin_pengurus'
   | 'buat_komunitas'
   | 'undang_komunitas'
@@ -123,6 +131,18 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
   const [guestReports, setGuestReports] = useState<GuestReport[]>(() => RtSiagaStorage.getGuestReports());
   const [archives, setArchives] = useState<HistoricalArchiveYear[]>(() => RtSiagaStorage.getArchives());
   const [invitations, setInvitations] = useState<CommunityInvitation[]>(() => RtSiagaStorage.getInvitations());
+  const [officers, setOfficers] = useState<RtOfficerAccount[]>(() => RtSiagaStorage.getOfficers());
+  const [handovers, setHandovers] = useState<RtHandoverRecord[]>(() => RtSiagaStorage.getHandovers());
+  const [governanceActions, setGovernanceActions] = useState<RtGovernanceAction[]>(() =>
+    RtSiagaStorage.getGovernanceActions()
+  );
+  const [invitationPrefill, setInvitationPrefill] = useState<{
+    eventType?: InvitationEventType;
+    title?: string;
+    agenda?: string;
+  } | null>(null);
+  const [correctionTarget, setCorrectionTarget] = useState<KasTransaction | null>(null);
+  const [correctionReason, setCorrectionReason] = useState<string>('');
 
   // Invite link & create community states
   const [inviteJoinInput, setInviteJoinInput] = useState<string>('');
@@ -151,8 +171,13 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
     creatorPhone: string;
     creatorRole: string;
     pengurusPin: string;
+    termEndDate: string;
+    sekretarisEmail: string;
+    bendaharaEmail: string;
   }>(() => {
     const acc = AuthService.getAccount();
+    const defaultEnd = new Date();
+    defaultEnd.setFullYear(defaultEnd.getFullYear() + 3);
     return {
       orgType: 'RT',
       customBrandName: '',
@@ -164,6 +189,9 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
       creatorPhone: acc?.phone || '',
       creatorRole: '',
       pengurusPin: '1234',
+      termEndDate: defaultEnd.toISOString().slice(0, 10),
+      sekretarisEmail: '',
+      bendaharaEmail: '',
     };
   });
 
@@ -181,16 +209,29 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
       setGuestReports(RtSiagaStorage.getGuestReports());
       setArchives(RtSiagaStorage.getArchives());
       setInvitations(RtSiagaStorage.getInvitations());
+      setOfficers(RtSiagaStorage.getOfficers());
+      setHandovers(RtSiagaStorage.getHandovers());
+      setGovernanceActions(RtSiagaStorage.getGovernanceActions());
     };
     window.addEventListener(RT_SYNC_EVENT, syncAll);
     window.addEventListener(AUTH_SYNC_EVENT, syncAll);
+    window.addEventListener(FIREBASE_AUTH_SYNC_EVENT, syncAll);
     window.addEventListener('focus', syncAll);
     return () => {
       window.removeEventListener(RT_SYNC_EVENT, syncAll);
       window.removeEventListener(AUTH_SYNC_EVENT, syncAll);
+      window.removeEventListener(FIREBASE_AUTH_SYNC_EVENT, syncAll);
       window.removeEventListener('focus', syncAll);
     };
   }, []);
+
+  // Pull & subscribe Firestore community data when signed in with Google
+  useEffect(() => {
+    if (!FirebaseSyncService.isCloudSignedIn()) return;
+    void RtGovernanceCloudService.fetchMyOfficerCommunities();
+    if (!activeCommunity?.id) return;
+    return RtGovernanceCloudService.subscribeActiveCommunity(activeCommunity.id);
+  }, [activeCommunity?.id]);
 
   const currentUser = useMemo(
     () => members.find(m => m.isCurrentUser) || members[0] || RtSiagaStorage.getCurrentMember(),
@@ -349,6 +390,34 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
   const currentMonthKey = '10'; // Oktober 2026
   const isCurrentMonthPaid = Boolean(currentUser.monthlyPayments[currentMonthKey]?.paid);
 
+  const termHealth = useMemo(() => RtSiagaStorage.getTermHealth(profile), [profile]);
+  const isAccountOfficer = useMemo(
+    () => RtSiagaStorage.isCurrentUserOfficer(activeCommunity),
+    [activeCommunity, officers]
+  );
+
+  const openElectionInviteModal = () => {
+    setInvitationPrefill({
+      eventType: 'Rapat Warga',
+      title: `Musyawarah Pemilihan Pengurus Baru ${profile.orgName}`,
+      agenda: `1. Laporan Pertanggungjawaban & Kas Akhir Periode ${termHealth.periodLabel}\n2. Pembentukan Panitia & Pemilihan Pengurus Baru (>2 Pengurus Inti)\n3. Penetapan Jadwal Serah Terima Jabatan (Sertijab)`,
+    });
+    setActiveSheet('buat_undangan');
+  };
+
+  const openElectionPollModal = () => {
+    setPostForm({
+      category: 'polling',
+      title: `Jadwal Musyawarah Pemilihan Pengurus ${profile.orgName}`,
+      content: `Masa bakti pengurus periode ${termHealth.periodLabel} akan berakhir pada ${termHealth.termEndDate}. Mari tentukan jadwal musyawarah pemilihan pengurus baru.`,
+      scheduleDate: '',
+      scheduleLocation: 'Balai Warga',
+      pollOption1: 'Sabtu Malam Pekan Ini (19:30 WIB)',
+      pollOption2: 'Minggu Pagi Pekan Depan (09:00 WIB)',
+    });
+    setActiveSheet('buat_post');
+  };
+
   const brandTitle =
     profile.orgType === 'Organisasi'
       ? profile.customBrandName?.trim() || 'OrganisasiQu'
@@ -399,6 +468,12 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
       if (cancelled) return;
       if (res.ok && res.community) {
         setPendingRtSync(null);
+        if (RtGovernanceCloudService.isCloudReady()) {
+          void RtGovernanceCloudService.ensureUidMemberLink(
+            res.community.id,
+            res.community.profile.inviteCode || ''
+          );
+        }
         setAutoJoinedBanner({
           communityName: res.community.profile.orgName,
           inviter: res.inviter || 'Pengurus',
@@ -559,19 +634,23 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
 
   const handleUnlockPengurus = (e: React.FormEvent) => {
     e.preventDefault();
-    if (pinInput.trim() === profile.pengurusPin) {
+    if (isAccountOfficer || pinInput.trim() === profile.pengurusPin) {
       setIsPengurusMode(true);
       setPinInput('');
       setActiveSheet(null);
       setActiveTab('pengurus');
       showNotification('Mode Pengurus / Koordinator aktif.');
     } else {
-      showNotification(`PIN salah. Gunakan PIN Pengurus (${profile.pengurusPin}).`);
+      showNotification('PIN salah atau akun Anda belum terdaftar di daftar pengurus.');
     }
   };
 
-  const handleAddKasTransaction = (e: React.FormEvent) => {
+  const handleAddKasTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (termHealth.isReadOnlyLocked) {
+      showNotification('Masa bakti berakhir — pencatatan kas dikunci. Lakukan Sertijab terlebih dahulu.');
+      return;
+    }
     const numericAmount = parseInt(kasForm.amount.replace(/\D/g, ''), 10) || 0;
     if (!kasForm.title.trim() || numericAmount <= 0) {
       showNotification('Isi keterangan dan nominal kas dengan benar.');
@@ -582,17 +661,57 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
       month: 'short',
       year: 'numeric',
     });
-    RtSiagaStorage.addTransaction({
+    const actorEmail =
+      FirebaseSyncService.getCurrentUser()?.email || AuthService.getAccount()?.email || undefined;
+    const newTx = RtSiagaStorage.addTransaction({
       type: kasForm.type,
       category: kasForm.category,
       title: kasForm.title.trim(),
       amount: numericAmount,
       date: todayLabel,
-      recordedBy: 'Pengurus / Bendahara',
+      recordedBy: `${currentUser.name} (Pengurus)`,
+      recordedByEmail: actorEmail,
     });
     setKasForm({ type: 'keluar', category: 'Gaji Keamanan', title: '', amount: '' });
     setActiveSheet(null);
+    if (activeCommunity && RtGovernanceCloudService.isCloudReady()) {
+      const latestWs = RtSiagaStorage.getActiveCommunity();
+      if (latestWs) {
+        const res = await RtGovernanceCloudService.recordAppendOnlyTransaction(latestWs, newTx);
+        showNotification(res.message);
+        return;
+      }
+    }
     showNotification('Catatan kas berhasil disimpan ke buku transparansi.');
+  };
+
+  const handleSubmitCorrectionKas = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!correctionTarget) return;
+    if (termHealth.isReadOnlyLocked) {
+      showNotification('Masa bakti berakhir — koreksi kas dikunci.');
+      return;
+    }
+    const actorEmail =
+      FirebaseSyncService.getCurrentUser()?.email || AuthService.getAccount()?.email || undefined;
+    const corrTx = RtSiagaStorage.addCorrectionTransaction(
+      correctionTarget,
+      correctionReason,
+      `${currentUser.name} (Pengurus)`,
+      actorEmail
+    );
+    setCorrectionTarget(null);
+    setCorrectionReason('');
+    setActiveSheet(null);
+    if (activeCommunity && RtGovernanceCloudService.isCloudReady()) {
+      const latestWs = RtSiagaStorage.getActiveCommunity();
+      if (latestWs) {
+        const res = await RtGovernanceCloudService.recordAppendOnlyTransaction(latestWs, corrTx);
+        showNotification(res.message);
+        return;
+      }
+    }
+    showNotification('Entri koreksi append-only ditambahkan tanpa menghapus riwayat lama.');
   };
 
   const handleShareKasSummary = async () => {
@@ -770,6 +889,12 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
       const res = await RtSiagaStorage.acceptCommunityInvite(rawToUse);
       if (res.ok && res.community) {
         setPendingRtSync(null);
+        if (RtGovernanceCloudService.isCloudReady()) {
+          void RtGovernanceCloudService.ensureUidMemberLink(
+            res.community.id,
+            res.community.profile.inviteCode || ''
+          );
+        }
         setInviteJoinInput('');
         setAutoJoinedBanner({
           communityName: res.community.profile.orgName,
@@ -803,6 +928,22 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
       return;
     }
     const dues = Math.max(0, parseInt(createCommForm.monthlyDuesAmount.replace(/\D/g, ''), 10) || 0);
+    const coOfficers: Array<{ name: string; role: string; email: string }> = [];
+    if (createCommForm.sekretarisEmail.trim().includes('@')) {
+      coOfficers.push({
+        name: createCommForm.sekretarisEmail.trim().split('@')[0],
+        role: 'Sekretaris',
+        email: createCommForm.sekretarisEmail.trim().toLowerCase(),
+      });
+    }
+    if (createCommForm.bendaharaEmail.trim().includes('@')) {
+      coOfficers.push({
+        name: createCommForm.bendaharaEmail.trim().split('@')[0],
+        role: 'Bendahara',
+        email: createCommForm.bendaharaEmail.trim().toLowerCase(),
+      });
+    }
+
     const created = RtSiagaStorage.createCommunity({
       orgType: createCommForm.orgType,
       customBrandName: createCommForm.customBrandName,
@@ -814,7 +955,12 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
       creatorBlock: createCommForm.creatorBlock,
       creatorPhone: createCommForm.creatorPhone,
       creatorRole: createCommForm.creatorRole,
+      termEndDate: createCommForm.termEndDate || undefined,
+      coOfficers,
     });
+    if (RtGovernanceCloudService.isCloudReady()) {
+      void RtGovernanceCloudService.syncWorkspaceToCloud(created, 'Pembuatan komunitas baru');
+    }
     setActiveSheet(null);
     setActiveTab('ringkasan');
     setIsPengurusMode(true);
@@ -825,6 +971,8 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
       orgName: '',
       areaName: '',
       creatorRole: '',
+      sekretarisEmail: '',
+      bendaharaEmail: '',
     }));
     showNotification(
       `Komunitas "${created.profile.orgName}" berhasil dibuat! Bagikan link undangan ke warga/anggota.`
@@ -934,6 +1082,10 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                   if (isPengurusMode) {
                     setIsPengurusMode(false);
                     showNotification('Keluar dari Mode Pengurus');
+                  } else if (isAccountOfficer) {
+                    setIsPengurusMode(true);
+                    setActiveTab('pengurus');
+                    showNotification('Mode Pengurus aktif via akun pengurus terdaftar.');
                   } else {
                     setActiveSheet('pin_pengurus');
                   }
@@ -1098,7 +1250,7 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                 </h2>
               </div>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Akun Anda belum terhubung ke RT, Paguyuban, Organisasi, atau Sosial manapun. Demi privasi & data tersimpan penuh di HP masing-masing (tanpa server pusat), data warga hanya tampil jika Anda <strong>menerima undangan resmi</strong> atau <strong>membuat komunitas baru</strong>.
+                Akun Anda belum terhubung ke RT, Paguyuban, Organisasi, atau Sosial manapun. Demi privasi &amp; tata kelola multi-pengurus bermasa jabatan, data warga hanya tampil jika Anda <strong>menerima undangan resmi</strong> atau <strong>membuat komunitas baru</strong>.
               </p>
             </div>
 
@@ -1175,6 +1327,18 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
         {/* TAB 1: RINGKASAN */}
         {activeTab === 'ringkasan' && (
           <div className="divide-y divide-slate-200">
+            <RtTenureBanner
+              termHealth={termHealth}
+              officersCount={officers.length}
+              isCurrentOfficer={isAccountOfficer || isPengurusMode}
+              onCreateElectionInvite={openElectionInviteModal}
+              onCreateElectionPoll={openElectionPollModal}
+              onOpenGovernanceTab={() => {
+                setPengurusSubTab('koordinator');
+                setActiveTab('pengurus');
+              }}
+            />
+
             {/* Kas Balance Strip */}
             <section className="px-4 py-4">
               <div className="flex items-center justify-between text-xs text-slate-500">
@@ -1794,7 +1958,7 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                     <Share2 className="w-3.5 h-3.5" />
                     <span>Bagikan</span>
                   </button>
-                  {isPengurusMode && (
+                  {isPengurusMode && !termHealth.isReadOnlyLocked && (
                     <button
                       onClick={() => setActiveSheet('catat_kas')}
                       className="min-h-[38px] px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold flex items-center gap-1"
@@ -1805,6 +1969,13 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                   )}
                 </div>
               </div>
+
+              {termHealth.isReadOnlyLocked && (
+                <div className="px-3 py-2 rounded-lg border border-rose-200 bg-rose-50 text-[11px] text-rose-800 font-semibold">
+                  Buku kas periode {termHealth.periodLabel} terkunci otomatis karena masa bakti
+                  berakhir. Lakukan Serah Terima Jabatan (Sertijab) di tab Pengurus.
+                </div>
+              )}
 
               <div className="grid grid-cols-3 gap-2 pt-2.5 border-t border-slate-200 text-xs">
                 <div>
@@ -1849,7 +2020,7 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
               ))}
             </div>
 
-            {/* Minimalist Mutasi List */}
+            {/* Minimalist Mutasi List (Append-Only Audit Trail) */}
             <div className="divide-y divide-slate-200">
               {filteredTransactions.map(tx => (
                 <div key={tx.id} className="px-4 py-3 flex items-start justify-between gap-3">
@@ -1857,14 +2028,30 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                     <div className="text-xs font-bold text-slate-900 leading-snug">{tx.title}</div>
                     <div className="text-[11px] text-slate-500 mt-0.5">
                       {tx.date} · {tx.category} · {tx.recordedBy}
+                      {tx.recordedByEmail ? ` (${tx.recordedByEmail})` : ''}
                     </div>
                   </div>
-                  <div
-                    className={`text-xs font-extrabold font-mono tabular-nums shrink-0 ${
-                      tx.type === 'masuk' ? 'text-emerald-700' : 'text-rose-700'
-                    }`}
-                  >
-                    {tx.type === 'masuk' ? '+' : '-'}Rp {tx.amount.toLocaleString('id-ID')}
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <div
+                      className={`text-xs font-extrabold font-mono tabular-nums ${
+                        tx.type === 'masuk' ? 'text-emerald-700' : 'text-rose-700'
+                      }`}
+                    >
+                      {tx.type === 'masuk' ? '+' : '-'}Rp {tx.amount.toLocaleString('id-ID')}
+                    </div>
+                    {isPengurusMode && !termHealth.isReadOnlyLocked && !tx.isCorrection && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCorrectionTarget(tx);
+                          setCorrectionReason('');
+                          setActiveSheet('koreksi_kas');
+                        }}
+                        className="text-[10px] font-bold text-slate-500 hover:text-rose-700 underline"
+                      >
+                        Koreksi Entri
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -2056,19 +2243,41 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
 
             {!isPengurusMode && (
               <div className="px-4 py-2.5 bg-slate-50 flex items-center justify-between gap-2 text-[11px] text-slate-600">
-                <span>Masuk Mode Pengurus (PIN: {profile.pengurusPin}) untuk aktivasi SiagaQu & catat kas.</span>
+                <span>
+                  {isAccountOfficer
+                    ? 'Akun Anda terdaftar sebagai pengurus — ketuk untuk mengaktifkan Mode Pengurus.'
+                    : 'Masuk Mode Pengurus via akun Google terdaftar atau PIN internal pengurus.'}
+                </span>
                 <button
-                  onClick={() => setActiveSheet('pin_pengurus')}
+                  onClick={() => {
+                    if (isAccountOfficer) {
+                      setIsPengurusMode(true);
+                      showNotification('Mode Pengurus aktif via akun pengurus terdaftar.');
+                    } else {
+                      setActiveSheet('pin_pengurus');
+                    }
+                  }}
                   className="font-bold text-emerald-700 hover:underline shrink-0"
                 >
-                  Buka PIN
+                  {isAccountOfficer ? 'Aktifkan Pengurus' : 'Buka Akses'}
                 </button>
               </div>
             )}
 
-            {/* Sub-Tab 1: Jajaran Pengurus / Koordinator */}
+            {/* Sub-Tab 1: Jajaran Pengurus / Koordinator + Masa Jabatan & Sertijab */}
             {pengurusSubTab === 'koordinator' && (
               <div className="divide-y divide-slate-200">
+                {activeCommunity && (
+                  <RtTenureBanner
+                    termHealth={termHealth}
+                    officersCount={officers.length}
+                    isCurrentOfficer={isAccountOfficer || isPengurusMode}
+                    onCreateElectionInvite={openElectionInviteModal}
+                    onCreateElectionPoll={openElectionPollModal}
+                    onOpenGovernanceTab={() => setPengurusSubTab('koordinator')}
+                  />
+                )}
+
                 {coordinators.map(coord => (
                   <div key={coord.id} className="px-4 py-3.5 flex items-center justify-between gap-3">
                     <div className="min-w-0">
@@ -2090,6 +2299,21 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                     </button>
                   </div>
                 ))}
+
+                {activeCommunity && (
+                  <RtGovernanceManager
+                    workspace={activeCommunity}
+                    termHealth={termHealth}
+                    officers={officers}
+                    handovers={handovers}
+                    governanceActions={governanceActions}
+                    kasBalance={financialSummary.saldo}
+                    isPengurusMode={isPengurusMode}
+                    showNotification={showNotification}
+                    onCreateElectionInvite={openElectionInviteModal}
+                    onCreateElectionPoll={openElectionPollModal}
+                  />
+                )}
               </div>
             )}
 
@@ -2528,7 +2752,8 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                 {activeSheet === 'buat_surat' && 'Ajukan Surat Pengantar'}
                 {activeSheet === 'ronda' && 'Jadwal Ronda & Kerja Bakti'}
                 {activeSheet === 'catat_kas' && 'Catat Pemasukan / Pengeluaran Kas'}
-                {activeSheet === 'pin_pengurus' && 'Verifikasi PIN Pengurus'}
+                {activeSheet === 'koreksi_kas' && 'Koreksi Entri Kas (Append-Only)'}
+                {activeSheet === 'pin_pengurus' && 'Verifikasi Akses Pengurus'}
                 {activeSheet === 'buat_komunitas' && 'Buat Komunitas Baru (RT / Paguyuban / Org / Sosial)'}
                 {activeSheet === 'undang_komunitas' && `Undang Warga ke ${profile.orgName}`}
                 {activeSheet === 'import_excel' && 'Smart Impor Excel (Poin Penting)'}
@@ -2537,7 +2762,10 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                 {activeSheet === 'arsip_tahunan' && `Arsip Tahunan & Lembaran Baru ${profile.year}`}
               </h3>
               <button
-                onClick={() => setActiveSheet(null)}
+                onClick={() => {
+                  setActiveSheet(null);
+                  setInvitationPrefill(null);
+                }}
                 className="p-1.5 text-slate-500 hover:text-slate-800"
               >
                 <X className="w-4 h-4" />
@@ -2555,7 +2783,11 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                   brandTitle={brandTitle}
                   currentUser={currentUser}
                   members={members}
-                  onClose={() => setActiveSheet(null)}
+                  initialInvitationPrefill={invitationPrefill}
+                  onClose={() => {
+                    setActiveSheet(null);
+                    setInvitationPrefill(null);
+                  }}
                   showNotification={showNotification}
                 />
               )}
@@ -2770,15 +3002,15 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
               {/* SHEET: PIN PENGURUS */}
               {activeSheet === 'pin_pengurus' && (
                 <form onSubmit={handleUnlockPengurus} className="space-y-3">
-                  <p className="text-xs text-slate-600">
-                    Masukkan PIN Pengurus / Koordinator untuk mengaktifkan SiagaQu warga dan mencatat kas (PIN demo:{' '}
-                    <strong className="font-mono">{profile.pengurusPin}</strong>).
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Masukkan PIN internal pengurus untuk akses offline, atau login dengan akun Google
+                    pengurus yang terdaftar di tab Koordinator.
                   </p>
                   <input
                     type="password"
                     value={pinInput}
                     onChange={e => setPinInput(e.target.value)}
-                    placeholder="Masukkan 4 digit PIN..."
+                    placeholder="Masukkan PIN pengurus..."
                     className="w-full min-h-[44px] border border-slate-300 rounded-xl px-3 text-sm font-mono tracking-widest"
                     autoFocus
                   />
@@ -2787,6 +3019,43 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                     className="w-full min-h-[44px] bg-emerald-700 text-white rounded-xl font-bold"
                   >
                     Buka Mode Pengurus
+                  </button>
+                </form>
+              )}
+
+              {/* SHEET: KOREKSI KAS APPEND-ONLY */}
+              {activeSheet === 'koreksi_kas' && correctionTarget && (
+                <form onSubmit={handleSubmitCorrectionKas} className="space-y-3">
+                  <div className="p-3 rounded-xl border border-slate-200 bg-slate-50 space-y-1">
+                    <div className="text-xs font-bold text-slate-900">
+                      Transaksi Asli: {correctionTarget.title}
+                    </div>
+                    <div className="text-[11px] text-slate-600">
+                      Nominal: Rp {correctionTarget.amount.toLocaleString('id-ID')} (
+                      {correctionTarget.type === 'masuk' ? 'Pemasukan' : 'Pengeluaran'}) ·{' '}
+                      {correctionTarget.date}
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    Demi transparansi anti-manipulasi, entri lama tidak dihapus. Sistem akan membuat
+                    entri pembalik otomatis disertai catatan alasan dan identitas akun Anda.
+                  </p>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Alasan Koreksi *</label>
+                    <input
+                      type="text"
+                      required
+                      value={correctionReason}
+                      onChange={e => setCorrectionReason(e.target.value)}
+                      placeholder="Contoh: Salah ketik nominal / transaksi batal"
+                      className="w-full min-h-[40px] border border-slate-300 rounded-lg px-3"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full min-h-[44px] bg-rose-700 hover:bg-rose-800 text-white rounded-xl font-bold"
+                  >
+                    Catat Entri Koreksi Permanen
                   </button>
                 </form>
               )}
@@ -3123,14 +3392,33 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                         className="w-full min-h-[40px] border border-slate-300 rounded-lg px-3"
                       />
                       <input
-                        type="text"
-                        maxLength={8}
-                        value={createCommForm.pengurusPin}
+                        type="date"
+                        value={createCommForm.termEndDate}
                         onChange={e =>
-                          setCreateCommForm(prev => ({ ...prev, pengurusPin: e.target.value }))
+                          setCreateCommForm(prev => ({ ...prev, termEndDate: e.target.value }))
                         }
-                        placeholder="PIN Pengurus (1234)"
+                        title="Masa Bakti Berakhir"
                         className="w-full min-h-[40px] border border-slate-300 rounded-lg px-3 font-mono"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="email"
+                        value={createCommForm.sekretarisEmail}
+                        onChange={e =>
+                          setCreateCommForm(prev => ({ ...prev, sekretarisEmail: e.target.value }))
+                        }
+                        placeholder="Email Sekretaris (Anti-Monopoli)"
+                        className="w-full min-h-[40px] border border-slate-300 rounded-lg px-3"
+                      />
+                      <input
+                        type="email"
+                        value={createCommForm.bendaharaEmail}
+                        onChange={e =>
+                          setCreateCommForm(prev => ({ ...prev, bendaharaEmail: e.target.value }))
+                        }
+                        placeholder="Email Bendahara (Anti-Monopoli)"
+                        className="w-full min-h-[40px] border border-slate-300 rounded-lg px-3"
                       />
                     </div>
                   </div>

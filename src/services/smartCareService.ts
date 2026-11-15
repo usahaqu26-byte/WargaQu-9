@@ -119,85 +119,23 @@ function detectDeviceSummary(): string {
   return 'Desktop / Web Browser';
 }
 
-const SEED_LOGS: SmartCareLogEntry[] = [
-  {
-    id: '#SC-8921',
-    complaint:
-      'Tombol bayar di kasir sempat mental keluar sendiri pas mau ngeprint struk thermal ukuran 58 milimeter.',
-    module: 'services/printer.ts -> printReceipt()',
-    detectedError: 'TypeError / Null Bluetooth Handle',
-    severity: 'High Severity',
-    autoPrompt: `[AI AUTO-FIX PROMPT]
-Keluhan User: "Tombol bayar di kasir sempat mental keluar sendiri pas mau ngeprint struk thermal ukuran 58 milimeter."
-Target Module: services/printer.ts -> printReceipt()
-Diagnosa: TypeError / Null Bluetooth Handle
-
-Instruksi Perbaikan:
-1. Tambahkan try-catch block dan null-check pada handle printer Bluetooth 58mm.
-2. Pastikan transaksi tetap tersimpan di localStorage sebelum proses cetak struk dijalankan.
-3. Tampilkan fallback notifikasi ramah jika koneksi printer terputus.`,
-    device: 'Android Browser / PWA',
-    reporterName: 'Kasir Bakso Qu',
-    createdAt: 'Hari ini · 09:15',
-    updatedAt: 'Hari ini · 09:15',
-    triageStatus: 'queued',
-    occurrenceCount: 1,
-    reporters: [
-      {
-        name: 'Kasir Bakso Qu',
-        device: 'Android Browser / PWA',
-        complaint:
-          'Tombol bayar di kasir sempat mental keluar sendiri pas mau ngeprint struk thermal ukuran 58 milimeter.',
-        time: 'Hari ini · 09:15',
-      },
-    ],
-    sentToAdminAt: 'Hari ini · 09:15',
-  },
-  {
-    id: '#SC-8920',
-    complaint:
-      'Stok produk sembako tidak otomatis berkurang waktu transaksi tempo lunas.',
-    module: 'components/modularqu -> handleSettleDebt()',
-    detectedError: 'Event Emission Logic / State Mismatch',
-    severity: 'Medium',
-    autoPrompt: `[AI AUTO-FIX PROMPT]
-Keluhan User: "Stok produk sembako tidak otomatis berkurang waktu transaksi tempo lunas."
-Target Module: components/modularqu -> handleSettleDebt()
-Diagnosa: Event Emission Logic / State Mismatch
-
-Instruksi Perbaikan:
-1. Pastikan pelunasan transaksi Tempo/Utang memicu pembaruan stok produk secara atomik.
-2. Hindari double-deduction bila stok sudah dikurangi saat nota tempo awal dibuat.`,
-    device: 'Samsung A14 (Android)',
-    reporterName: 'Toko Sembako Warga',
-    createdAt: 'Hari ini · 08:40',
-    updatedAt: 'Hari ini · 08:40',
-    triageStatus: 'new',
-    occurrenceCount: 1,
-    reporters: [
-      {
-        name: 'Toko Sembako Warga',
-        device: 'Samsung A14 (Android)',
-        complaint:
-          'Stok produk sembako tidak otomatis berkurang waktu transaksi tempo lunas.',
-        time: 'Hari ini · 08:40',
-      },
-    ],
-    sentToAdminAt: 'Hari ini · 08:40',
-  },
-];
-
 function loadLogs(): SmartCareLogEntry[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) {
+        return parsed.filter(
+          (l: SmartCareLogEntry) =>
+            !(l?.id === '#SC-8921' && l?.reporterName === 'Kasir Bakso Qu') &&
+            !(l?.id === '#SC-8920' && l?.reporterName === 'Toko Sembako Warga')
+        );
+      }
     }
   } catch {
     // ignore
   }
-  return SEED_LOGS;
+  return [];
 }
 
 function saveLogs(logs: SmartCareLogEntry[]) {

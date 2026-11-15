@@ -47,23 +47,14 @@ interface ModularQuViewProps {
 }
 
 const DEFAULT_MODULAR_PROFILE: ModularProfile = {
-  bizName: "UsahaQu POS Modular",
-  bizType: "F&B / Kuliner",
-  address: "Sentra Kuliner & UMKM RT 03 / RW 05",
-  phone: "0812-3456-7890",
-  footer: "Terima Kasih Atas Kunjungan Anda! Berkah Berlimpah."
+  bizName: "Usaha Saya",
+  bizType: "UMKM / Jasa",
+  address: "",
+  phone: "",
+  footer: "Terima Kasih Atas Kunjungan Anda."
 };
 
-const DEFAULT_MODULAR_PRODUCTS: ModularProduct[] = [
-  { id: 'p1', name: 'Kopi Susu Gula Aren', category: 'Minuman', cost: 7000, price: 15000, stock: 45 },
-  { id: 'p2', name: 'Roti Bakar Keju Cokelat', category: 'Makanan', cost: 6000, price: 12000, stock: 30 },
-  { id: 'p3', name: 'Es Teh Manis Segar', category: 'Minuman', cost: 1500, price: 5000, stock: 100 },
-  { id: 'p4', name: 'Bakso Urat Spesial', category: 'Makanan', cost: 12000, price: 25000, stock: 40 },
-  { id: 'p5', name: 'Oli Mesin Matic 0.8L', category: 'Bengkel', cost: 35000, price: 45000, stock: 15 },
-  { id: 'p6', name: 'Jasa Servis & Setel Rantai', category: 'Jasa', cost: 0, price: 25000, stock: 999 },
-  { id: 'p7', name: 'Beras Premium 5kg', category: 'Ritel', cost: 65000, price: 74000, stock: 20 },
-  { id: 'p8', name: 'Minyak Goreng 2L', category: 'Ritel', cost: 28000, price: 34000, stock: 25 },
-];
+const DEFAULT_MODULAR_PRODUCTS: ModularProduct[] = [];
 
 export const ModularQuView: React.FC<ModularQuViewProps> = ({
   onBackToWarga,
@@ -96,15 +87,7 @@ export const ModularQuView: React.FC<ModularQuViewProps> = ({
   const [expenses, setExpenses] = useState<ModularExpense[]>(() => {
     try {
       const saved = localStorage.getItem('uq_expenses');
-      return saved ? JSON.parse(saved) : [
-        {
-          id: 'e1',
-          desc: 'Beli Susu, Gula Aren & Bahan Baku',
-          amount: 150000,
-          category: 'Bahan Baku',
-          date: new Date().toLocaleDateString('id-ID')
-        }
-      ];
+      return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
     }
@@ -1000,6 +983,25 @@ export const ModularQuView: React.FC<ModularQuViewProps> = ({
                 </div>
 
                 {/* Product Grid */}
+                {filteredProducts.length === 0 ? (
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center space-y-2.5">
+                    <p className="text-xs text-zinc-400">
+                      {products.length === 0
+                        ? 'Belum ada produk atau jasa di kasir ini.'
+                        : 'Tidak ada item yang cocok dengan pencarian Anda.'}
+                    </p>
+                    {products.length === 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('produk')}
+                        className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs inline-flex items-center gap-1.5"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Tambah Produk / Jasa</span>
+                      </button>
+                    )}
+                  </div>
+                ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                   {filteredProducts.map((p) => {
                     const inCartItem = cart.find((c) => c.id === p.id);
@@ -1034,6 +1036,7 @@ export const ModularQuView: React.FC<ModularQuViewProps> = ({
                     );
                   })}
                 </div>
+                )}
               </div>
 
               {/* RIGHT: KERANJANG BELANJA DIRECT & EDIT */}

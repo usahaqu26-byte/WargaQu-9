@@ -212,6 +212,451 @@
         }
       },
       "required": ["uid", "email", "role", "createdAt"]
+    },
+    "RtCommunity": {
+      "title": "RtCommunity",
+      "description": "Server-backed RTQu / Paguyuban workspace with multi-officer (>2) access and server-enforced tenure expiry.",
+      "type": "object",
+      "properties": {
+        "communityId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "orgType": {
+          "type": "string",
+          "enum": ["RT", "Paguyuban", "Organisasi", "Sosial"]
+        },
+        "customBrandName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "orgName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "areaName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "monthlyDuesAmount": {
+          "type": "number"
+        },
+        "year": {
+          "type": "number"
+        },
+        "inviteCode": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "termStartDate": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "termEndDate": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "termEndTimestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "graceEndTimestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "gracePeriodDays": {
+          "type": "number"
+        },
+        "skNumber": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "officerEmails": {
+          "type": "array",
+          "description": "Bounded list (1..10) of active board officer verified emails."
+        },
+        "officers": {
+          "type": "array",
+          "description": "Bounded list (1..10) of officer role records."
+        },
+        "kasBalance": {
+          "type": "number"
+        },
+        "totalMasuk": {
+          "type": "number"
+        },
+        "totalKeluar": {
+          "type": "number"
+        },
+        "memberCount": {
+          "type": "number"
+        },
+        "handoverCount": {
+          "type": "number"
+        },
+        "recentTransactions": {
+          "type": "array",
+          "description": "Bounded snapshot (max 25) of latest kas entries for citizen transparency."
+        },
+        "handoverHistory": {
+          "type": "array",
+          "description": "Bounded snapshot (max 15) of Sertijab history."
+        },
+        "lastGovernanceActionId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "lastActionNote": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "createdByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        }
+      },
+      "required": [
+        "communityId",
+        "orgType",
+        "customBrandName",
+        "orgName",
+        "areaName",
+        "monthlyDuesAmount",
+        "year",
+        "inviteCode",
+        "termStartDate",
+        "termEndDate",
+        "termEndTimestamp",
+        "graceEndTimestamp",
+        "gracePeriodDays",
+        "skNumber",
+        "officerEmails",
+        "officers",
+        "kasBalance",
+        "totalMasuk",
+        "totalKeluar",
+        "memberCount",
+        "handoverCount",
+        "recentTransactions",
+        "handoverHistory",
+        "lastGovernanceActionId",
+        "lastActionNote",
+        "createdByUid",
+        "createdAt",
+        "updatedAt",
+        "updatedByUid"
+      ]
+    },
+    "RtUidMember": {
+      "title": "RtUidMember",
+      "description": "Verified citizen membership link keyed by Auth UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "inviteCode": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "joinedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "displayName", "inviteCode", "joinedAt"]
+    },
+    "RtKasTransaction": {
+      "title": "RtKasTransaction",
+      "description": "Append-only community treasury transaction record.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["masuk", "keluar"]
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "amount": {
+          "type": "number"
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "recordedBy": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "recordedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "recordedByEmail": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "isCorrection": {
+          "type": "boolean"
+        },
+        "correctsTxId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "termPeriod": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "officerEmails": {
+          "type": "array",
+          "description": "Bounded list (1..10) of board emails for secure list query."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "category",
+        "title",
+        "amount",
+        "date",
+        "recordedBy",
+        "recordedByUid",
+        "recordedByEmail",
+        "isCorrection",
+        "correctsTxId",
+        "termPeriod",
+        "officerEmails",
+        "createdAt"
+      ]
+    },
+    "RtHandoverRecord": {
+      "title": "RtHandoverRecord",
+      "description": "Immutable Sertijab (Serah Terima Jabatan) archive record.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "communityId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "handoverDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "periodLabel": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "outgoingOfficerEmails": {
+          "type": "array"
+        },
+        "incomingOfficerEmails": {
+          "type": "array"
+        },
+        "incomingOfficers": {
+          "type": "array"
+        },
+        "closingBalance": {
+          "type": "number"
+        },
+        "memberCount": {
+          "type": "number"
+        },
+        "skNumber": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "officerEmails": {
+          "type": "array"
+        },
+        "approvedByEmails": {
+          "type": "array"
+        },
+        "recordedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "communityId",
+        "handoverDate",
+        "periodLabel",
+        "outgoingOfficerEmails",
+        "incomingOfficerEmails",
+        "incomingOfficers",
+        "closingBalance",
+        "memberCount",
+        "skNumber",
+        "note",
+        "officerEmails",
+        "approvedByEmails",
+        "recordedByUid",
+        "createdAt"
+      ]
+    },
+    "RtGovernanceAction": {
+      "title": "RtGovernanceAction",
+      "description": "Multi-officer quorum proposal for board update, term extension, or Sertijab handover.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "communityId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "actionType": {
+          "type": "string",
+          "enum": ["update_officers", "extend_term", "sertijab", "collective_recovery"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "executed", "rejected"]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "proposedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "proposedByEmail": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "proposedOfficerEmails": {
+          "type": "array"
+        },
+        "proposedOfficers": {
+          "type": "array"
+        },
+        "proposedTermStartDate": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "proposedTermEndDate": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "proposedTermEndTimestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "proposedGraceEndTimestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "proposedGracePeriodDays": {
+          "type": "number"
+        },
+        "proposedSkNumber": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "officerEmails": {
+          "type": "array"
+        },
+        "approverEmails": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "communityId",
+        "actionType",
+        "status",
+        "title",
+        "note",
+        "proposedByUid",
+        "proposedByEmail",
+        "proposedOfficerEmails",
+        "proposedOfficers",
+        "proposedTermStartDate",
+        "proposedTermEndDate",
+        "proposedTermEndTimestamp",
+        "proposedGraceEndTimestamp",
+        "proposedGracePeriodDays",
+        "proposedSkNumber",
+        "officerEmails",
+        "approverEmails",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -234,6 +679,26 @@
     "/admins/{adminUid}": {
       "schema": { "$ref": "#/entities/AdminMarker" },
       "description": "Admin lookup table by UID."
+    },
+    "/rtCommunities/{communityId}": {
+      "schema": { "$ref": "#/entities/RtCommunity" },
+      "description": "Server-backed RTQu / Paguyuban governance document with multi-officer (>2) roles & tenure lock."
+    },
+    "/rtCommunities/{communityId}/uidMembers/{uid}": {
+      "schema": { "$ref": "#/entities/RtUidMember" },
+      "description": "Verified citizen membership link keyed by Auth UID."
+    },
+    "/rtCommunities/{communityId}/transactions/{txId}": {
+      "schema": { "$ref": "#/entities/RtKasTransaction" },
+      "description": "Append-only kas ledger entries."
+    },
+    "/rtCommunities/{communityId}/handovers/{handoverId}": {
+      "schema": { "$ref": "#/entities/RtHandoverRecord" },
+      "description": "Immutable Sertijab handover history."
+    },
+    "/rtCommunities/{communityId}/governanceActions/{actionId}": {
+      "schema": { "$ref": "#/entities/RtGovernanceAction" },
+      "description": "Multi-officer quorum proposals & approvals."
     }
   }
 }

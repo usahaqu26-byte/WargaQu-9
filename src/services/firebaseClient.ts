@@ -5,10 +5,28 @@ import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
 
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.file'];
+
+const configuredDatabaseId =
+  (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId ||
+  'ai-studio-wargaqu157-dd4e8869-a069-4bee-8f98-b2156ea2d59f';
+
+export const db = getFirestore(app, configuredDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+DRIVE_SCOPES.forEach(scope => googleProvider.addScope(scope));
 googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+// Strictly in-memory token cache (never stored in localStorage/sessionStorage)
+let cachedDriveAccessToken: string | null = null;
+
+export function setCachedDriveAccessToken(token: string | null): void {
+  cachedDriveAccessToken = token;
+}
+
+export function getCachedDriveAccessToken(): string | null {
+  return cachedDriveAccessToken;
+}
 
 export enum OperationType {
   CREATE = 'create',

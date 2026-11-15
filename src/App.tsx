@@ -44,6 +44,7 @@ import {
   RealtimeRelayService,
 } from './services/realtimeRelayService';
 import { FirebaseSyncService } from './services/firebaseSyncService';
+import { AutoBackupService } from './services/autoBackupService';
 
 type AppScreen = 'warga' | 'akun' | 'admin_zero_trust' | 'leluhurqu' | 'rtqu' | 'siagaqu' | 'chatqu' | 'muamalahqu' | 'areaqu' | 'usahaqu' | 'modularqu' | 'bantuan' | 'empty_module';
 
@@ -235,6 +236,7 @@ export default function App() {
 
     RealtimeRelayService.start();
     FirebaseSyncService.init();
+    AutoBackupService.startAutoBackupMonitor();
     void AccountGovernanceService.syncPolicyFromServer();
     AccountGovernanceService.publishCurrentPresence(currentScreenRef.current);
     const presenceInterval = window.setInterval(() => {

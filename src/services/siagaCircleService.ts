@@ -60,31 +60,6 @@ const DEFAULT_CIRCLES: PrivateSiagaCircle[] = [
   },
 ];
 
-const DEFAULT_MEMBERS: InvitedCircleMember[] = [
-  {
-    id: 'cm-1',
-    circleType: 'keluarga',
-    circleName: 'Komunitas Keluarga',
-    name: 'Pasangan / Keluarga Inti',
-    email: 'keluarga.inti@gmail.com',
-    phone: '0813-9988-7766',
-    status: 'active',
-    inviteCode: 'FAM-2026',
-    invitedAt: 'Terverifikasi',
-  },
-  {
-    id: 'cm-2',
-    circleType: 'perusahaan',
-    circleName: 'Komunitas Perusahaan / Tim',
-    name: 'Koordinator Keamanan Kantor',
-    email: 'hrd.siaga@perusahaan.id',
-    phone: '0811-2233-4455',
-    status: 'active',
-    inviteCode: 'CORP-2026',
-    invitedAt: 'Terverifikasi',
-  },
-];
-
 export const SiagaCircleService = {
   getCircles(): PrivateSiagaCircle[] {
     try {
@@ -99,11 +74,20 @@ export const SiagaCircleService = {
   getInvitedMembers(): InvitedCircleMember[] {
     try {
       const raw = localStorage.getItem(CIRCLE_MEMBERS_KEY);
-      if (raw) return JSON.parse(raw) as InvitedCircleMember[];
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return (parsed as InvitedCircleMember[]).filter(
+            (m) =>
+              m?.email !== 'keluarga.inti@gmail.com' &&
+              m?.email !== 'hrd.siaga@perusahaan.id'
+          );
+        }
+      }
     } catch {
       // fallback
     }
-    return DEFAULT_MEMBERS;
+    return [];
   },
 
   saveInvitedMembers(members: InvitedCircleMember[]) {

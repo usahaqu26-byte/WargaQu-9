@@ -40,7 +40,7 @@ service cloud.firestore {
       );
     }
 
-    // Validation Helpers
+    // Validation Helpers (Existing Collections)
     function isValidAccountRegistry(data) {
       return data.keys().hasAll([
         'uid',
@@ -141,6 +141,318 @@ service cloud.firestore {
         data.updatedByUid == request.auth.uid;
     }
 
+    // Validation Helpers (RTQu Multi-Officer + Tenure Governance)
+    function isBoundedEmailList(arr, minLen, maxLen) {
+      return arr is list &&
+        arr.size() >= minLen &&
+        arr.size() <= maxLen &&
+        arr[0] is string &&
+        arr[0].size() >= 3 &&
+        arr[0].size() <= 160;
+    }
+
+    function isValidRtCommunity(data) {
+      return data.keys().hasAll([
+        'communityId',
+        'orgType',
+        'customBrandName',
+        'orgName',
+        'areaName',
+        'monthlyDuesAmount',
+        'year',
+        'inviteCode',
+        'termStartDate',
+        'termEndDate',
+        'termEndTimestamp',
+        'graceEndTimestamp',
+        'gracePeriodDays',
+        'skNumber',
+        'officerEmails',
+        'officers',
+        'kasBalance',
+        'totalMasuk',
+        'totalKeluar',
+        'memberCount',
+        'handoverCount',
+        'recentTransactions',
+        'handoverHistory',
+        'lastGovernanceActionId',
+        'lastActionNote',
+        'createdByUid',
+        'createdAt',
+        'updatedAt',
+        'updatedByUid'
+      ]) &&
+      data.keys().hasOnly([
+        'communityId',
+        'orgType',
+        'customBrandName',
+        'orgName',
+        'areaName',
+        'monthlyDuesAmount',
+        'year',
+        'inviteCode',
+        'termStartDate',
+        'termEndDate',
+        'termEndTimestamp',
+        'graceEndTimestamp',
+        'gracePeriodDays',
+        'skNumber',
+        'officerEmails',
+        'officers',
+        'kasBalance',
+        'totalMasuk',
+        'totalKeluar',
+        'memberCount',
+        'handoverCount',
+        'recentTransactions',
+        'handoverHistory',
+        'lastGovernanceActionId',
+        'lastActionNote',
+        'createdByUid',
+        'createdAt',
+        'updatedAt',
+        'updatedByUid'
+      ]) &&
+      isValidId(data.communityId) &&
+      data.orgType in ['RT', 'Paguyuban', 'Organisasi', 'Sosial'] &&
+      data.customBrandName is string && data.customBrandName.size() <= 80 &&
+      data.orgName is string && data.orgName.size() >= 1 && data.orgName.size() <= 80 &&
+      data.areaName is string && data.areaName.size() <= 100 &&
+      data.monthlyDuesAmount is number && data.monthlyDuesAmount >= 0 &&
+      data.year is number && data.year >= 2020 && data.year <= 2100 &&
+      data.inviteCode is string && data.inviteCode.size() >= 4 && data.inviteCode.size() <= 32 &&
+      data.termStartDate is string && data.termStartDate.size() >= 8 && data.termStartDate.size() <= 16 &&
+      data.termEndDate is string && data.termEndDate.size() >= 8 && data.termEndDate.size() <= 16 &&
+      data.termEndTimestamp is timestamp &&
+      data.graceEndTimestamp is timestamp &&
+      data.graceEndTimestamp >= data.termEndTimestamp &&
+      data.gracePeriodDays is number && data.gracePeriodDays >= 0 && data.gracePeriodDays <= 60 &&
+      data.skNumber is string && data.skNumber.size() <= 80 &&
+      isBoundedEmailList(data.officerEmails, 1, 10) &&
+      data.officers is list && data.officers.size() >= 1 && data.officers.size() <= 10 &&
+      data.officers[0] is map &&
+      data.kasBalance is number &&
+      data.totalMasuk is number && data.totalMasuk >= 0 &&
+      data.totalKeluar is number && data.totalKeluar >= 0 &&
+      data.memberCount is number && data.memberCount >= 0 &&
+      data.handoverCount is number && data.handoverCount >= 0 &&
+      data.recentTransactions is list && data.recentTransactions.size() <= 25 &&
+      (data.recentTransactions.size() == 0 || data.recentTransactions[0] is map) &&
+      data.handoverHistory is list && data.handoverHistory.size() <= 15 &&
+      (data.handoverHistory.size() == 0 || data.handoverHistory[0] is map) &&
+      data.lastGovernanceActionId is string && data.lastGovernanceActionId.size() <= 128 &&
+      data.lastActionNote is string && data.lastActionNote.size() <= 240 &&
+      isValidId(data.createdByUid) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp &&
+      isValidId(data.updatedByUid) &&
+      data.updatedByUid == request.auth.uid;
+    }
+
+    function isValidRtUidMember(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'inviteCode', 'joinedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'displayName', 'inviteCode', 'joinedAt']) &&
+        isValidId(data.uid) &&
+        data.uid == request.auth.uid &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.email == request.auth.token.email &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+        data.inviteCode is string && data.inviteCode.size() >= 4 && data.inviteCode.size() <= 32 &&
+        data.joinedAt is timestamp;
+    }
+
+    function isValidRtKasTransaction(data) {
+      return data.keys().hasAll([
+        'id',
+        'type',
+        'category',
+        'title',
+        'amount',
+        'date',
+        'recordedBy',
+        'recordedByUid',
+        'recordedByEmail',
+        'isCorrection',
+        'correctsTxId',
+        'termPeriod',
+        'officerEmails',
+        'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id',
+        'type',
+        'category',
+        'title',
+        'amount',
+        'date',
+        'recordedBy',
+        'recordedByUid',
+        'recordedByEmail',
+        'isCorrection',
+        'correctsTxId',
+        'termPeriod',
+        'officerEmails',
+        'createdAt'
+      ]) &&
+      isValidId(data.id) &&
+      data.type in ['masuk', 'keluar'] &&
+      data.category is string && data.category.size() >= 1 && data.category.size() <= 60 &&
+      data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+      data.amount is number && data.amount >= 0 &&
+      data.date is string && data.date.size() >= 1 && data.date.size() <= 32 &&
+      data.recordedBy is string && data.recordedBy.size() >= 1 && data.recordedBy.size() <= 100 &&
+      isValidId(data.recordedByUid) &&
+      data.recordedByUid == request.auth.uid &&
+      data.recordedByEmail is string && data.recordedByEmail == request.auth.token.email &&
+      data.isCorrection is bool &&
+      data.correctsTxId is string && data.correctsTxId.size() <= 128 &&
+      data.termPeriod is string && data.termPeriod.size() <= 40 &&
+      isBoundedEmailList(data.officerEmails, 1, 10) &&
+      data.createdAt is timestamp;
+    }
+
+    function isValidRtHandover(data) {
+      return data.keys().hasAll([
+        'id',
+        'communityId',
+        'handoverDate',
+        'periodLabel',
+        'outgoingOfficerEmails',
+        'incomingOfficerEmails',
+        'incomingOfficers',
+        'closingBalance',
+        'memberCount',
+        'skNumber',
+        'note',
+        'officerEmails',
+        'approvedByEmails',
+        'recordedByUid',
+        'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id',
+        'communityId',
+        'handoverDate',
+        'periodLabel',
+        'outgoingOfficerEmails',
+        'incomingOfficerEmails',
+        'incomingOfficers',
+        'closingBalance',
+        'memberCount',
+        'skNumber',
+        'note',
+        'officerEmails',
+        'approvedByEmails',
+        'recordedByUid',
+        'createdAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.communityId) &&
+      data.handoverDate is string && data.handoverDate.size() >= 1 && data.handoverDate.size() <= 32 &&
+      data.periodLabel is string && data.periodLabel.size() >= 1 && data.periodLabel.size() <= 40 &&
+      isBoundedEmailList(data.outgoingOfficerEmails, 1, 10) &&
+      isBoundedEmailList(data.incomingOfficerEmails, 1, 10) &&
+      data.incomingOfficers is list && data.incomingOfficers.size() >= 1 && data.incomingOfficers.size() <= 10 &&
+      data.incomingOfficers[0] is map &&
+      data.closingBalance is number &&
+      data.memberCount is number && data.memberCount >= 0 &&
+      data.skNumber is string && data.skNumber.size() <= 80 &&
+      data.note is string && data.note.size() <= 300 &&
+      isBoundedEmailList(data.officerEmails, 1, 10) &&
+      isBoundedEmailList(data.approvedByEmails, 1, 10) &&
+      isValidId(data.recordedByUid) &&
+      data.recordedByUid == request.auth.uid &&
+      data.createdAt is timestamp;
+    }
+
+    function isValidRtGovernanceAction(data) {
+      return data.keys().hasAll([
+        'id',
+        'communityId',
+        'actionType',
+        'status',
+        'title',
+        'note',
+        'proposedByUid',
+        'proposedByEmail',
+        'proposedOfficerEmails',
+        'proposedOfficers',
+        'proposedTermStartDate',
+        'proposedTermEndDate',
+        'proposedTermEndTimestamp',
+        'proposedGraceEndTimestamp',
+        'proposedGracePeriodDays',
+        'proposedSkNumber',
+        'officerEmails',
+        'approverEmails',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'id',
+        'communityId',
+        'actionType',
+        'status',
+        'title',
+        'note',
+        'proposedByUid',
+        'proposedByEmail',
+        'proposedOfficerEmails',
+        'proposedOfficers',
+        'proposedTermStartDate',
+        'proposedTermEndDate',
+        'proposedTermEndTimestamp',
+        'proposedGraceEndTimestamp',
+        'proposedGracePeriodDays',
+        'proposedSkNumber',
+        'officerEmails',
+        'approverEmails',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      isValidId(data.id) &&
+      isValidId(data.communityId) &&
+      data.actionType in ['update_officers', 'extend_term', 'sertijab', 'collective_recovery'] &&
+      data.status in ['pending', 'approved', 'executed', 'rejected'] &&
+      data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+      data.note is string && data.note.size() <= 300 &&
+      isValidId(data.proposedByUid) &&
+      data.proposedByEmail is string && data.proposedByEmail.size() >= 3 && data.proposedByEmail.size() <= 160 &&
+      isBoundedEmailList(data.proposedOfficerEmails, 1, 10) &&
+      data.proposedOfficers is list && data.proposedOfficers.size() >= 1 && data.proposedOfficers.size() <= 10 &&
+      data.proposedOfficers[0] is map &&
+      data.proposedTermStartDate is string && data.proposedTermStartDate.size() >= 8 && data.proposedTermStartDate.size() <= 16 &&
+      data.proposedTermEndDate is string && data.proposedTermEndDate.size() >= 8 && data.proposedTermEndDate.size() <= 16 &&
+      data.proposedTermEndTimestamp is timestamp &&
+      data.proposedGraceEndTimestamp is timestamp &&
+      data.proposedGraceEndTimestamp >= data.proposedTermEndTimestamp &&
+      data.proposedGracePeriodDays is number && data.proposedGracePeriodDays >= 0 && data.proposedGracePeriodDays <= 60 &&
+      data.proposedSkNumber is string && data.proposedSkNumber.size() <= 80 &&
+      isBoundedEmailList(data.officerEmails, 1, 10) &&
+      isBoundedEmailList(data.approverEmails, 1, 10) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function parentCommunity(communityId) {
+      return get(/databases/$(database)/documents/rtCommunities/$(communityId)).data;
+    }
+
+    function isActiveOfficerOfParent(communityId) {
+      let comm = parentCommunity(communityId);
+      return isVerifiedUser() &&
+        request.auth.token.email in comm.officerEmails &&
+        request.time < comm.termEndTimestamp;
+    }
+
+    function isOfficerWithinGraceOfParent(communityId) {
+      let comm = parentCommunity(communityId);
+      return isVerifiedUser() &&
+        request.auth.token.email in comm.officerEmails &&
+        request.time < comm.graceEndTimestamp;
+    }
+
     // 1. Admins Lookup
     match /admins/{adminUid} {
       allow get: if isSignedIn() && isValidId(adminUid) && isOwner(adminUid);
@@ -232,6 +544,243 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly(['rules', 'updatedAt', 'updatedByUid']))) &&
         incoming().updatedAt == request.time;
       allow delete: if isAdmin() && isValidId(configId);
+    }
+
+    // 5. Server-Backed RTQu Communities (Multi-Officer >2 & Server-Enforced Tenure)
+    match /rtCommunities/{communityId} {
+      allow get: if isValidId(communityId) && (
+        isAdmin() ||
+        (isVerifiedUser() && (
+          request.auth.token.email in existing().officerEmails ||
+          exists(/databases/$(database)/documents/rtCommunities/$(communityId)/uidMembers/$(request.auth.uid))
+        ))
+      );
+      allow list: if isAdmin() ||
+        (isVerifiedUser() && request.auth.token.email in existing().officerEmails);
+
+      allow create: if isVerifiedUser() &&
+        isValidId(communityId) &&
+        isValidRtCommunity(incoming()) &&
+        incoming().communityId == communityId &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().updatedByUid == request.auth.uid &&
+        request.auth.token.email in incoming().officerEmails &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidId(communityId) &&
+        isValidRtCommunity(incoming()) &&
+        incoming().communityId == existing().communityId &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          // Action A: Routine operations strictly within active term
+          (
+            request.auth.token.email in existing().officerEmails &&
+            request.time < existing().termEndTimestamp &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'orgType',
+              'customBrandName',
+              'orgName',
+              'areaName',
+              'monthlyDuesAmount',
+              'year',
+              'kasBalance',
+              'totalMasuk',
+              'totalKeluar',
+              'memberCount',
+              'recentTransactions',
+              'lastActionNote',
+              'updatedAt',
+              'updatedByUid'
+            ])
+          ) ||
+          // Action B: Initial board setup (<3 officers) — strictly additive, cannot remove officers or change term dates
+          (
+            request.auth.token.email in existing().officerEmails &&
+            request.time < existing().termEndTimestamp &&
+            existing().officerEmails.size() < 3 &&
+            incoming().officerEmails.hasAll(existing().officerEmails) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'officerEmails',
+              'officers',
+              'lastActionNote',
+              'updatedAt',
+              'updatedByUid'
+            ])
+          ) ||
+          // Action C: Quorum-approved (>=2 officers) Board Change, Term Extension, or Sertijab Handover
+          (
+            request.auth.token.email in existing().officerEmails &&
+            incoming().lastGovernanceActionId != existing().lastGovernanceActionId &&
+            isValidId(incoming().lastGovernanceActionId) &&
+            get(/databases/$(database)/documents/rtCommunities/$(communityId)/governanceActions/$(incoming().lastGovernanceActionId)).data.communityId == communityId &&
+            get(/databases/$(database)/documents/rtCommunities/$(communityId)/governanceActions/$(incoming().lastGovernanceActionId)).data.status == 'approved' &&
+            get(/databases/$(database)/documents/rtCommunities/$(communityId)/governanceActions/$(incoming().lastGovernanceActionId)).data.approverEmails.size() >= 2 &&
+            (
+              get(/databases/$(database)/documents/rtCommunities/$(communityId)/governanceActions/$(incoming().lastGovernanceActionId)).data.actionType in ['sertijab', 'collective_recovery']
+                ? request.time < existing().graceEndTimestamp
+                : request.time < existing().termEndTimestamp
+            ) &&
+            incoming().officerEmails == get(/databases/$(database)/documents/rtCommunities/$(communityId)/governanceActions/$(incoming().lastGovernanceActionId)).data.proposedOfficerEmails &&
+            incoming().termEndTimestamp == get(/databases/$(database)/documents/rtCommunities/$(communityId)/governanceActions/$(incoming().lastGovernanceActionId)).data.proposedTermEndTimestamp &&
+            incoming().graceEndTimestamp == get(/databases/$(database)/documents/rtCommunities/$(communityId)/governanceActions/$(incoming().lastGovernanceActionId)).data.proposedGraceEndTimestamp &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'officerEmails',
+              'officers',
+              'termStartDate',
+              'termEndDate',
+              'termEndTimestamp',
+              'graceEndTimestamp',
+              'gracePeriodDays',
+              'skNumber',
+              'handoverCount',
+              'handoverHistory',
+              'lastGovernanceActionId',
+              'lastActionNote',
+              'updatedAt',
+              'updatedByUid'
+            ])
+          )
+        );
+
+      allow delete: if isAdmin() && isValidId(communityId);
+
+      // Subcollection 5a: Verified UID Members (inviteCode gated)
+      match /uidMembers/{uid} {
+        allow get: if isValidId(communityId) && isValidId(uid) && (
+          isAdmin() ||
+          isOwner(uid) ||
+          (isVerifiedUser() && request.auth.token.email in parentCommunity(communityId).officerEmails)
+        );
+        allow list: if isAdmin() ||
+          (isVerifiedUser() && existing().uid == request.auth.uid);
+        allow create: if isVerifiedUser() &&
+          isValidId(communityId) &&
+          isValidId(uid) &&
+          isOwner(uid) &&
+          isValidRtUidMember(incoming()) &&
+          incoming().joinedAt == request.time &&
+          exists(/databases/$(database)/documents/rtCommunities/$(communityId)) && (
+            request.auth.token.email in parentCommunity(communityId).officerEmails ||
+            incoming().inviteCode == parentCommunity(communityId).inviteCode
+          );
+        allow update, delete: if isAdmin() && isValidId(communityId) && isValidId(uid);
+      }
+
+      // Subcollection 5b: Append-Only Kas Transactions
+      match /transactions/{txId} {
+        allow get: if isValidId(communityId) && isValidId(txId) && (
+          isAdmin() ||
+          (isVerifiedUser() && (
+            request.auth.token.email in existing().officerEmails ||
+            exists(/databases/$(database)/documents/rtCommunities/$(communityId)/uidMembers/$(request.auth.uid))
+          ))
+        );
+        allow list: if isAdmin() ||
+          (isVerifiedUser() && (
+            request.auth.token.email in existing().officerEmails ||
+            existing().recordedByUid == request.auth.uid
+          ));
+        allow create: if isValidId(communityId) &&
+          isValidId(txId) &&
+          isValidRtKasTransaction(incoming()) &&
+          incoming().id == txId &&
+          incoming().createdAt == request.time &&
+          isActiveOfficerOfParent(communityId) &&
+          incoming().officerEmails == parentCommunity(communityId).officerEmails;
+        allow update, delete: if false;
+      }
+
+      // Subcollection 5c: Immutable Sertijab Handovers
+      match /handovers/{handoverId} {
+        allow get: if isValidId(communityId) && isValidId(handoverId) && (
+          isAdmin() ||
+          (isVerifiedUser() && (
+            request.auth.token.email in existing().officerEmails ||
+            exists(/databases/$(database)/documents/rtCommunities/$(communityId)/uidMembers/$(request.auth.uid))
+          ))
+        );
+        allow list: if isAdmin() ||
+          (isVerifiedUser() && request.auth.token.email in existing().officerEmails);
+        allow create: if isValidId(communityId) &&
+          isValidId(handoverId) &&
+          isValidRtHandover(incoming()) &&
+          incoming().id == handoverId &&
+          incoming().communityId == communityId &&
+          incoming().createdAt == request.time &&
+          (isAdmin() || isOfficerWithinGraceOfParent(communityId));
+        allow update, delete: if false;
+      }
+
+      // Subcollection 5d: Multi-Officer Quorum Proposals
+      match /governanceActions/{actionId} {
+        allow get: if isValidId(communityId) && isValidId(actionId) && (
+          isAdmin() ||
+          (isVerifiedUser() && (
+            request.auth.token.email in existing().officerEmails ||
+            exists(/databases/$(database)/documents/rtCommunities/$(communityId)/uidMembers/$(request.auth.uid))
+          ))
+        );
+        allow list: if isAdmin() ||
+          (isVerifiedUser() && request.auth.token.email in existing().officerEmails);
+        allow create: if isValidId(communityId) &&
+          isValidId(actionId) &&
+          isValidRtGovernanceAction(incoming()) &&
+          incoming().id == actionId &&
+          incoming().communityId == communityId &&
+          incoming().proposedByUid == request.auth.uid &&
+          incoming().proposedByEmail == request.auth.token.email &&
+          incoming().status == 'pending' &&
+          incoming().approverEmails.size() == 1 &&
+          incoming().approverEmails[0] == request.auth.token.email &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          isOfficerWithinGraceOfParent(communityId) &&
+          incoming().officerEmails == parentCommunity(communityId).officerEmails;
+        allow update: if isVerifiedUser() &&
+          isValidId(communityId) &&
+          isValidId(actionId) &&
+          isValidRtGovernanceAction(incoming()) &&
+          incoming().id == existing().id &&
+          incoming().communityId == existing().communityId &&
+          incoming().proposedByUid == existing().proposedByUid &&
+          incoming().proposedByEmail == existing().proposedByEmail &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          !(existing().status in ['executed', 'rejected']) && (
+            isAdmin() ||
+            // Branch 1: Distinct second officer adds approval (prevents duplicate self-approval)
+            (
+              existing().status == 'pending' &&
+              isOfficerWithinGraceOfParent(communityId) &&
+              !(request.auth.token.email in existing().approverEmails) &&
+              request.auth.token.email in incoming().approverEmails &&
+              incoming().approverEmails.hasAll(existing().approverEmails) &&
+              incoming().approverEmails.size() == existing().approverEmails.size() + 1 &&
+              incoming().status == (incoming().approverEmails.size() >= 2 ? 'approved' : 'pending') &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['approverEmails', 'status', 'updatedAt'])
+            ) ||
+            // Branch 2: Active/grace officer rejects pending proposal
+            (
+              existing().status == 'pending' &&
+              isOfficerWithinGraceOfParent(communityId) &&
+              incoming().status == 'rejected' &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+            ) ||
+            // Branch 3: Execute approved proposal atomically with parent update
+            (
+              existing().status == 'approved' &&
+              isOfficerWithinGraceOfParent(communityId) &&
+              incoming().status == 'executed' &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) &&
+              getAfter(/databases/$(database)/documents/rtCommunities/$(communityId)).data.lastGovernanceActionId == actionId
+            )
+          );
+        allow delete: if false;
+      }
     }
   }
 }

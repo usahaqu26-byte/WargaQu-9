@@ -1,4 +1,5 @@
 import {
+  GoogleAuthProvider,
   onAuthStateChanged,
   signInWithPopup,
   signOut,
@@ -22,9 +23,11 @@ import {
 import {
   auth,
   db,
+  getCachedDriveAccessToken,
   googleProvider,
   handleFirestoreError,
   OperationType,
+  setCachedDriveAccessToken,
 } from './firebaseClient';
 import { AuthService } from './authService';
 import {
@@ -215,6 +218,7 @@ export const FirebaseSyncService = {
         startAuthenticatedListeners(user);
         void this.syncMyAccountRegistry();
       } else {
+        setCachedDriveAccessToken(null);
         stopAuthenticatedListeners();
       }
 
@@ -240,8 +244,20 @@ export const FirebaseSyncService = {
     return Boolean(u && u.email && u.emailVerified && ZeroTrustService.isAdminEmail(u.email));
   },
 
+  hasDriveAccessToken(): boolean {
+    return Boolean(getCachedDriveAccessToken());
+  },
+
+  getDriveAccessToken(): string | null {
+    return getCachedDriveAccessToken();
+  },
+
   async signInWithGoogle(phoneHint?: string): Promise<User> {
     const cred = await signInWithPopup(auth, googleProvider);
+    const oauthCred = GoogleAuthProvider.credentialFromResult(cred);
+    if (oauthCred?.accessToken) {
+      setCachedDriveAccessToken(oauthCred.accessToken);
+    }
     const user = cred.user;
     if (user.email) {
       const existing = AuthService.getAccount();
@@ -252,10 +268,23 @@ export const FirebaseSyncService = {
       AuthService.login(user.email, chosenPhone);
     }
     await this.syncMyAccountRegistry(undefined, true);
+    emitFirebaseAuthSync();
     return user;
   },
 
+  async requestDriveAccess(phoneHint?: string): Promise<string> {
+    const existingToken = getCachedDriveAccessToken();
+    if (existingToken) return existingToken;
+    await this.signInWithGoogle(phoneHint);
+    const freshToken = getCachedDriveAccessToken();
+    if (!freshToken) {
+      throw new Error('Izin akses Google Drive tidak diberikan oleh pengguna.');
+    }
+    return freshToken;
+  },
+
   async signOutCloud(): Promise<void> {
+    setCachedDriveAccessToken(null);
     stopAuthenticatedListeners();
     await signOut(auth);
   },
