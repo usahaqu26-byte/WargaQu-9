@@ -1,0 +1,1974 @@
+import { AuthAccount, AuthService } from './authService';
+import { InviteRelayService, parseInviteInput } from './inviteRelayService';
+
+export type OrgType = 'RT' | 'Paguyuban' | 'Organisasi' | 'Sosial';
+export type SiagaActivationStatus = 'pending' | 'active' | 'suspended';
+
+export interface PaguyubanProfile {
+  id?: string;
+  orgType: OrgType;
+  customBrandName?: string;
+  orgName: string;
+  areaName: string;
+  monthlyDuesAmount: number;
+  duesBreakdown: {
+    keamanan: number;
+    sampah: number;
+    kas: number;
+  };
+  year: number;
+  pengurusPin: string;
+  inviteCode?: string;
+  creatorName?: string;
+  createdAt?: string;
+}
+
+export interface CoordinatorMember {
+  id: string;
+  role: string;
+  division: string;
+  name: string;
+  phone: string;
+  canVerifySiaga: boolean;
+}
+
+export interface MonthlyPaymentRecord {
+  paid: boolean;
+  paidAt?: string;
+  method?: string;
+  amount: number;
+}
+
+export type ClaimStatus = 'unclaimed' | 'invited' | 'claimed';
+
+export interface WargaMember {
+  id: string;
+  wargaId: string;
+  name: string;
+  block: string;
+  email?: string;
+  phone: string;
+  deviceId?: string; // hidden device token
+  residentType: 'Tetap' | 'Kontrak';
+  isCurrentUser?: boolean;
+  claimStatus?: ClaimStatus;
+  claimCode?: string;
+  invitedAt?: string;
+  claimedAt?: string;
+  priorArrears?: number;
+  priorArrearsNote?: string;
+  siagaStatus: SiagaActivationStatus;
+  siagaRequested?: boolean;
+  siagaVerifiedBy?: string;
+  siagaVerifiedAt?: string;
+  suspendReason?: string;
+  falseAlarmCount: number;
+  monthlyPayments: Record<string, MonthlyPaymentRecord>;
+}
+
+export interface HistoricalArchiveYear {
+  id: string;
+  year: number;
+  totalIncome: number;
+  totalExpense: number;
+  endingBalance: number;
+  note: string;
+  source: 'Manual' | 'Impor Excel';
+}
+
+export type InvitationEventType =
+  | 'Rapat Warga'
+  | 'Kerja Bakti'
+  | 'Acara Lingkungan'
+  | 'Rapat Pengurus';
+
+export type InvitationRsvpStatus = 'hadir' | 'wakil' | 'izin';
+
+export interface InvitationRsvpEntry {
+  memberId: string;
+  name: string;
+  block: string;
+  status: InvitationRsvpStatus;
+  note?: string;
+}
+
+export interface CommunityInvitation {
+  id: string;
+  eventType: InvitationEventType;
+  title: string;
+  dateTime: string;
+  location: string;
+  targetAudience: string;
+  agenda: string;
+  senderName: string;
+  createdAt: string;
+  rsvps: Record<string, InvitationRsvpEntry>;
+}
+
+export type KasCategory =
+  | 'Iuran Warga'
+  | 'Donasi / Kas'
+  | 'Gaji Keamanan'
+  | 'Petugas Sampah'
+  | 'Listrik & Pos Ronda'
+  | 'Perbaikan Fasilitas';
+
+export interface KasTransaction {
+  id: string;
+  type: 'masuk' | 'keluar';
+  category: KasCategory;
+  title: string;
+  amount: number;
+  date: string;
+  recordedBy: string;
+}
+
+export interface SiagaAuditLog {
+  id: string;
+  timestamp: string;
+  date: string;
+  category: string;
+  mode: 'Simulasi' | 'REAL';
+  scope?: 'umum_rt' | 'pribadi_hp' | 'keluarga' | 'perusahaan';
+  reporterId: string;
+  reporterName: string;
+  reporterBlock: string;
+  reporterEmail?: string;
+  reporterPhone?: string;
+  reporterDeviceId?: string; // hidden internal device token
+  location: string;
+  transcript: string;
+  auditStatus: 'pending' | 'valid' | 'prank';
+}
+
+export type ForumCategory = 'jadwal' | 'aspirasi' | 'polling' | 'info';
+export type AspirationStatus = 'Menunggu' | 'Diproses' | 'Selesai';
+
+export interface ForumComment {
+  id: string;
+  author: string;
+  authorBlock: string;
+  text: string;
+  time: string;
+}
+
+export interface ForumPollOption {
+  id: string;
+  label: string;
+  voterIds: string[];
+}
+
+export interface ForumPost {
+  id: string;
+  category: ForumCategory;
+  title: string;
+  content: string;
+  authorName: string;
+  authorRole: string;
+  createdAt: string;
+  scheduleDate?: string;
+  scheduleLocation?: string;
+  attendeeIds?: string[];
+  aspirationStatus?: AspirationStatus;
+  upvoterIds: string[];
+  pollOptions?: ForumPollOption[];
+  comments: ForumComment[];
+}
+
+export interface GuestReport {
+  id: string;
+  hostName: string;
+  hostBlock: string;
+  guestName: string;
+  relation: string;
+  duration: string;
+  createdAt: string;
+}
+
+export interface RtCommunityWorkspace {
+  id: string;
+  joinedVia: 'owner_seed' | 'created' | 'invited';
+  invitedBy?: string;
+  joinedAt: string;
+  profile: PaguyubanProfile;
+  coordinators: CoordinatorMember[];
+  members: WargaMember[];
+  transactions: KasTransaction[];
+  auditLogs: SiagaAuditLog[];
+  forumPosts: ForumPost[];
+  guestReports: GuestReport[];
+  archives: HistoricalArchiveYear[];
+  invitations: CommunityInvitation[];
+}
+
+export const MONTHS_12: Array<{ key: string; short: string; full: string }> = [
+  { key: '01', short: 'Jan', full: 'Januari' },
+  { key: '02', short: 'Feb', full: 'Februari' },
+  { key: '03', short: 'Mar', full: 'Maret' },
+  { key: '04', short: 'Apr', full: 'April' },
+  { key: '05', short: 'Mei', full: 'Mei' },
+  { key: '06', short: 'Jun', full: 'Juni' },
+  { key: '07', short: 'Jul', full: 'Juli' },
+  { key: '08', short: 'Agu', full: 'Agustus' },
+  { key: '09', short: 'Sep', full: 'September' },
+  { key: '10', short: 'Okt', full: 'Oktober' },
+  { key: '11', short: 'Nov', full: 'November' },
+  { key: '12', short: 'Des', full: 'Desember' },
+];
+
+export const RT_SYNC_EVENT = 'wargaqu-rt-siaga-sync';
+export const PENDING_RT_INVITE_KEY = 'wargaqu_pending_rt_invite_v1';
+export const CARRYOVER_RT_INVITE_KEY = 'wargaqu_carryover_rt_invite_v1';
+
+const OWNER_EMAILS = ['usahaqu2026@gmail.com', 'usahaqu26@gmail.com'];
+
+const LEGACY_KEYS = {
+  PROFILE: 'wargaqu_rt_profile_v2',
+  COORDINATORS: 'wargaqu_rt_coordinators_v2',
+  MEMBERS: 'wargaqu_rt_members_v2',
+  TRANSACTIONS: 'wargaqu_rt_kas_v2',
+  AUDIT_LOGS: 'wargaqu_rt_siaga_audit_v2',
+  FORUM_POSTS: 'wargaqu_rt_forum_v1',
+  GUEST_REPORTS: 'wargaqu_rt_guests_v1',
+  ARCHIVES: 'wargaqu_rt_archives_v1',
+  INVITATIONS: 'wargaqu_rt_invitations_v1',
+};
+
+function getCurrentAccountScope() {
+  const acc = AuthService.getAccount();
+  const email = (acc?.email || '').trim().toLowerCase();
+  const scopeKey = email ? email.replace(/[^a-z0-9@._-]/g, '_') : 'guest';
+  const isOwner = OWNER_EMAILS.includes(email);
+  return { acc, email, scopeKey, isOwner };
+}
+
+function getScopedWorkspacesKey(scopeKey: string): string {
+  return `wargaqu_rt_workspaces_v3_${scopeKey}`;
+}
+
+function getScopedActiveIdKey(scopeKey: string): string {
+  return `wargaqu_rt_active_id_v3_${scopeKey}`;
+}
+
+const DEFAULT_ARCHIVES: HistoricalArchiveYear[] = [
+  {
+    id: 'arc-2024',
+    year: 2024,
+    totalIncome: 24800000,
+    totalExpense: 18450000,
+    endingBalance: 9650000,
+    note: 'Rekap tutup buku tahun 2024 (perbaikan selokan & pos ronda)',
+    source: 'Manual',
+  },
+  {
+    id: 'arc-2025',
+    year: 2025,
+    totalIncome: 26400000,
+    totalExpense: 23630000,
+    endingBalance: 12420000,
+    note: 'Saldo akhir 31 Des 2025 dipindahkan sebagai Saldo Awal 2026',
+    source: 'Manual',
+  },
+];
+
+const DEFAULT_INVITATIONS: CommunityInvitation[] = [
+  {
+    id: 'inv-1',
+    eventType: 'Rapat Warga',
+    title: 'Rapat Koordinasi Tutup Buku & Anggaran 2026',
+    dateTime: 'Sabtu, 14 Nov 2026 · 19:30 WIB',
+    location: 'Balai Warga RT 03',
+    targetAudience: 'Seluruh Kepala Keluarga (Blok A - C)',
+    agenda: '1. Laporan Kas & Arsip 2025  2. Penetapan Iuran 2026  3. Aktivasi SiagaQu',
+    senderName: 'Bpk. Bambang Sutrisno (Ketua)',
+    createdAt: 'Hari ini · 09:00',
+    rsvps: {
+      'warga-bambang': {
+        memberId: 'warga-bambang',
+        name: 'Bambang Sutrisno',
+        block: 'Blok A No. 01',
+        status: 'hadir',
+      },
+      'warga-sri': {
+        memberId: 'warga-sri',
+        name: 'Sri Wahyuni',
+        block: 'Blok B No. 04',
+        status: 'hadir',
+      },
+    },
+  },
+  {
+    id: 'inv-2',
+    eventType: 'Kerja Bakti',
+    title: 'Undangan Kerja Bakti & Bersih Saluran Air',
+    dateTime: 'Minggu, 15 Nov 2026 · 07:30 WIB',
+    location: 'Sepanjang Gang Blok A - Blok C',
+    targetAudience: 'Perwakilan 1 orang tiap rumah',
+    agenda: 'Pembersihan gorong-gorong antisipasi musim hujan dan perapian ranting pohon.',
+    senderName: 'Bpk. Joko Purnomo (Koord. Kebersihan)',
+    createdAt: 'Kemarin · 16:20',
+    rsvps: {
+      'warga-bambang': {
+        memberId: 'warga-bambang',
+        name: 'Bambang Sutrisno',
+        block: 'Blok A No. 01',
+        status: 'hadir',
+      },
+    },
+  },
+];
+
+const DEFAULT_FORUM_POSTS: ForumPost[] = [
+  {
+    id: 'post-1',
+    category: 'jadwal',
+    title: 'Kerja Bakti Saluran Air & Pemangkasan Dahan Blok A-C',
+    content: 'Mohon kehadiran minimal 1 perwakilan rumah membawa alat kebersihan seadanya. Konsumsi teh hangat & kue disediakan di Balai Warga.',
+    authorName: 'Bpk. Bambang Sutrisno',
+    authorRole: 'Ketua',
+    createdAt: 'Hari ini · 08:15',
+    scheduleDate: 'Minggu, 07:30 WIB',
+    scheduleLocation: 'Balai Warga & Selokan Blok A-C',
+    attendeeIds: ['warga-bambang', 'warga-sri'],
+    upvoterIds: ['warga-bambang', 'warga-sri'],
+    comments: [
+      {
+        id: 'c-1',
+        author: 'Ibu Sri Wahyuni',
+        authorBlock: 'Blok B No. 04',
+        text: 'Siap, konsumsi gorengan dan air mineral sudah kami koordinasikan.',
+        time: '08:40',
+      },
+    ],
+  },
+  {
+    id: 'post-2',
+    category: 'jadwal',
+    title: 'Jadwal Ronda Siskamling Pekan Ini (22:00 - 04:00 WIB)',
+    content: 'Senin: Bpk. Bambang & Hendriana | Selasa: Bpk. Dedi, Joko & Anton | Rabu: Bpk. Agus, Wawan & Rudi. Harap lapor di pos jika berhalangan.',
+    authorName: 'Bpk. Dedi Suryadi',
+    authorRole: 'Koordinator Keamanan',
+    createdAt: 'Kemarin · 19:00',
+    scheduleDate: 'Setiap Malam · 22:00 WIB',
+    scheduleLocation: 'Pos Ronda Utama',
+    attendeeIds: ['warga-bambang'],
+    upvoterIds: ['warga-bambang'],
+    comments: [],
+  },
+  {
+    id: 'post-3',
+    category: 'aspirasi',
+    title: 'Lampu Penerangan Jalan Gang Blok B Mati 2 Titik',
+    content: 'Lampu tiang dekat rumah Blok B No. 07 dan pojok taman bermain mati sejak dua malam lalu sehingga agak gelap saat malam.',
+    authorName: 'Hendriana',
+    authorRole: 'Warga Blok A No. 12',
+    createdAt: '2 hari lalu',
+    aspirationStatus: 'Diproses',
+    upvoterIds: ['warga-hendriana', 'warga-sri', 'warga-bambang'],
+    comments: [
+      {
+        id: 'c-2',
+        author: 'Bpk. Joko Purnomo',
+        authorBlock: 'Koordinator Kebersihan',
+        text: 'Sudah dicek, bohlam LED pengganti sudah dibeli dari kas dan dipasang sore ini.',
+        time: 'Kemarin',
+      },
+    ],
+  },
+  {
+    id: 'post-4',
+    category: 'polling',
+    title: 'Musyawarah: Tambah 2 Unit CCTV di Portal Selatan?',
+    content: 'Estimasi biaya Rp 1.400.000 diambil dari saldo kas warga tanpa menaikkan iuran bulanan. Bagaimana pendapat warga?',
+    authorName: 'Pengurus Lingkungan',
+    authorRole: 'Musyawarah Warga',
+    createdAt: '3 hari lalu',
+    upvoterIds: ['warga-bambang'],
+    pollOptions: [
+      { id: 'opt-1', label: 'Setuju, pasang bulan ini', voterIds: ['warga-bambang', 'warga-sri'] },
+      { id: 'opt-2', label: 'Tunda, bahas saat rapat warga', voterIds: [] },
+    ],
+    comments: [],
+  },
+];
+
+function buildInitialPayments(paidThroughMonth: number, amount: number): Record<string, MonthlyPaymentRecord> {
+  const map: Record<string, MonthlyPaymentRecord> = {};
+  MONTHS_12.forEach((m, index) => {
+    const monthNum = index + 1;
+    if (monthNum <= paidThroughMonth) {
+      map[m.key] = {
+        paid: true,
+        paidAt: `05 ${m.short} 2026`,
+        method: 'QRIS RT-Pay',
+        amount,
+      };
+    } else {
+      map[m.key] = {
+        paid: false,
+        amount,
+      };
+    }
+  });
+  return map;
+}
+
+const DEFAULT_PROFILE: PaguyubanProfile = {
+  id: 'comm-rt03-rw05',
+  orgType: 'RT',
+  orgName: 'RT 03 / RW 05',
+  areaName: 'Perumahan Harmoni Sukamaju',
+  monthlyDuesAmount: 50000,
+  duesBreakdown: {
+    keamanan: 25000,
+    sampah: 15000,
+    kas: 10000,
+  },
+  year: 2026,
+  pengurusPin: '0305',
+  inviteCode: 'WQR-RT03-0305',
+};
+
+const EMPTY_NEUTRAL_PROFILE: PaguyubanProfile = {
+  orgType: 'RT',
+  orgName: 'Belum Gabung Komunitas',
+  areaName: 'Gabung via undangan atau buat komunitas baru',
+  monthlyDuesAmount: 0,
+  duesBreakdown: {
+    keamanan: 0,
+    sampah: 0,
+    kas: 0,
+  },
+  year: 2026,
+  pengurusPin: '0000',
+};
+
+const DEFAULT_COORDINATORS: CoordinatorMember[] = [
+  {
+    id: 'coord-1',
+    role: 'Ketua RT / Paguyuban',
+    division: 'Pimpinan & Pengesahan',
+    name: 'Bpk. Bambang Sutrisno',
+    phone: '0812-3456-7890',
+    canVerifySiaga: true,
+  },
+  {
+    id: 'coord-2',
+    role: 'Koordinator Keamanan & SiagaQu',
+    division: 'Siskamling & Verifikasi Darurat',
+    name: 'Bpk. Dedi Suryadi',
+    phone: '0819-7788-9900',
+    canVerifySiaga: true,
+  },
+  {
+    id: 'coord-3',
+    role: 'Bendahara',
+    division: 'Iuran & Transparansi Kas',
+    name: 'Ibu Sri Wahyuni',
+    phone: '0821-4455-6677',
+    canVerifySiaga: false,
+  },
+  {
+    id: 'coord-4',
+    role: 'Sekretaris',
+    division: 'Administrasi & Surat Warga',
+    name: 'Bpk. Agus Permana',
+    phone: '0813-8899-1122',
+    canVerifySiaga: false,
+  },
+  {
+    id: 'coord-5',
+    role: 'Koordinator Kebersihan',
+    division: 'Sampah & Lingkungan',
+    name: 'Bpk. Joko Purnomo',
+    phone: '0857-1234-5678',
+    canVerifySiaga: false,
+  },
+];
+
+const DEFAULT_MEMBERS: WargaMember[] = [
+  {
+    id: 'warga-hendriana',
+    wargaId: 'WQ-RT03-012',
+    name: 'Hendriana',
+    block: 'Blok A No. 12',
+    phone: '0812-8800-1212',
+    residentType: 'Tetap',
+    isCurrentUser: true,
+    claimStatus: 'claimed',
+    claimCode: 'RT03-A12-1212',
+    claimedAt: '05 Jan 2026',
+    siagaStatus: 'pending',
+    siagaRequested: false,
+    falseAlarmCount: 0,
+    monthlyPayments: buildInitialPayments(9, 50000),
+  },
+  {
+    id: 'warga-bambang',
+    wargaId: 'WQ-RT03-001',
+    name: 'Bambang Sutrisno',
+    block: 'Blok A No. 01',
+    phone: '0812-3456-7890',
+    residentType: 'Tetap',
+    claimStatus: 'claimed',
+    claimCode: 'RT03-A01-7890',
+    claimedAt: '02 Jan 2026',
+    siagaStatus: 'active',
+    siagaVerifiedBy: 'Koordinator Keamanan',
+    siagaVerifiedAt: '10 Jan 2026',
+    falseAlarmCount: 0,
+    monthlyPayments: buildInitialPayments(10, 50000),
+  },
+  {
+    id: 'warga-sri',
+    wargaId: 'WQ-RT03-005',
+    name: 'Sri Wahyuni',
+    block: 'Blok B No. 04',
+    phone: '0821-4455-6677',
+    residentType: 'Tetap',
+    claimStatus: 'claimed',
+    claimCode: 'RT03-B04-6677',
+    claimedAt: '03 Jan 2026',
+    siagaStatus: 'active',
+    siagaVerifiedBy: 'Ketua RT 03',
+    siagaVerifiedAt: '12 Jan 2026',
+    falseAlarmCount: 0,
+    monthlyPayments: buildInitialPayments(10, 50000),
+  },
+  {
+    id: 'warga-agus-excel',
+    wargaId: 'WQ-RT03-015',
+    name: 'Agus Wijaya',
+    block: 'Blok B No. 09',
+    phone: '0813-2244-5588',
+    residentType: 'Tetap',
+    claimStatus: 'unclaimed',
+    claimCode: 'RT03-B09-5588',
+    priorArrears: 100000,
+    priorArrearsNote: 'Sisa iuran Nov-Des 2025',
+    siagaStatus: 'pending',
+    siagaRequested: false,
+    falseAlarmCount: 0,
+    monthlyPayments: buildInitialPayments(8, 50000),
+  },
+  {
+    id: 'warga-ratna-excel',
+    wargaId: 'WQ-RT03-017',
+    name: 'Ratna Dewi',
+    block: 'Blok C No. 03',
+    phone: '0852-9090-3344',
+    residentType: 'Kontrak',
+    claimStatus: 'invited',
+    claimCode: 'RT03-C03-3344',
+    invitedAt: '10 Nov 2026',
+    siagaStatus: 'pending',
+    siagaRequested: false,
+    falseAlarmCount: 0,
+    monthlyPayments: buildInitialPayments(10, 50000),
+  },
+  {
+    id: 'warga-rudi',
+    wargaId: 'WQ-RT03-019',
+    name: 'Rudi Hartono',
+    block: 'Blok C No. 08',
+    phone: '0856-7711-2233',
+    residentType: 'Kontrak',
+    claimStatus: 'claimed',
+    claimCode: 'RT03-C08-2233',
+    claimedAt: '15 Jan 2026',
+    siagaStatus: 'suspended',
+    suspendReason: 'Laporan palsu sirine darurat (28 Okt)',
+    falseAlarmCount: 2,
+    monthlyPayments: buildInitialPayments(7, 50000),
+  },
+];
+
+const DEFAULT_TRANSACTIONS: KasTransaction[] = [
+  {
+    id: 'kas-1',
+    type: 'masuk',
+    category: 'Iuran Warga',
+    title: 'Iuran Kebersihan & Keamanan (46 KK Okt)',
+    amount: 2300000,
+    date: '05 Okt 2026',
+    recordedBy: 'Ibu Sri Wahyuni (Bendahara)',
+  },
+  {
+    id: 'kas-2',
+    type: 'keluar',
+    category: 'Gaji Keamanan',
+    title: 'Gaji 2 Petugas Keamanan / Satpam Malam',
+    amount: 1400000,
+    date: '06 Okt 2026',
+    recordedBy: 'Ibu Sri Wahyuni (Bendahara)',
+  },
+  {
+    id: 'kas-3',
+    type: 'keluar',
+    category: 'Petugas Sampah',
+    title: 'Honor Petugas Angkut Sampah Lingkungan',
+    amount: 650000,
+    date: '08 Okt 2026',
+    recordedBy: 'Ibu Sri Wahyuni (Bendahara)',
+  },
+  {
+    id: 'kas-4',
+    type: 'keluar',
+    category: 'Listrik & Pos Ronda',
+    title: 'Token Listrik Pos Ronda & Lampu Gang',
+    amount: 220000,
+    date: '12 Okt 2026',
+    recordedBy: 'Bpk. Dedi Suryadi',
+  },
+  {
+    id: 'kas-5',
+    type: 'masuk',
+    category: 'Donasi / Kas',
+    title: 'Saldo Kas Awal Tahun & Donasi Warga',
+    amount: 12420000,
+    date: '01 Okt 2026',
+    recordedBy: 'Ibu Sri Wahyuni (Bendahara)',
+  },
+];
+
+const DEFAULT_AUDIT_LOGS: SiagaAuditLog[] = [
+  {
+    id: 'LOG-INIT',
+    timestamp: '19:45',
+    date: '28 Okt',
+    category: 'Maling / Kejahatan',
+    mode: 'Simulasi',
+    reporterId: 'warga-hendriana',
+    reporterName: 'Hendriana',
+    reporterBlock: 'Blok A No. 12',
+    location: 'RT 03 / RW 05 - Blok A No. 12',
+    transcript: '"Simulasi respon pos ronda terkoordinasi lancar di pos utama RT 03."',
+    auditStatus: 'valid',
+  },
+];
+
+function emitSync() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(RT_SYNC_EVENT));
+  }
+}
+
+function safeRead<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      return JSON.parse(raw) as T;
+    }
+  } catch {
+    // ignore storage parse failure
+  }
+  return fallback;
+}
+
+function normalizeMembersList(raw: WargaMember[], orgName: string): WargaMember[] {
+  return (raw || []).map((m, idx) => ({
+    ...m,
+    claimStatus: m.claimStatus || 'claimed',
+    claimCode:
+      m.claimCode ||
+      `WQ-${orgName.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase() || 'RT'}-${String(idx + 1).padStart(2, '0')}-${m.phone.replace(/\D/g, '').slice(-4) || '0000'}`,
+  }));
+}
+
+function buildOwnerSeedWorkspace(): RtCommunityWorkspace {
+  const legacyProfile = safeRead<PaguyubanProfile | null>(LEGACY_KEYS.PROFILE, null);
+  const profile: PaguyubanProfile = legacyProfile
+    ? { ...DEFAULT_PROFILE, ...legacyProfile, id: legacyProfile.id || DEFAULT_PROFILE.id }
+    : { ...DEFAULT_PROFILE };
+
+  const coordinators = safeRead(LEGACY_KEYS.COORDINATORS, DEFAULT_COORDINATORS);
+  const members = normalizeMembersList(
+    safeRead(LEGACY_KEYS.MEMBERS, DEFAULT_MEMBERS),
+    profile.orgName
+  );
+  const transactions = safeRead(LEGACY_KEYS.TRANSACTIONS, DEFAULT_TRANSACTIONS);
+  const auditLogs = safeRead(LEGACY_KEYS.AUDIT_LOGS, DEFAULT_AUDIT_LOGS);
+  const forumPosts = safeRead(LEGACY_KEYS.FORUM_POSTS, DEFAULT_FORUM_POSTS);
+  const guestReports = safeRead(LEGACY_KEYS.GUEST_REPORTS, []);
+  const archives = safeRead(LEGACY_KEYS.ARCHIVES, DEFAULT_ARCHIVES);
+  const invitations = safeRead(LEGACY_KEYS.INVITATIONS, DEFAULT_INVITATIONS);
+
+  return {
+    id: profile.id || 'comm-rt03-rw05',
+    joinedVia: 'owner_seed',
+    joinedAt: new Date().toISOString(),
+    profile,
+    coordinators,
+    members,
+    transactions,
+    auditLogs,
+    forumPosts,
+    guestReports,
+    archives,
+    invitations,
+  };
+}
+
+function loadScopedWorkspaces(): RtCommunityWorkspace[] {
+  const { scopeKey, isOwner } = getCurrentAccountScope();
+  const key = getScopedWorkspacesKey(scopeKey);
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed as RtCommunityWorkspace[];
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // Hanya akun pemilik utama yang mendapat data contoh / migrasi RT 03 awal.
+  // User baru & akun tamu dimulai bersih ([]) — hanya melihat komunitas hasil undangan atau buatan sendiri.
+  if (isOwner) {
+    const seeded = [buildOwnerSeedWorkspace()];
+    try {
+      localStorage.setItem(key, JSON.stringify(seeded));
+      localStorage.setItem(getScopedActiveIdKey(scopeKey), seeded[0].id);
+    } catch {
+      // ignore
+    }
+    return seeded;
+  }
+
+  return [];
+}
+
+function saveScopedWorkspaces(list: RtCommunityWorkspace[], activeId?: string) {
+  const { scopeKey } = getCurrentAccountScope();
+  try {
+    localStorage.setItem(getScopedWorkspacesKey(scopeKey), JSON.stringify(list));
+    if (activeId !== undefined) {
+      localStorage.setItem(getScopedActiveIdKey(scopeKey), activeId);
+    }
+  } catch {
+    // ignore storage write failure
+  }
+  emitSync();
+}
+
+function updateActiveWorkspace(
+  updater: (ws: RtCommunityWorkspace) => RtCommunityWorkspace
+) {
+  const list = loadScopedWorkspaces();
+  if (list.length === 0) return;
+  const active = getActiveFromList(list);
+  if (!active) return;
+  const nextList = list.map(ws => (ws.id === active.id ? updater(ws) : ws));
+  saveScopedWorkspaces(nextList, active.id);
+}
+
+function getActiveFromList(list: RtCommunityWorkspace[]): RtCommunityWorkspace | null {
+  if (list.length === 0) return null;
+  const { scopeKey } = getCurrentAccountScope();
+  try {
+    const savedId = localStorage.getItem(getScopedActiveIdKey(scopeKey));
+    if (savedId) {
+      const matched = list.find(w => w.id === savedId);
+      if (matched) return matched;
+    }
+  } catch {
+    // ignore
+  }
+  return list[0];
+}
+
+function buildGuestFallbackMember(acc: AuthAccount | null): WargaMember {
+  const name = acc ? AuthService.getDisplayName(acc) : 'Warga Baru';
+  return {
+    id: 'warga-guest-fallback',
+    wargaId: 'WQ-BELUM-GABUNG',
+    name,
+    block: 'Belum Terdaftar di RT/Komunitas',
+    email: acc?.email,
+    phone: acc?.phone || '-',
+    deviceId: acc?.deviceId,
+    residentType: 'Tetap',
+    isCurrentUser: true,
+    claimStatus: 'unclaimed',
+    siagaStatus: 'pending',
+    siagaRequested: false,
+    falseAlarmCount: 0,
+    monthlyPayments: buildInitialPayments(0, 0),
+  };
+}
+
+// ============================================================================
+// INVITE LINK & COMPACT CODEC (WQR2_ DEFLATE-RAW + WQR1: FALLBACK, ZERO SERVER DB)
+// ============================================================================
+
+function toBase64Url(bytes: Uint8Array): string {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) {
+    bin += String.fromCharCode(bytes[i]);
+  }
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function fromBase64Url(b64u: string): Uint8Array<ArrayBuffer> {
+  const norm = b64u.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = norm.length % 4 === 0 ? '' : '='.repeat(4 - (norm.length % 4));
+  const bin = atob(norm + pad);
+  const bytes = new Uint8Array(new ArrayBuffer(bin.length));
+  for (let i = 0; i < bin.length; i++) {
+    bytes[i] = bin.charCodeAt(i);
+  }
+  return bytes;
+}
+
+export interface DecodedRtInvitePayload {
+  communityId: string;
+  inviterName: string;
+  profile: PaguyubanProfile;
+  coordinators: CoordinatorMember[];
+  targetMember?: WargaMember;
+  recentPosts?: ForumPost[];
+  recentInvitations?: CommunityInvitation[];
+}
+
+export function encodeRtInviteToken(
+  ws: RtCommunityWorkspace,
+  inviterName: string,
+  targetMember?: WargaMember
+): string {
+  const payload: DecodedRtInvitePayload = {
+    communityId: ws.id,
+    inviterName: inviterName || 'Pengurus',
+    profile: { ...ws.profile, id: ws.id },
+    coordinators: (ws.coordinators || []).slice(0, 8),
+    targetMember: targetMember
+      ? {
+          ...targetMember,
+          isCurrentUser: false,
+        }
+      : undefined,
+    recentPosts: (ws.forumPosts || []).slice(0, 4),
+    recentInvitations: (ws.invitations || []).slice(0, 3),
+  };
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  return `WQR1:${toBase64Url(bytes)}`;
+}
+
+export async function encodeRtInviteTokenCompact(
+  ws: RtCommunityWorkspace,
+  inviterName: string,
+  targetMember?: WargaMember
+): Promise<string> {
+  const payload: DecodedRtInvitePayload = {
+    communityId: ws.id,
+    inviterName: inviterName || 'Pengurus',
+    profile: { ...ws.profile, id: ws.id },
+    coordinators: (ws.coordinators || []).slice(0, 8),
+    targetMember: targetMember ? { ...targetMember, isCurrentUser: false } : undefined,
+    recentPosts: (ws.forumPosts || []).slice(0, 3),
+    recentInvitations: (ws.invitations || []).slice(0, 2),
+  };
+  const rawBytes = new TextEncoder().encode(JSON.stringify(payload));
+  try {
+    if (typeof CompressionStream !== 'undefined') {
+      const cs = new CompressionStream('deflate-raw');
+      const writer = cs.writable.getWriter();
+      writer.write(rawBytes);
+      writer.close();
+      const buf = await new Response(cs.readable).arrayBuffer();
+      return `WQR2_${toBase64Url(new Uint8Array(buf))}`;
+    }
+  } catch {
+    // fallback to WQR1
+  }
+  return encodeRtInviteToken(ws, inviterName, targetMember);
+}
+
+function extractRtRawToken(rawInput: string): string {
+  const trimmed = (rawInput || '').trim();
+  if (!trimmed) return '';
+  if (trimmed.includes('rt=') || trimmed.includes('rtInvite=')) {
+    try {
+      const qIdx = trimmed.indexOf('?');
+      const hIdx = trimmed.indexOf('#');
+      const sliceFrom =
+        qIdx >= 0 ? trimmed.slice(qIdx) : hIdx >= 0 ? `?${trimmed.slice(hIdx + 1)}` : `?${trimmed}`;
+      const params = new URLSearchParams(sliceFrom.split('#')[0]);
+      const extracted = params.get('rt') || params.get('rtInvite');
+      if (extracted) return extracted.trim();
+      if (trimmed.includes('rt=')) {
+        const after = trimmed.split('rt=')[1]?.split('&')[0]?.split('#')[0];
+        if (after) return decodeURIComponent(after).trim();
+      }
+    } catch {
+      // keep raw
+    }
+  }
+  return trimmed;
+}
+
+export async function decodeRtInviteInputAsync(
+  rawInput: string
+): Promise<DecodedRtInvitePayload | null> {
+  const parsedHint = parseInviteInput(rawInput, 'rt');
+  let resolved = rawInput;
+  if (parsedHint?.mode === 'short_code') {
+    resolved = await InviteRelayService.resolveInviteTokenIfShort(rawInput);
+  } else if (parsedHint?.mode === 'room_slug') {
+    const syncRes = await InviteRelayService.syncRoomOnEntry({
+      kind: 'rt',
+      slugOrTitle: parsedHint.canonicalSlug,
+    });
+    if (syncRes.ok && syncRes.snapshot) {
+      resolved = syncRes.snapshot;
+    } else {
+      return null;
+    }
+  } else {
+    resolved = await InviteRelayService.resolveInviteTokenIfShort(rawInput);
+  }
+
+  const token = extractRtRawToken(resolved);
+  if (!token) return null;
+
+  if (token.startsWith('WQR2_')) {
+    try {
+      const compressed = fromBase64Url(token.slice(5));
+      if (typeof DecompressionStream === 'undefined') return null;
+      const ds = new DecompressionStream('deflate-raw');
+      const writer = ds.writable.getWriter();
+      writer.write(compressed);
+      writer.close();
+      const buf = await new Response(ds.readable).arrayBuffer();
+      const parsed = JSON.parse(new TextDecoder().decode(new Uint8Array(buf))) as DecodedRtInvitePayload;
+      if (parsed?.communityId && parsed?.profile?.orgName) return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  if (token.startsWith('WQR1:')) {
+    try {
+      const bytes = fromBase64Url(token.slice(5));
+      const parsed = JSON.parse(new TextDecoder().decode(bytes)) as DecodedRtInvitePayload;
+      if (parsed?.communityId && parsed?.profile?.orgName) return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+export const RtSiagaStorage = {
+  isOwnerAccount(): boolean {
+    return getCurrentAccountScope().isOwner;
+  },
+
+  getCommunities(): RtCommunityWorkspace[] {
+    return loadScopedWorkspaces();
+  },
+
+  hasCommunities(): boolean {
+    return loadScopedWorkspaces().length > 0;
+  },
+
+  getActiveCommunity(): RtCommunityWorkspace | null {
+    return getActiveFromList(loadScopedWorkspaces());
+  },
+
+  getActiveCommunityId(): string | null {
+    return this.getActiveCommunity()?.id || null;
+  },
+
+  setActiveCommunityId(communityId: string) {
+    const list = loadScopedWorkspaces();
+    if (!list.some(w => w.id === communityId)) return;
+    saveScopedWorkspaces(list, communityId);
+  },
+
+  createCommunity(params: {
+    orgType: OrgType;
+    customBrandName?: string;
+    orgName: string;
+    areaName: string;
+    monthlyDuesAmount: number;
+    duesBreakdown?: { keamanan: number; sampah: number; kas: number };
+    year?: number;
+    pengurusPin: string;
+    creatorName: string;
+    creatorBlock: string;
+    creatorPhone?: string;
+    creatorRole?: string;
+  }): RtCommunityWorkspace {
+    const { acc } = getCurrentAccountScope();
+    const cleanOrg = params.orgName.trim() || 'Komunitas Baru';
+    const year = params.year || new Date().getFullYear();
+    const id = `comm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const inviteCode = `WQR-${cleanOrg.replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase() || 'WRG'}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const creatorName = params.creatorName.trim() || (acc ? AuthService.getDisplayName(acc) : 'Pengurus Utama');
+    const creatorPhone = params.creatorPhone?.trim() || acc?.phone || '0812-0000-0000';
+    const creatorBlock = params.creatorBlock.trim() || 'Pengurus / Inti';
+    const monthlyAmount = Math.max(0, params.monthlyDuesAmount || 0);
+    const breakdown = params.duesBreakdown || {
+      keamanan: Math.round(monthlyAmount * 0.5),
+      sampah: Math.round(monthlyAmount * 0.3),
+      kas: Math.max(0, monthlyAmount - Math.round(monthlyAmount * 0.5) - Math.round(monthlyAmount * 0.3)),
+    };
+
+    const todayLabel = new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    const prefixTag = cleanOrg.replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase() || 'WQ';
+    const creatorMember: WargaMember = {
+      id: `warga-creator-${Date.now()}`,
+      wargaId: `WQ-${prefixTag}-001`,
+      name: creatorName,
+      block: creatorBlock,
+      email: acc?.email,
+      phone: creatorPhone,
+      deviceId: acc?.deviceId,
+      residentType: 'Tetap',
+      isCurrentUser: true,
+      claimStatus: 'claimed',
+      claimCode: `${prefixTag}-001-${creatorPhone.replace(/\D/g, '').slice(-4) || '0001'}`,
+      claimedAt: todayLabel,
+      siagaStatus: 'active',
+      siagaVerifiedBy: 'Pendiri Komunitas',
+      siagaVerifiedAt: todayLabel,
+      falseAlarmCount: 0,
+      monthlyPayments: buildInitialPayments(0, monthlyAmount),
+    };
+
+    const roleLabel =
+      params.creatorRole?.trim() ||
+      (params.orgType === 'RT'
+        ? 'Ketua RT'
+        : params.orgType === 'Paguyuban'
+        ? 'Ketua Paguyuban'
+        : params.orgType === 'Sosial'
+        ? 'Ketua DKM / Yayasan'
+        : 'Ketua Organisasi');
+
+    const coordinator: CoordinatorMember = {
+      id: `coord-${Date.now()}`,
+      role: roleLabel,
+      division: 'Pimpinan & Pengesahan',
+      name: creatorName,
+      phone: creatorPhone,
+      canVerifySiaga: true,
+    };
+
+    const welcomePost: ForumPost = {
+      id: `post-init-${Date.now()}`,
+      category: 'info',
+      title: `Selamat Datang di ${params.customBrandName?.trim() || cleanOrg}`,
+      content: `Komunitas ${cleanOrg} (${params.areaName.trim() || 'Wilayah Warga'}) telah resmi dibuka. Gunakan menu Bagikan Link Undangan untuk mengundang warga/anggota bergabung.`,
+      authorName: creatorName,
+      authorRole: roleLabel,
+      createdAt: 'Baru saja',
+      upvoterIds: [creatorMember.id],
+      comments: [],
+    };
+
+    const workspace: RtCommunityWorkspace = {
+      id,
+      joinedVia: 'created',
+      joinedAt: new Date().toISOString(),
+      profile: {
+        id,
+        orgType: params.orgType,
+        customBrandName: params.customBrandName?.trim() || undefined,
+        orgName: cleanOrg,
+        areaName: params.areaName.trim() || 'Lingkungan Warga',
+        monthlyDuesAmount: monthlyAmount,
+        duesBreakdown: breakdown,
+        year,
+        pengurusPin: params.pengurusPin.trim() || '1234',
+        inviteCode,
+        creatorName,
+        createdAt: todayLabel,
+      },
+      coordinators: [coordinator],
+      members: [creatorMember],
+      transactions: [],
+      auditLogs: [],
+      forumPosts: [welcomePost],
+      guestReports: [],
+      archives: [],
+      invitations: [],
+    };
+
+    const current = loadScopedWorkspaces();
+    const nextList = [workspace, ...current];
+    saveScopedWorkspaces(nextList, workspace.id);
+    return workspace;
+  },
+
+  async acceptCommunityInvite(rawInput: string): Promise<{
+    ok: boolean;
+    message: string;
+    community?: RtCommunityWorkspace;
+    inviter?: string;
+    needsClaim?: boolean;
+    pendingSync?: { title: string; canonicalSlug: string; rawInput: string };
+  }> {
+    const parsedHint = parseInviteInput(rawInput, 'rt');
+    const decoded = await decodeRtInviteInputAsync(rawInput);
+    const { acc } = getCurrentAccountScope();
+    const todayLabel = new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    if (!decoded) {
+      if (parsedHint?.mode === 'room_slug') {
+        return {
+          ok: false,
+          message: `Ruang "${parsedHint.titleGuess}" belum merespons sinkronisasi. Pastikan HP pengurus sedang membuka WargaQu atau tekan Sinkronkan Ulang.`,
+          pendingSync: {
+            title: parsedHint.titleGuess,
+            canonicalSlug: parsedHint.canonicalSlug,
+            rawInput,
+          },
+        };
+      }
+      return {
+        ok: false,
+        message: 'Link judul atau kode undangan komunitas tidak valid.',
+      };
+    }
+
+    const list = loadScopedWorkspaces();
+    const existingIdx = list.findIndex(w => w.id === decoded.communityId);
+
+    const accountName = acc ? AuthService.getDisplayName(acc) : 'Warga Terundang';
+    const accountEmail = acc?.email?.trim().toLowerCase();
+    const accountPhone = acc?.phone?.trim() || '0812-0000-0000';
+
+    if (existingIdx !== -1) {
+      const existing = list[existingIdx];
+      let updatedMembers = existing.members;
+      if (decoded.targetMember && !existing.members.some(m => m.id === decoded.targetMember!.id)) {
+        updatedMembers = [
+          ...existing.members.map(m => ({ ...m, isCurrentUser: false })),
+          {
+            ...decoded.targetMember,
+            isCurrentUser: true,
+            email: accountEmail || decoded.targetMember.email,
+            phone: acc?.phone || decoded.targetMember.phone,
+            deviceId: acc?.deviceId,
+            claimStatus: 'claimed' as const,
+            claimedAt: todayLabel,
+          },
+        ];
+      }
+      const merged: RtCommunityWorkspace = {
+        ...existing,
+        profile: { ...decoded.profile, id: decoded.communityId },
+        coordinators: decoded.coordinators.length > 0 ? decoded.coordinators : existing.coordinators,
+        members: updatedMembers,
+      };
+      const nextList = list.map((w, i) => (i === existingIdx ? merged : w));
+      saveScopedWorkspaces(nextList, merged.id);
+      return {
+        ok: true,
+        message: `Berhasil membuka undangan komunitas "${merged.profile.orgName}"!`,
+        community: merged,
+        inviter: decoded.inviterName,
+        needsClaim: false,
+      };
+    }
+
+    const prefixTag = decoded.profile.orgName.replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase() || 'WQ';
+    const joinedMember: WargaMember = decoded.targetMember
+      ? {
+          ...decoded.targetMember,
+          isCurrentUser: true,
+          email: accountEmail || decoded.targetMember.email,
+          phone: acc?.phone || decoded.targetMember.phone,
+          deviceId: acc?.deviceId,
+          claimStatus: 'claimed',
+          claimedAt: todayLabel,
+        }
+      : {
+          id: `warga-inv-${Date.now()}`,
+          wargaId: `WQ-${prefixTag}-${String(Math.floor(100 + Math.random() * 899))}`,
+          name: accountName,
+          block: 'Anggota Terundang',
+          email: accountEmail,
+          phone: accountPhone,
+          deviceId: acc?.deviceId,
+          residentType: 'Tetap',
+          isCurrentUser: true,
+          claimStatus: 'claimed',
+          claimCode: `${prefixTag}-${accountPhone.replace(/\D/g, '').slice(-4) || '0000'}`,
+          claimedAt: todayLabel,
+          siagaStatus: 'pending',
+          siagaRequested: false,
+          falseAlarmCount: 0,
+          monthlyPayments: buildInitialPayments(0, decoded.profile.monthlyDuesAmount || 0),
+        };
+
+    const newWorkspace: RtCommunityWorkspace = {
+      id: decoded.communityId,
+      joinedVia: 'invited',
+      invitedBy: decoded.inviterName,
+      joinedAt: new Date().toISOString(),
+      profile: { ...decoded.profile, id: decoded.communityId },
+      coordinators: decoded.coordinators || [],
+      members: [joinedMember],
+      transactions: [],
+      auditLogs: [],
+      forumPosts: decoded.recentPosts || [],
+      guestReports: [],
+      archives: [],
+      invitations: decoded.recentInvitations || [],
+    };
+
+    const nextList = [newWorkspace, ...list];
+    saveScopedWorkspaces(nextList, newWorkspace.id);
+
+    return {
+      ok: true,
+      message: `Otomatis masuk ke ${newWorkspace.profile.orgName} atas undangan ${decoded.inviterName}!`,
+      community: newWorkspace,
+      inviter: decoded.inviterName,
+      needsClaim: Boolean(!decoded.targetMember),
+    };
+  },
+
+  leaveOrDeleteCommunity(communityId: string) {
+    const list = loadScopedWorkspaces();
+    const remaining = list.filter(w => w.id !== communityId);
+    const nextActive = remaining[0]?.id || '';
+    saveScopedWorkspaces(remaining, nextActive);
+  },
+
+  reloadOwnerDefaultCommunity() {
+    if (!this.isOwnerAccount()) return;
+    const seed = buildOwnerSeedWorkspace();
+    const current = loadScopedWorkspaces();
+    const filtered = current.filter(w => w.id !== seed.id);
+    saveScopedWorkspaces([seed, ...filtered], seed.id);
+  },
+
+  encodeCommunityInvite(ws: RtCommunityWorkspace, inviterName: string, targetMember?: WargaMember): string {
+    return encodeRtInviteToken(ws, inviterName, targetMember);
+  },
+
+  encodeCommunityInviteCompact(
+    ws: RtCommunityWorkspace,
+    inviterName: string,
+    targetMember?: WargaMember
+  ): Promise<string> {
+    return encodeRtInviteTokenCompact(ws, inviterName, targetMember);
+  },
+
+  async publishCommunitySnapshot(ws: RtCommunityWorkspace, inviterName: string): Promise<void> {
+    try {
+      const snapshot = await encodeRtInviteTokenCompact(ws, inviterName);
+      await InviteRelayService.publishRoomSnapshot({
+        kind: 'rt',
+        title: ws.profile.orgName,
+        inviter: inviterName || ws.profile.creatorName || 'Pengurus',
+        snapshot,
+      });
+    } catch {
+      // ignore background publish errors
+    }
+  },
+
+  getProfile(): PaguyubanProfile {
+    const active = this.getActiveCommunity();
+    if (!active) return EMPTY_NEUTRAL_PROFILE;
+    return active.profile;
+  },
+
+  saveProfile(profile: PaguyubanProfile) {
+    updateActiveWorkspace(ws => ({
+      ...ws,
+      profile: { ...ws.profile, ...profile, id: ws.id },
+    }));
+  },
+
+  getCoordinators(): CoordinatorMember[] {
+    return this.getActiveCommunity()?.coordinators || [];
+  },
+
+  saveCoordinators(coords: CoordinatorMember[]) {
+    updateActiveWorkspace(ws => ({ ...ws, coordinators: coords }));
+  },
+
+  getMembers(): WargaMember[] {
+    const active = this.getActiveCommunity();
+    if (!active) return [];
+    return normalizeMembersList(active.members, active.profile.orgName);
+  },
+
+  saveMembers(members: WargaMember[]) {
+    updateActiveWorkspace(ws => ({ ...ws, members }));
+  },
+
+  getCurrentMember(): WargaMember {
+    const members = this.getMembers();
+    if (members.length === 0) {
+      return buildGuestFallbackMember(AuthService.getAccount());
+    }
+    return members.find(m => m.isCurrentUser) || members[0];
+  },
+
+  switchCurrentUser(memberId: string) {
+    const members = this.getMembers();
+    if (members.length === 0) return;
+    const updated = members.map(m => ({
+      ...m,
+      isCurrentUser: m.id === memberId,
+    }));
+    this.saveMembers(updated);
+  },
+
+  syncAuthAccount(account: AuthAccount | null) {
+    if (!account) {
+      emitSync();
+      return;
+    }
+    const list = loadScopedWorkspaces();
+    if (list.length === 0) {
+      emitSync();
+      return;
+    }
+
+    const cleanEmail = account.email.trim().toLowerCase();
+    const cleanPhoneDigits = account.phone.replace(/\D/g, '');
+    const active = getActiveFromList(list);
+
+    const updatedWorkspaces = list.map(ws => {
+      const members = ws.members || [];
+      if (members.length === 0) return ws;
+
+      const matchedByCred = members.find(m => {
+        const mEmail = (m.email || '').trim().toLowerCase();
+        const mDigits = m.phone.replace(/\D/g, '');
+        const emailMatches = mEmail && mEmail === cleanEmail;
+        const phoneMatches =
+          cleanPhoneDigits.length >= 6 &&
+          mDigits.length >= 6 &&
+          mDigits.slice(-8) === cleanPhoneDigits.slice(-8);
+        return Boolean(emailMatches || phoneMatches);
+      });
+
+      const targetId = matchedByCred?.id || (members.find(m => m.isCurrentUser) || members[0])?.id;
+      const updatedMembers = members.map(m => {
+        if (m.id !== targetId) {
+          return { ...m, isCurrentUser: false };
+        }
+        return {
+          ...m,
+          isCurrentUser: true,
+          email: cleanEmail,
+          phone: account.phone.trim(),
+          deviceId: account.deviceId,
+          claimStatus: m.claimStatus || ('claimed' as const),
+        };
+      });
+
+      return { ...ws, members: updatedMembers };
+    });
+
+    saveScopedWorkspaces(updatedWorkspaces, active?.id || '');
+  },
+
+  getTransactions(): KasTransaction[] {
+    return this.getActiveCommunity()?.transactions || [];
+  },
+
+  saveTransactions(txs: KasTransaction[]) {
+    updateActiveWorkspace(ws => ({ ...ws, transactions: txs }));
+  },
+
+  getAuditLogs(): SiagaAuditLog[] {
+    return this.getActiveCommunity()?.auditLogs || [];
+  },
+
+  saveAuditLogs(logs: SiagaAuditLog[]) {
+    updateActiveWorkspace(ws => ({ ...ws, auditLogs: logs }));
+  },
+
+  payMemberMonth(memberId: string, monthKey: string, method: string = 'QRIS RT-Pay') {
+    const profile = this.getProfile();
+    const members = this.getMembers();
+    const target = members.find(m => m.id === memberId);
+    if (!target) return;
+
+    const monthLabel = MONTHS_12.find(m => m.key === monthKey)?.short || monthKey;
+    const todayLabel = new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    const updatedMembers = members.map(m => {
+      if (m.id !== memberId) return m;
+      return {
+        ...m,
+        monthlyPayments: {
+          ...m.monthlyPayments,
+          [monthKey]: {
+            paid: true,
+            paidAt: todayLabel,
+            method,
+            amount: profile.monthlyDuesAmount,
+          },
+        },
+      };
+    });
+
+    const newTx: KasTransaction = {
+      id: `kas-${Date.now()}`,
+      type: 'masuk',
+      category: 'Iuran Warga',
+      title: `Iuran ${monthLabel} ${profile.year} - ${target.name} (${target.block})`,
+      amount: profile.monthlyDuesAmount,
+      date: todayLabel,
+      recordedBy: method,
+    };
+
+    updateActiveWorkspace(ws => ({
+      ...ws,
+      members: updatedMembers,
+      transactions: [newTx, ...(ws.transactions || [])],
+    }));
+  },
+
+  payMemberMultipleMonths(memberId: string, monthKeys: string[], method: string = 'QRIS RT-Pay') {
+    const profile = this.getProfile();
+    const members = this.getMembers();
+    const target = members.find(m => m.id === memberId);
+    if (!target || monthKeys.length === 0) return;
+
+    const todayLabel = new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    const updatedMembers = members.map(m => {
+      if (m.id !== memberId) return m;
+      const nextPayments = { ...m.monthlyPayments };
+      monthKeys.forEach(mk => {
+        nextPayments[mk] = {
+          paid: true,
+          paidAt: todayLabel,
+          method,
+          amount: profile.monthlyDuesAmount,
+        };
+      });
+      return { ...m, monthlyPayments: nextPayments };
+    });
+
+    const monthNames = monthKeys
+      .map(mk => MONTHS_12.find(m => m.key === mk)?.short || mk)
+      .join(', ');
+    const totalAmount = profile.monthlyDuesAmount * monthKeys.length;
+
+    const newTx: KasTransaction = {
+      id: `kas-${Date.now()}`,
+      type: 'masuk',
+      category: 'Iuran Warga',
+      title: `Iuran (${monthNames}) ${profile.year} - ${target.name} (${target.block})`,
+      amount: totalAmount,
+      date: todayLabel,
+      recordedBy: method,
+    };
+
+    updateActiveWorkspace(ws => ({
+      ...ws,
+      members: updatedMembers,
+      transactions: [newTx, ...(ws.transactions || [])],
+    }));
+  },
+
+  getForumPosts(): ForumPost[] {
+    return this.getActiveCommunity()?.forumPosts || [];
+  },
+  saveForumPosts(posts: ForumPost[]) {
+    updateActiveWorkspace(ws => ({ ...ws, forumPosts: posts }));
+  },
+  addForumPost(post: Omit<ForumPost, 'id' | 'createdAt' | 'upvoterIds' | 'comments'>) {
+    const newPost: ForumPost = {
+      ...post,
+      id: `post-${Date.now()}`,
+      createdAt: 'Baru saja',
+      upvoterIds: [],
+      comments: [],
+    };
+    this.saveForumPosts([newPost, ...this.getForumPosts()]);
+  },
+  toggleForumUpvote(postId: string, memberId: string) {
+    const updated = this.getForumPosts().map(p => {
+      if (p.id !== postId) return p;
+      const exists = p.upvoterIds.includes(memberId);
+      return {
+        ...p,
+        upvoterIds: exists
+          ? p.upvoterIds.filter(id => id !== memberId)
+          : [...p.upvoterIds, memberId],
+      };
+    });
+    this.saveForumPosts(updated);
+  },
+  toggleForumAttendance(postId: string, memberId: string) {
+    const updated = this.getForumPosts().map(p => {
+      if (p.id !== postId) return p;
+      const current = p.attendeeIds || [];
+      const exists = current.includes(memberId);
+      return {
+        ...p,
+        attendeeIds: exists
+          ? current.filter(id => id !== memberId)
+          : [...current, memberId],
+      };
+    });
+    this.saveForumPosts(updated);
+  },
+  voteForumPoll(postId: string, optionId: string, memberId: string) {
+    const updated = this.getForumPosts().map(p => {
+      if (p.id !== postId || !p.pollOptions) return p;
+      return {
+        ...p,
+        pollOptions: p.pollOptions.map(opt => {
+          const cleaned = opt.voterIds.filter(id => id !== memberId);
+          return opt.id === optionId
+            ? { ...opt, voterIds: [...cleaned, memberId] }
+            : { ...opt, voterIds: cleaned };
+        }),
+      };
+    });
+    this.saveForumPosts(updated);
+  },
+  addForumComment(postId: string, comment: Omit<ForumComment, 'id' | 'time'>) {
+    const updated = this.getForumPosts().map(p => {
+      if (p.id !== postId) return p;
+      const newComment: ForumComment = {
+        ...comment,
+        id: `c-${Date.now()}`,
+        time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+      };
+      return { ...p, comments: [...p.comments, newComment] };
+    });
+    this.saveForumPosts(updated);
+  },
+  updateAspirationStatus(postId: string, status: AspirationStatus) {
+    const updated = this.getForumPosts().map(p =>
+      p.id === postId ? { ...p, aspirationStatus: status } : p
+    );
+    this.saveForumPosts(updated);
+  },
+
+  getGuestReports(): GuestReport[] {
+    return this.getActiveCommunity()?.guestReports || [];
+  },
+  addGuestReport(report: Omit<GuestReport, 'id' | 'createdAt'>) {
+    const next: GuestReport = {
+      ...report,
+      id: `gst-${Date.now()}`,
+      createdAt: new Date().toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    };
+    updateActiveWorkspace(ws => ({
+      ...ws,
+      guestReports: [next, ...(ws.guestReports || [])],
+    }));
+  },
+
+  requestSiagaActivation(memberId: string) {
+    const members = this.getMembers();
+    const updated = members.map(m =>
+      m.id === memberId ? { ...m, siagaRequested: true } : m
+    );
+    this.saveMembers(updated);
+  },
+
+  setMemberSiagaStatus(
+    memberId: string,
+    status: SiagaActivationStatus,
+    verifierName: string,
+    reason?: string
+  ) {
+    const members = this.getMembers();
+    const todayLabel = new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+    const updated = members.map(m => {
+      if (m.id !== memberId) return m;
+      return {
+        ...m,
+        siagaStatus: status,
+        siagaRequested: false,
+        siagaVerifiedBy: status === 'active' ? verifierName : m.siagaVerifiedBy,
+        siagaVerifiedAt: status === 'active' ? todayLabel : m.siagaVerifiedAt,
+        suspendReason: status === 'suspended' ? reason || 'Penyalahgunaan / laporan palsu' : undefined,
+        falseAlarmCount: status === 'suspended' ? m.falseAlarmCount + 1 : m.falseAlarmCount,
+      };
+    });
+    this.saveMembers(updated);
+  },
+
+  addTransaction(tx: Omit<KasTransaction, 'id'>) {
+    const newTx: KasTransaction = {
+      ...tx,
+      id: `kas-${Date.now()}`,
+    };
+    updateActiveWorkspace(ws => ({
+      ...ws,
+      transactions: [newTx, ...(ws.transactions || [])],
+    }));
+  },
+
+  addSiagaAuditLog(log: Omit<SiagaAuditLog, 'auditStatus'>) {
+    const nextLog: SiagaAuditLog = {
+      ...log,
+      auditStatus: log.mode === 'REAL' ? 'pending' : 'valid',
+    };
+    updateActiveWorkspace(ws => ({
+      ...ws,
+      auditLogs: [nextLog, ...(ws.auditLogs || [])],
+    }));
+  },
+
+  markAuditLogAsPrank(logId: string, verifierName: string) {
+    const logs = this.getAuditLogs();
+    const targetLog = logs.find(l => l.id === logId);
+    const updatedLogs = logs.map(l =>
+      l.id === logId ? { ...l, auditStatus: 'prank' as const } : l
+    );
+    this.saveAuditLogs(updatedLogs);
+
+    if (targetLog?.reporterId) {
+      this.setMemberSiagaStatus(
+        targetLog.reporterId,
+        'suspended',
+        verifierName,
+        `Alarm palsu (${targetLog.category}, ${targetLog.date} ${targetLog.timestamp})`
+      );
+    }
+  },
+
+  // --- Historical Archives ---
+  getArchives(): HistoricalArchiveYear[] {
+    return [...(this.getActiveCommunity()?.archives || [])].sort((a, b) => b.year - a.year);
+  },
+  saveArchives(archives: HistoricalArchiveYear[]) {
+    updateActiveWorkspace(ws => ({ ...ws, archives }));
+  },
+  addArchive(archive: Omit<HistoricalArchiveYear, 'id'>) {
+    const next: HistoricalArchiveYear = {
+      ...archive,
+      id: `arc-${archive.year}-${Date.now()}`,
+    };
+    const existing = this.getArchives().filter(a => a.year !== archive.year);
+    this.saveArchives([next, ...existing]);
+  },
+  deleteArchive(id: string) {
+    this.saveArchives(this.getArchives().filter(a => a.id !== id));
+  },
+
+  // --- Invitations & RSVP ---
+  getInvitations(): CommunityInvitation[] {
+    return this.getActiveCommunity()?.invitations || [];
+  },
+  saveInvitations(invs: CommunityInvitation[]) {
+    updateActiveWorkspace(ws => ({ ...ws, invitations: invs }));
+  },
+  addInvitation(inv: Omit<CommunityInvitation, 'id' | 'createdAt' | 'rsvps'>) {
+    const next: CommunityInvitation = {
+      ...inv,
+      id: `inv-${Date.now()}`,
+      createdAt: 'Baru saja',
+      rsvps: {},
+    };
+    this.saveInvitations([next, ...this.getInvitations()]);
+  },
+  setInvitationRsvp(
+    invitationId: string,
+    member: WargaMember,
+    status: InvitationRsvpStatus,
+    note?: string
+  ) {
+    const updated = this.getInvitations().map(inv => {
+      if (inv.id !== invitationId) return inv;
+      return {
+        ...inv,
+        rsvps: {
+          ...inv.rsvps,
+          [member.id]: {
+            memberId: member.id,
+            name: member.name,
+            block: member.block,
+            status,
+            note,
+          },
+        },
+      };
+    });
+    this.saveInvitations(updated);
+  },
+
+  // --- Pre-registered Warga Invite & Claim System ---
+  generateClaimCode(orgName: string, block: string, phone: string): string {
+    const orgPrefix = orgName.replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase() || 'WQ';
+    const blockCode = block.replace(/[^A-Za-z0-9]/g, '').slice(-3).toUpperCase() || 'WRG';
+    const phoneDigits = phone.replace(/\D/g, '').slice(-4) || String(Math.floor(1000 + Math.random() * 9000));
+    return `${orgPrefix}-${blockCode}-${phoneDigits}`;
+  },
+
+  markMemberInvited(memberId: string) {
+    const profile = this.getProfile();
+    const todayLabel = new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+    const updated = this.getMembers().map(m => {
+      if (m.id !== memberId) return m;
+      return {
+        ...m,
+        claimCode: m.claimCode || this.generateClaimCode(profile.orgName, m.block, m.phone),
+        claimStatus: m.claimStatus === 'claimed' ? ('claimed' as const) : ('invited' as const),
+        invitedAt: todayLabel,
+      };
+    });
+    this.saveMembers(updated);
+  },
+
+  claimMemberProfile(
+    claimCodeInput: string,
+    phoneLast4Input: string
+  ): { ok: boolean; message: string; member?: WargaMember } {
+    const normalizedCode = claimCodeInput.trim().toUpperCase();
+    const normalizedDigits = phoneLast4Input.replace(/\D/g, '');
+    if (!normalizedCode) {
+      return { ok: false, message: 'Masukkan Kode Klaim dari undangan pengurus.' };
+    }
+
+    const allWorkspaces = loadScopedWorkspaces();
+    let matchedWorkspace: RtCommunityWorkspace | undefined;
+    let matchedMember: WargaMember | undefined;
+
+    for (const ws of allWorkspaces) {
+      const m = ws.members.find(x => (x.claimCode || '').toUpperCase() === normalizedCode);
+      if (m) {
+        matchedWorkspace = ws;
+        matchedMember = m;
+        break;
+      }
+    }
+
+    if (!matchedWorkspace || !matchedMember) {
+      return {
+        ok: false,
+        message: 'Kode Klaim tidak ditemukan di komunitas Anda. Gunakan Link Undangan (?rt=...) dari pengurus.',
+      };
+    }
+
+    const memberPhoneDigits = matchedMember.phone.replace(/\D/g, '');
+    if (memberPhoneDigits.length >= 4) {
+      const expectedLast4 = memberPhoneDigits.slice(-4);
+      if (normalizedDigits !== expectedLast4) {
+        return {
+          ok: false,
+          message: '4 digit terakhir No HP tidak cocok dengan data yang didaftarkan pengurus.',
+        };
+      }
+    }
+
+    const todayLabel = new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    const nextWorkspaces = allWorkspaces.map(ws => {
+      if (ws.id !== matchedWorkspace!.id) return ws;
+      return {
+        ...ws,
+        members: ws.members.map(m => ({
+          ...m,
+          isCurrentUser: m.id === matchedMember!.id,
+          claimStatus: m.id === matchedMember!.id ? ('claimed' as const) : m.claimStatus,
+          claimedAt: m.id === matchedMember!.id ? todayLabel : m.claimedAt,
+        })),
+      };
+    });
+
+    saveScopedWorkspaces(nextWorkspaces, matchedWorkspace.id);
+    const updatedWs = nextWorkspaces.find(w => w.id === matchedWorkspace!.id);
+    const claimedMember = updatedWs?.members.find(m => m.id === matchedMember!.id);
+    return {
+      ok: true,
+      message: `Selamat datang ${matchedMember.name} (${matchedMember.block})! Profil berhasil diklaim.`,
+      member: claimedMember,
+    };
+  },
+
+  // --- Smart Excel Import & Lembaran Baru ---
+  applySmartExcelImport(params: {
+    mode: 'merge' | 'fresh_2026';
+    openingBalance?: number;
+    openingBalanceNote?: string;
+    importedMembers: Array<{
+      name: string;
+      block: string;
+      phone: string;
+      residentType: 'Tetap' | 'Kontrak';
+      paidMonthsCount: number;
+      priorArrears?: number;
+      priorArrearsNote?: string;
+    }>;
+    importedArchives?: Array<{
+      year: number;
+      totalIncome: number;
+      totalExpense: number;
+      endingBalance: number;
+      note: string;
+    }>;
+  }) {
+    const profile = this.getProfile();
+    const todayLabel = new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    const existingMembers = this.getMembers();
+    const currentActive = existingMembers.find(m => m.isCurrentUser) || existingMembers[0];
+
+    const newMembers: WargaMember[] = params.importedMembers.map((row, idx) => {
+      const seq = existingMembers.length + idx + 1;
+      const phoneClean = row.phone.trim() || '-';
+      return {
+        id: `warga-xls-${Date.now()}-${idx}`,
+        wargaId: `WQ-${profile.year}-${String(seq).padStart(3, '0')}`,
+        name: row.name.trim(),
+        block: row.block.trim() || `Unit ${seq}`,
+        phone: phoneClean,
+        residentType: row.residentType,
+        isCurrentUser: false,
+        claimStatus: 'unclaimed',
+        claimCode: this.generateClaimCode(profile.orgName, row.block || String(seq), phoneClean),
+        priorArrears: row.priorArrears || 0,
+        priorArrearsNote: row.priorArrearsNote,
+        siagaStatus: 'pending',
+        siagaRequested: false,
+        falseAlarmCount: 0,
+        monthlyPayments: buildInitialPayments(
+          Math.max(0, Math.min(12, row.paidMonthsCount || 0)),
+          profile.monthlyDuesAmount
+        ),
+      };
+    });
+
+    if (params.mode === 'fresh_2026' && currentActive) {
+      const keptCurrent: WargaMember = {
+        ...currentActive,
+        isCurrentUser: true,
+        claimStatus: 'claimed',
+        monthlyPayments: buildInitialPayments(0, profile.monthlyDuesAmount),
+      };
+      this.saveMembers([keptCurrent, ...newMembers]);
+
+      const openingTx: KasTransaction = {
+        id: `kas-open-${Date.now()}`,
+        type: 'masuk',
+        category: 'Donasi / Kas',
+        title: params.openingBalanceNote?.trim() || `Saldo Awal Lembaran Baru ${profile.year}`,
+        amount: Math.max(0, params.openingBalance || 0),
+        date: todayLabel,
+        recordedBy: 'Tutup Buku / Impor Excel',
+      };
+      this.saveTransactions(openingTx.amount > 0 ? [openingTx] : []);
+    } else {
+      const existingKeys = new Set(
+        existingMembers.map(m => `${m.name.toLowerCase()}::${m.block.toLowerCase()}`)
+      );
+      const uniqueNew = newMembers.filter(
+        m => !existingKeys.has(`${m.name.toLowerCase()}::${m.block.toLowerCase()}`)
+      );
+      this.saveMembers([...existingMembers, ...uniqueNew]);
+
+      if (params.openingBalance && params.openingBalance > 0) {
+        const tx: KasTransaction = {
+          id: `kas-imp-${Date.now()}`,
+          type: 'masuk',
+          category: 'Donasi / Kas',
+          title: params.openingBalanceNote?.trim() || 'Penyesuaian Saldo dari Impor Excel',
+          amount: params.openingBalance,
+          date: todayLabel,
+          recordedBy: 'Impor Excel Pengurus',
+        };
+        this.saveTransactions([tx, ...this.getTransactions()]);
+      }
+    }
+
+    if (params.importedArchives && params.importedArchives.length > 0) {
+      const currentArchives = params.mode === 'fresh_2026' ? [] : this.getArchives();
+      const mapByYear = new Map<number, HistoricalArchiveYear>();
+      currentArchives.forEach(a => mapByYear.set(a.year, a));
+      params.importedArchives.forEach(a => {
+        mapByYear.set(a.year, {
+          id: `arc-xls-${a.year}`,
+          year: a.year,
+          totalIncome: a.totalIncome,
+          totalExpense: a.totalExpense,
+          endingBalance: a.endingBalance,
+          note: a.note || `Rekap impor Excel tahun ${a.year}`,
+          source: 'Impor Excel',
+        });
+      });
+      this.saveArchives(Array.from(mapByYear.values()));
+    }
+  },
+
+  startFreshYear2026(openingBalance: number, note: string) {
+    const profile = this.getProfile();
+    const todayLabel = new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    const resetMembers = this.getMembers().map(m => ({
+      ...m,
+      monthlyPayments: buildInitialPayments(0, profile.monthlyDuesAmount),
+    }));
+    this.saveMembers(resetMembers);
+
+    const txs: KasTransaction[] =
+      openingBalance > 0
+        ? [
+            {
+              id: `kas-fresh-${Date.now()}`,
+              type: 'masuk',
+              category: 'Donasi / Kas',
+              title: note.trim() || `Saldo Awal Pindahan ke Lembaran Baru ${profile.year}`,
+              amount: openingBalance,
+              date: todayLabel,
+              recordedBy: 'Pengurus (Tutup Buku)',
+            },
+          ]
+        : [];
+    this.saveTransactions(txs);
+  },
+};

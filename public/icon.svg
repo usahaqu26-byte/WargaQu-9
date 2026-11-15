@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgMint" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="65%" stop-color="#f0fdf4"/>
+      <stop offset="100%" stop-color="#dcfce7"/>
+    </linearGradient>
+    <linearGradient id="goldLeft" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <linearGradient id="goldRight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <filter id="wShadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#064e3b" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <!-- Rounded App Icon Container (Origami 7-Facet W Theme) -->
+  <rect x="20" y="20" width="472" height="472" rx="108" fill="url(#bgMint)" stroke="#065f46" stroke-width="10"/>
+
+  <!-- Ultra-Bold Origami 7-Facet "W" (7 Modules Unified) -->
+  <g filter="url(#wShadow)">
+    <!-- 1. Left Top Arm (LeluhurQu - Deep Emerald) -->
+    <polygon points="88,140 162,140 180,204 118,246" fill="#047857"/>
+    <polygon points="162,140 180,204 146,184" fill="#065f46" fill-opacity="0.45"/>
+
+    <!-- 2. Left Mid Wing (RtQu - Teal) -->
+    <polygon points="118,246 180,204 195,256 136,310" fill="#0d9488"/>
+
+    <!-- 3. Left Foot (AreaQu - Bright Mint) -->
+    <polygon points="136,310 195,256 222,374 154,374" fill="#2dd4bf"/>
+    <polygon points="136,310 176,320 154,374" fill="#14b8a6" fill-opacity="0.5"/>
+
+    <!-- 4. Center Crown & Inner Slants (MuamalahQu + ChatQu) -->
+    <polygon points="224,140 256,140 256,214 195,256" fill="#059669"/>
+    <polygon points="256,140 288,140 317,256 256,214" fill="#0284c7"/>
+
+    <!-- 5. Center Golden Keystone (UsahaQu - Smart Core) -->
+    <polygon points="195,256 256,214 256,268 222,374" fill="url(#goldLeft)"/>
+    <polygon points="256,214 317,256 290,374 256,268" fill="url(#goldRight)"/>
+
+    <!-- 6. Right Top & Mid Wing (SiagaQu / Smart Network) -->
+    <polygon points="350,140 424,140 394,246 332,204" fill="#047857"/>
+    <polygon points="332,204 394,246 376,310 317,256" fill="#0d9488"/>
+
+    <!-- 7. Right Foot (Bright Mint Balance) -->
+    <polygon points="317,256 376,310 358,374 290,374" fill="#2dd4bf"/>
+    <polygon points="376,310 336,320 358,374" fill="#14b8a6" fill-opacity="0.5"/>
+
+    <!-- Subtle Origami Edge Highlights -->
+    <polyline points="195,256 256,214 317,256" fill="none" stroke="#fef3c7" stroke-width="2" stroke-opacity="0.7"/>
+  </g>
+</svg>
