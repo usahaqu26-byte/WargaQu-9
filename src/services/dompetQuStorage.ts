@@ -305,6 +305,20 @@ function detectWalletForText(textLower: string, type: 'masuk' | 'keluar', wallet
   return byKind('cash') || wallets[0]?.id || 'wallet-cash';
 }
 
+function cleanSpokenTitle(segment: string, fallback: string): string {
+  const stripped = segment
+    .replace(/\b(?:rp\.?\s*)?\d+(?:[.,]\d+)*\s*(?:juta|jt|ribu|rb|k)?\b/gi, '')
+    .replace(
+      /\b(?:satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|sebelas|puluh|ratus|ribu|juta|setengah|sejuta|gocap|goban|ceban|noban|seceng|seribu)\b/gi,
+      ''
+    )
+    .replace(/\b(cash|tunai|atm|bank|rekening|ewallet|e-wallet|gopay|ovo|dana|shopeepay|qris|pakai|dari|ke|sebesar|senilai)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!stripped) return fallback;
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1, 38);
+}
+
 function classifyLocalSegment(segment: string): {
   type: 'masuk' | 'keluar';
   category: string;
@@ -313,48 +327,78 @@ function classifyLocalSegment(segment: string): {
   const lower = segment.toLowerCase();
 
   if (/\b(gaji|gajian|upah|honor)\b/.test(lower)) {
-    return { type: 'masuk', category: 'Gaji', title: 'Gaji / Penghasilan' };
+    return { type: 'masuk', category: 'Gaji', title: cleanSpokenTitle(segment, 'Gaji') };
   }
   if (/\b(bonus|lembur|insentif|thr|komisi)\b/.test(lower)) {
-    return { type: 'masuk', category: 'Bonus & Lembur', title: 'Bonus & Lembur' };
+    return { type: 'masuk', category: 'Bonus & Lembur', title: cleanSpokenTitle(segment, 'Bonus & Lembur') };
   }
-  if (/\b(omset|jualan|dagang|usaha|dapat uang|terima uang|pemasukan|masuk)\b/.test(lower)) {
-    return { type: 'masuk', category: 'Usaha & Sampingan', title: 'Pemasukan Usaha / Lainnya' };
+  if (/\b(omset|jualan|dagang|usaha|dapat uang|terima uang|pemasukan|masuk|terima)\b/.test(lower)) {
+    const cleaned = cleanSpokenTitle(segment, 'Pemasukan').replace(/^Masuk$/i, 'Pemasukan');
+    return { type: 'masuk', category: 'Pemasukan Lainnya', title: cleaned || 'Pemasukan' };
   }
 
   if (/\b(jajan|bocah|anak|sekolah|saku anak|mainan|eskrim)\b/.test(lower)) {
-    return { type: 'keluar', category: 'Jajan Bocah', title: 'Jajan Bocah' };
+    return { type: 'keluar', category: 'Jajan Bocah', title: cleanSpokenTitle(segment, 'Jajan Bocah') };
   }
   if (/\b(ongkos|bensin|bbm|parkir|tol|ojol|gojek|grab|kereta|busway|transport|kerja)\b/.test(lower)) {
-    return { type: 'keluar', category: 'Ongkos Kerja', title: 'Ongkos Kerja & Transport' };
+    return { type: 'keluar', category: 'Ongkos Kerja', title: cleanSpokenTitle(segment, 'Ongkos Kerja') };
   }
   if (/\b(rumah|kontrakan|kos|cicilan|kpr|listrik|token|pln|air|pdam|wifi|internet|gas|elpiji|ipl|kebersihan)\b/.test(lower)) {
-    return { type: 'keluar', category: 'Rumah & Tagihan', title: 'Keperluan Rumah & Tagihan' };
+    return { type: 'keluar', category: 'Rumah & Tagihan', title: cleanSpokenTitle(segment, 'Keperluan Rumah') };
   }
   if (/\b(makan|minum|sarapan|siang|malam|warteg|bakso|kopi|nasi|gorengan|lauk|snack)\b/.test(lower)) {
-    return { type: 'keluar', category: 'Makan & Minum', title: 'Makan & Minum' };
+    return { type: 'keluar', category: 'Makan & Minum', title: cleanSpokenTitle(segment, 'Makan & Minum') };
   }
   if (/\b(belanja|pasar|sayur|beras|sembako|supermarket|minimarket|indomaret|alfamart|sabun|dapur)\b/.test(lower)) {
-    return { type: 'keluar', category: 'Belanja Harian', title: 'Belanja Harian' };
+    return { type: 'keluar', category: 'Belanja Harian', title: cleanSpokenTitle(segment, 'Belanja Harian') };
   }
   if (/\b(obat|dokter|klinik|apotek|sakit|kesehatan|vitamin)\b/.test(lower)) {
-    return { type: 'keluar', category: 'Kesehatan & Obat', title: 'Kesehatan & Obat' };
+    return { type: 'keluar', category: 'Kesehatan & Obat', title: cleanSpokenTitle(segment, 'Kesehatan & Obat') };
   }
   if (/\b(sedekah|infaq|zakat|iuran|rt|arisan|kondangan|sumbangan|keluarga|orang tua)\b/.test(lower)) {
-    return { type: 'keluar', category: 'Keluarga & Sosial', title: 'Keluarga & Sosial' };
+    return { type: 'keluar', category: 'Keluarga & Sosial', title: cleanSpokenTitle(segment, 'Keluarga & Sosial') };
   }
 
-  // Extract clean label words without numbers
-  const stripped = segment
-    .replace(/\b(?:rp\.?\s*)?\d+(?:[.,]\d+)*\s*(?:juta|jt|ribu|rb|k)?\b/gi, '')
-    .replace(/\b(cash|tunai|atm|bank|rekening|ewallet|gopay|ovo|dana|pakai|dari|masuk|ke)\b/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const cleanTitle = stripped
-    ? stripped.charAt(0).toUpperCase() + stripped.slice(1, 36)
-    : 'Catatan Pengeluaran';
+  return {
+    type: 'keluar',
+    category: 'Pengeluaran Lainnya',
+    title: cleanSpokenTitle(segment, 'Pengeluaran'),
+  };
+}
 
-  return { type: 'keluar', category: 'Pengeluaran Lainnya', title: cleanTitle };
+function splitSpeechIntoItemSegments(transcript: string): string[] {
+  const primaryChunks = transcript
+    .split(/(?:,|\n|;|\bdan\s+(?=[a-zA-Z])|\blalu\b|\bterus\b)/i)
+    .map(s => s.trim())
+    .filter(s => s.length >= 2);
+
+  const amountTailRegex =
+    /(?:(?:rp\.?\s*)?\d+(?:[.,]\d+)*\s*(?:juta|jt|ribu|rb|k)\b|\b(?:setengah\s+juta|sejuta|satu\s+juta|gocap|goban|ceban|noban|seceng|seribu)\b|\b(?:satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|sebelas)(?:\s+puluh(?:\s+(?:satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan))?|\s+ratus(?:\s+(?:satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan))?)?\s*(?:juta|jt|ribu|rb)\b|\b\d{3,11}\b)(?:\s+(?:masuk|dari|pakai|ke)?\s*(?:cash|tunai|atm|bank|rekening|ewallet|e-wallet|gopay|ovo|dana|shopeepay|qris))?/gi;
+
+  const result: string[] = [];
+  for (const chunk of primaryChunks) {
+    amountTailRegex.lastIndex = 0;
+    const matches = Array.from(chunk.matchAll(amountTailRegex));
+    if (matches.length <= 1) {
+      result.push(chunk);
+      continue;
+    }
+
+    let cursor = 0;
+    matches.forEach((m, idx) => {
+      const matchEnd = (m.index ?? 0) + m[0].length;
+      const slice =
+        idx === matches.length - 1
+          ? chunk.slice(cursor).trim()
+          : chunk.slice(cursor, matchEnd).trim();
+      if (slice) {
+        result.push(slice);
+      }
+      cursor = matchEnd;
+    });
+  }
+
+  return result.filter(s => s.length >= 2);
 }
 
 export const DompetQuStorage = {
@@ -573,6 +617,38 @@ export const DompetQuStorage = {
     });
   },
 
+  updateTransaction(
+    txId: string,
+    patch: { title?: string; amount?: number; type?: 'masuk' | 'keluar'; category?: string; date?: string }
+  ): void {
+    const state = loadState();
+    const target = state.transactions.find(t => t.id === txId);
+    if (!target || target.type === 'transfer') return;
+    const nowIso = new Date().toISOString();
+
+    const nextType = patch.type ?? target.type;
+    const nextAmount =
+      patch.amount !== undefined ? Math.max(0, Math.round(Number(patch.amount) || 0)) : target.amount;
+    const nextTitle = patch.title !== undefined ? patch.title.trim() || target.title : target.title;
+    const nextCategory = patch.category ?? target.category;
+    const nextDate = patch.date ?? target.date;
+
+    const oldSigned = target.type === 'masuk' ? target.amount : -target.amount;
+    const newSigned = nextType === 'masuk' ? nextAmount : -nextAmount;
+    const delta = newSigned - oldSigned;
+
+    const nextWallets = state.wallets.map(w =>
+      w.id === target.walletId ? { ...w, balance: w.balance + delta, updatedAt: nowIso } : w
+    );
+    const nextTxs = state.transactions.map(t =>
+      t.id === txId
+        ? { ...t, type: nextType, amount: nextAmount, title: nextTitle, category: nextCategory, date: nextDate }
+        : t
+    );
+
+    saveState({ ...state, wallets: nextWallets, transactions: nextTxs });
+  },
+
   saveBudget(category: string, monthlyLimit: number): void {
     const state = loadState();
     const cleanLimit = Math.max(0, Math.round(Number(monthlyLimit) || 0));
@@ -590,10 +666,7 @@ export const DompetQuStorage = {
 
   parseSpeechLocalFallback(transcript: string, wallets?: DompetWallet[]): DompetParsedDraftItem[] {
     const activeWallets = wallets && wallets.length > 0 ? wallets : this.getWallets();
-    const segments = transcript
-      .split(/(?:,|\n|;|\bdan\s+(?=[a-zA-Z])|\blalu\b|\bterus\b)/i)
-      .map(s => s.trim())
-      .filter(s => s.length >= 2);
+    const segments = splitSpeechIntoItemSegments(transcript);
 
     const parsed: DompetParsedDraftItem[] = [];
     segments.forEach((seg, idx) => {

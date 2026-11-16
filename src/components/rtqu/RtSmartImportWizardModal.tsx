@@ -88,32 +88,65 @@ function sanitizeKasCategory(rawCat: unknown, title: string, type: 'masuk' | 'ke
   return 'Perbaikan Fasilitas';
 }
 
-async function compressImageToBase64(file: File): Promise<{ mimeType: string; base64: string }> {
+async function compressImageToBase64(
+  file: File,
+  maxDim = 1350,
+  quality = 0.78
+): Promise<{ mimeType: string; base64: string }> {
+  const drawBitmapToJpeg = (
+    source: CanvasImageSource,
+    width: number,
+    height: number
+  ): { mimeType: string; base64: string } => {
+    const scale = Math.min(1, maxDim / Math.max(width || 1, height || 1));
+    const w = Math.max(1, Math.round((width || 1) * scale));
+    const h = Math.max(1, Math.round((height || 1) * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Canvas tidak tersedia di perangkat.');
+    }
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(source, 0, 0, w, h);
+    const dataUrl = canvas.toDataURL('image/jpeg', quality);
+    const b64 = dataUrl.split(',')[1] || '';
+    if (!b64) {
+      throw new Error('Gagal mengonversi gambar ke JPEG.');
+    }
+    return { mimeType: 'image/jpeg', base64: b64 };
+  };
+
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const res = drawBitmapToJpeg(bitmap, bitmap.width, bitmap.height);
+      if (typeof bitmap.close === 'function') bitmap.close();
+      return res;
+    } catch {
+      // Fallback to FileReader + Image below
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Gagal membaca gambar.'));
+    reader.onerror = () => reject(new Error(`Gagal membaca file gambar "${file.name}".`));
     reader.onload = () => {
       const img = new Image();
-      img.onerror = () => reject(new Error('Format gambar tidak valid.'));
+      img.onerror = () =>
+        reject(
+          new Error(
+            `Format foto "${file.name}" belum didukung browser (jika file iPhone HEIC/RAW, ubah atau screenshot ke JPG/PNG).`
+          )
+        );
       img.onload = () => {
-        const maxDim = 1600;
-        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-        const w = Math.max(1, Math.round(img.width * scale));
-        const h = Math.max(1, Math.round(img.height * scale));
-        const canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Canvas tidak tersedia.'));
-          return;
+        try {
+          resolve(drawBitmapToJpeg(img, img.width, img.height));
+        } catch (err) {
+          reject(err instanceof Error ? err : new Error('Gagal memproses gambar.'));
         }
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, w, h);
-        ctx.drawImage(img, 0, 0, w, h);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.84);
-        const b64 = dataUrl.split(',')[1] || '';
-        resolve({ mimeType: 'image/jpeg', base64: b64 });
       };
       img.src = String(reader.result || '');
     };
@@ -221,7 +254,10 @@ export const RtSmartImportWizardModal: React.FC<RtSmartImportWizardModalProps> =
         added.push({ id: `f-${Date.now()}-${Math.random()}`, file, kind: 'excel' });
       } else if (file.type === 'application/pdf' || lower.endsWith('.pdf')) {
         added.push({ id: `f-${Date.now()}-${Math.random()}`, file, kind: 'pdf' });
-      } else if (file.type.startsWith('image/')) {
+      } else if (
+        file.type.startsWith('image/') ||
+        /\.(jpg|jpeg|png|webp|gif|bmp|avif|heic|heif)$/i.test(lower)
+      ) {
         added.push({ id: `f-${Date.now()}-${Math.random()}`, file, kind: 'image' });
       }
     }
@@ -381,18 +417,24 @@ export const RtSmartImportWizardModal: React.FC<RtSmartImportWizardModalProps> =
       }
 
       setAnalyzeStatusText('Menyiapkan dokumen foto, screenshot, PDF & tabel...');
-      const encodedMedia: Array<{ name: string; mimeType: string; base64: string }> = [];
+      const imageCount = mediaFiles.filter(m => m.kind === 'image').length;
+      const initialDim = imageCount >= 6 ? 960 : imageCount >= 3 ? 1150 : 1350;
+      const initialQuality = imageCount >= 6 ? 0.66 : imageCount >= 3 ? 0.72 : 0.78;
+
+      let encodedMedia: Array<{ name: string; mimeType: string; base64: string }> = [];
       for (const item of mediaFiles) {
         if (item.kind === 'image') {
-          const compressed = await compressImageToBase64(item.file);
+          const compressed = await compressImageToBase64(item.file, initialDim, initialQuality);
           encodedMedia.push({
             name: item.file.name,
             mimeType: compressed.mimeType,
             base64: compressed.base64,
           });
         } else {
-          if (item.file.size > 9 * 1024 * 1024) {
-            throw new Error(`File PDF "${item.file.name}" terlalu besar (>9MB).`);
+          if (item.file.size > 5 * 1024 * 1024) {
+            throw new Error(
+              `File PDF "${item.file.name}" terlalu besar (>5MB). Kompres PDF atau ambil screenshot halaman tabelnya.`
+            );
           }
           const b64 = await fileToRawBase64(item.file);
           encodedMedia.push({
@@ -409,26 +451,76 @@ export const RtSmartImportWizardModal: React.FC<RtSmartImportWizardModalProps> =
         textTables.push(...sheets);
       }
 
-      setAnalyzeStatusText('Membaca nama warga, iuran, pengurus & mutasi kas dengan Smart AI...');
-      const resp = await fetch('/api/rtqu/smart-import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      let requestBodyStr = JSON.stringify({
+        files: encodedMedia,
+        textTables,
+        orgTypeHint,
+        yearHint: new Date().getFullYear(),
+      });
+
+      // Keep total payload compact to avoid reverse-proxy 413 HTML errors on multi-photo uploads
+      if (requestBodyStr.length > 3_800_000 && imageCount > 0) {
+        encodedMedia = [];
+        for (const item of mediaFiles) {
+          if (item.kind === 'image') {
+            const tighter = await compressImageToBase64(item.file, 880, 0.58);
+            encodedMedia.push({
+              name: item.file.name,
+              mimeType: tighter.mimeType,
+              base64: tighter.base64,
+            });
+          } else {
+            const b64 = await fileToRawBase64(item.file);
+            encodedMedia.push({
+              name: item.file.name,
+              mimeType: 'application/pdf',
+              base64: b64,
+            });
+          }
+        }
+        requestBodyStr = JSON.stringify({
           files: encodedMedia,
           textTables,
           orgTypeHint,
           yearHint: new Date().getFullYear(),
-        }),
+        });
+      }
+
+      setAnalyzeStatusText('Membaca nama warga, iuran, pengurus & mutasi kas dengan Smart AI...');
+      const resp = await fetch('/api/rtqu/smart-import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBodyStr,
       });
 
-      const data = (await resp.json()) as {
-        ok?: boolean;
-        draft?: Record<string, unknown>;
-        error?: string;
-      };
+      const rawBody = await resp.text();
+      const trimmedBody = rawBody.trim();
+      let data: { ok?: boolean; draft?: Record<string, unknown>; error?: string } | null = null;
+      if (trimmedBody && !trimmedBody.startsWith('<')) {
+        try {
+          data = JSON.parse(trimmedBody) as {
+            ok?: boolean;
+            draft?: Record<string, unknown>;
+            error?: string;
+          };
+        } catch {
+          data = null;
+        }
+      }
 
       if (!resp.ok || !data?.draft) {
-        throw new Error(data?.error || 'Gagal menganalisa dokumen.');
+        if (resp.status === 413) {
+          throw new Error(
+            data?.error ||
+              'Ukuran foto terlalu besar dalam sekali kirim. Unggah 1–3 foto per proses atau perkecil gambar.'
+          );
+        }
+        if (!data) {
+          throw new Error(
+            `Gagal membaca respons server (kode ${resp.status}). Coba kurangi jumlah foto atau ulangi beberapa saat lagi.`
+          );
+        }
+        throw new Error(data.error || 'Gagal menganalisa dokumen.');
       }
 
       const cleanDraft = normalizeAiDraft(data.draft);
@@ -443,8 +535,11 @@ export const RtSmartImportWizardModal: React.FC<RtSmartImportWizardModalProps> =
       setStep('review');
       showNotification('Dokumen berhasil dibaca! Silakan cek & revisi di tabel Excel sebelum disimpan.');
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan saat membaca dokumen.';
       setAnalyzeError(
-        err instanceof Error ? err.message : 'Terjadi kesalahan saat membaca dokumen.'
+        msg.toLowerCase().includes('unexpected token')
+          ? 'File atau foto belum terbaca dengan benar oleh layanan analisa. Pastikan file berupa JPG/PNG/PDF/Excel yang valid dan tidak terlalu besar.'
+          : msg
       );
     } finally {
       setIsAnalyzing(false);

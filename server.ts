@@ -38,6 +38,88 @@ const PORT = Number(process.env.PORT || 3000);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function parseGeminiJsonObject<T = Record<string, unknown>>(rawText: string): T {
+  const cleaned = rawText
+    .replace(/^\uFEFF/, '')
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  try {
+    return JSON.parse(cleaned) as T;
+  } catch {
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      const sliced = cleaned.slice(firstBrace, lastBrace + 1);
+      try {
+        return JSON.parse(sliced) as T;
+      } catch {
+        // Fall through to descriptive error below
+      }
+    }
+    throw new Error(
+      'Format hasil baca dokumen dari AI terpotong atau tidak lengkap. Coba kirim foto lebih jelas atau 1–3 halaman per proses.'
+    );
+  }
+}
+
+async function generateContentWithRetry(
+  ai: GoogleGenAI,
+  params: Parameters<GoogleGenAI['models']['generateContent']>[0],
+  maxAttempts = 3
+) {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await ai.models.generateContent(params);
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err || '');
+      const isTransient =
+        msg.includes('503') ||
+        msg.includes('UNAVAILABLE') ||
+        msg.includes('high demand') ||
+        msg.includes('429') ||
+        msg.includes('RESOURCE_EXHAUSTED');
+      if (!isTransient || attempt >= maxAttempts) {
+        throw err;
+      }
+      await new Promise(resolve => setTimeout(resolve, attempt * 1200));
+    }
+  }
+  throw lastErr;
+}
+
+function formatFriendlyGeminiError(err: unknown, fallback: string): { status: number; message: string } {
+  const rawMsg = err instanceof Error ? err.message : String(err || '');
+  const lower = rawMsg.toLowerCase();
+  if (lower.includes('503') || lower.includes('unavailable') || lower.includes('high demand')) {
+    return {
+      status: 503,
+      message: 'Layanan AI sedang padat sesaat. Silakan ketuk Analisa kembali dalam beberapa detik.',
+    };
+  }
+  if (lower.includes('429') || lower.includes('resource_exhausted') || lower.includes('quota')) {
+    return {
+      status: 429,
+      message: 'Batas permintaan AI sementara tercapai. Tunggu sebentar lalu coba lagi.',
+    };
+  }
+  if (lower.includes('unexpected token')) {
+    return {
+      status: 502,
+      message:
+        'Format pembacaan dokumen dari AI terganggu. Coba unggah foto lebih jelas atau kurangi jumlah file sekaligus.',
+    };
+  }
+  return {
+    status: 500,
+    message: rawMsg || fallback,
+  };
+}
+
 async function startServer() {
   const app = express();
 
@@ -154,7 +236,7 @@ ATURAN EKSTRAKSI PENTING:
         },
       });
 
-      const response = await ai.models.generateContent({
+      const response = await generateContentWithRetry(ai, {
         model: 'gemini-4-hydrogen',
         contents: [{ role: 'user', parts }],
         config: {
@@ -251,15 +333,13 @@ ATURAN EKSTRAKSI PENTING:
         res.status(502).json({ error: 'Respons AI kosong saat membaca dokumen.' });
         return;
       }
-      const parsed = JSON.parse(rawText);
+      const parsed = parseGeminiJsonObject<Record<string, unknown>>(rawText);
       res.json({ ok: true, draft: parsed });
     } catch (err) {
       console.error('[WargaQu SmartImport] Gemini error:', err);
-      res.status(500).json({
-        error:
-          err instanceof Error
-            ? `Gagal menganalisa dokumen: ${err.message}`
-            : 'Terjadi kesalahan saat menganalisa dokumen.',
+      const friendly = formatFriendlyGeminiError(err, 'Terjadi kesalahan saat menganalisa dokumen.');
+      res.status(friendly.status).json({
+        error: `Gagal menganalisa dokumen: ${friendly.message}`,
       });
     }
   });
@@ -303,23 +383,24 @@ Teks ucapan pengguna:
 "${transcript.slice(0, 4000)}"
 
 ATURAN EKSTRAKSI:
-1. Pecah setiap item pemasukan atau pengeluaran menjadi objek terpisah.
-   Contoh input: "gaji 5 juta masuk atm, belanja sayur 75rb, cicilan rumah 1,5 juta, jajan bocah 20rb, ongkos kerja 35rb, makan siang 40rb"
-2. Tentukan "type": "masuk" (gaji, bonus, komisi, dapat uang, jual, transfer masuk, dll) atau "keluar" (belanja, rumah, listrik, sewa, jajan bocah, ongkos kerja, bensin, parkir, makan, kopi, obat, dll).
+1. Pecah setiap item pemasukan atau pengeluaran menjadi objek terpisah (meskipun tanpa tanda koma, hanya dipisah spasi).
+   Contoh input 1: "masuk 100000 bensin 20000 makan 15000" -> [{type:"masuk", title:"Pemasukan", amount:100000}, {type:"keluar", title:"Bensin", amount:20000}, {type:"keluar", title:"Makan", amount:15000}]
+   Contoh input 2: "gaji 5 juta masuk atm, belanja sayur 75rb, cicilan rumah 1,5 juta, jajan bocah 20rb, ongkos kerja 35rb, makan siang 40rb"
+2. Tentukan "type": "masuk" (masuk, pemasukan, gaji, bonus, komisi, dapat uang, jual, transfer masuk, dll) atau "keluar" (belanja, bensin, makan, rumah, listrik, sewa, jajan bocah, ongkos kerja, parkir, kopi, obat, dll).
 3. Pilih "category" TEPAT SATU dari daftar berikut:
    - Pemasukan: "Gaji", "Bonus & Lembur", "Usaha & Sampingan", "Pemasukan Lainnya"
    - Pengeluaran: "Belanja Harian", "Rumah & Tagihan", "Jajan Bocah", "Ongkos Kerja", "Makan & Minum", "Kesehatan & Obat", "Keluarga & Sosial", "Pengeluaran Lainnya"
 4. Konversi angka bahasa Indonesia sehari-hari ke Rupiah integer murni:
    - "rb" / "ribu" = x1000 ("75rb" -> 75000, "dua puluh lima ribu" -> 25000)
    - "jt" / "juta" = x1000000 ("5jt" -> 5000000, "1,5 juta" / "satu setengah juta" -> 1500000)
-   - "setengah juta" -> 500000, "gocap" -> 50000, "ceban" -> 10000, "noban" -> 20000, "goban" -> 50000, "seceng" -> 1000, "cepek" -> 100000 (atau 100 jika konteks jelas, untuk belanja Indonesia biasanya 100000)
+   - "setengah juta" -> 500000, "gocap" -> 50000, "ceban" -> 10000, "noban" -> 20000, "goban" -> 50000, "seceng" -> 1000, "cepek" -> 100000
 5. Tentukan "walletId" yang paling cocok dari daftar kantong pengguna:
    - Jika disebut "atm", "bank", "rekening", "transfer", atau gaji bulanan tanpa keterangan -> pilih kantong jenis "bank".
    - Jika disebut "gopay", "ovo", "dana", "shopeepay", "qris", "ewallet" -> pilih kantong jenis "ewallet".
-   - Jika disebut "cash", "tunai", "dompet", "uang saku" atau pengeluaran kecil harian (jajan bocah, ongkos, parkir, warung) tanpa sebut rekening -> pilih kantong jenis "cash".
+   - Jika disebut "cash", "tunai", "dompet", "uang saku" atau pengeluaran kecil harian tanpa sebut rekening -> pilih kantong jenis "cash".
    - Jika ragu, gunakan id kantong pertama yang tersedia.
-6. "title": ringkas dan jelas (misal "Gaji Bulanan", "Belanja Harian", "Keperluan Rumah", "Jajan Bocah", "Ongkos Kerja", "Makan").
-7. Jangan mengarang transaksi yang tidak disebutkan. Jika nominal tidak disebut sama sekali pada satu item, isi amount = 0 agar pengguna mengisinya di tabel revisi.`;
+6. "title": ringkas dan persis seperti item yang diucapkan (misal "Pemasukan", "Bensin", "Makan", "Jajan Bocah", "Ongkos Kerja", "Belanja Sayur").
+7. Jangan mengarang transaksi yang tidak disebutkan. Jika nominal tidak disebut sama sekali pada satu item, isi amount = 0 agar pengguna mengisinya di struk edit.`;
 
     try {
       const ai = new GoogleGenAI({
@@ -331,7 +412,7 @@ ATURAN EKSTRAKSI:
         },
       });
 
-      const response = await ai.models.generateContent({
+      const response = await generateContentWithRetry(ai, {
         model: 'gemini-4-hydrogen',
         contents: prompt,
         config: {
@@ -365,15 +446,16 @@ ATURAN EKSTRAKSI:
         res.status(502).json({ error: 'Respons AI kosong saat memproses ucapan.' });
         return;
       }
-      const parsed = JSON.parse(rawText);
+      const parsed = parseGeminiJsonObject<{ items?: unknown[] }>(rawText);
       res.json({ ok: true, items: Array.isArray(parsed?.items) ? parsed.items : [] });
     } catch (err) {
       console.error('[WargaQu DompetQu ParseSpeech] Gemini error:', err);
-      res.status(500).json({
-        error:
-          err instanceof Error
-            ? `Gagal memproses suara: ${err.message}`
-            : 'Terjadi kesalahan saat memproses catatan suara.',
+      const friendly = formatFriendlyGeminiError(
+        err,
+        'Terjadi kesalahan saat memproses catatan suara.'
+      );
+      res.status(friendly.status).json({
+        error: `Gagal memproses suara: ${friendly.message}`,
       });
     }
   });
@@ -770,6 +852,44 @@ ATURAN EKSTRAKSI:
       activePresenceRamCount: volatilePresenceMap.size,
     });
   });
+
+  // Always return clean JSON errors for /api/* instead of Express HTML error pages
+  app.use(
+    '/api',
+    (
+      err: unknown,
+      _req: express.Request,
+      res: express.Response,
+      next: express.NextFunction
+    ) => {
+      if (!err) {
+        next();
+        return;
+      }
+      const e = err as {
+        status?: number;
+        statusCode?: number;
+        type?: string;
+        message?: string;
+      };
+      if (e.type === 'entity.too.large' || e.status === 413 || e.statusCode === 413) {
+        res.status(413).json({
+          error:
+            'Ukuran foto atau PDF terlalu besar dalam sekali kirim. Unggah 1–3 foto per proses atau kecilkan resolusi gambar.',
+        });
+        return;
+      }
+      if (err instanceof SyntaxError || e.type === 'entity.parse.failed') {
+        res.status(400).json({
+          error: 'Format paket dokumen tidak valid saat dikirim ke server.',
+        });
+        return;
+      }
+      res.status(e.status || e.statusCode || 500).json({
+        error: e.message || 'Terjadi kesalahan pada layanan server.',
+      });
+    }
+  );
 
   const isProd = process.env.NODE_ENV === 'production';
 

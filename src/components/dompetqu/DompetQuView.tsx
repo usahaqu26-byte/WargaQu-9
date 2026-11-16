@@ -50,6 +50,65 @@ const WALLET_KIND_LABEL: Record<DompetWalletKind, string> = {
   tabungan: 'Tabungan Khusus',
 };
 
+function formatDayHeaderLabel(ymd: string): string {
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const yest = new Date(now);
+  yest.setDate(now.getDate() - 1);
+  const yestStr = yest.toISOString().slice(0, 10);
+
+  const d = new Date(`${ymd}T00:00:00`);
+  const formatted = Number.isNaN(d.getTime())
+    ? ymd
+    : d.toLocaleDateString('id-ID', {
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      });
+
+  if (ymd === todayStr) return `Hari Ini · ${formatted}`;
+  if (ymd === yestStr) return `Kemarin · ${formatted}`;
+  return formatted;
+}
+
+interface DailyReceiptGroup {
+  date: string;
+  label: string;
+  income: number;
+  expense: number;
+  net: number;
+  items: DompetTransaction[];
+}
+
+function groupTransactionsByDay(list: DompetTransaction[]): DailyReceiptGroup[] {
+  const map = new Map<string, DompetTransaction[]>();
+  list.forEach(tx => {
+    const key = tx.date || 'Lainnya';
+    const arr = map.get(key) || [];
+    arr.push(tx);
+    map.set(key, arr);
+  });
+  return Array.from(map.entries())
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([date, items]) => {
+      let income = 0;
+      let expense = 0;
+      items.forEach(t => {
+        if (t.type === 'masuk') income += t.amount;
+        else if (t.type === 'keluar') expense += t.amount;
+      });
+      return {
+        date,
+        label: formatDayHeaderLabel(date),
+        income,
+        expense,
+        net: income - expense,
+        items,
+      };
+    });
+}
+
 export const DompetQuView: React.FC<DompetQuViewProps> = ({
   onBackToWarga,
   showNotification,
@@ -119,6 +178,15 @@ export const DompetQuView: React.FC<DompetQuViewProps> = ({
   const [newPinInput, setNewPinInput] = useState<string>('');
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
 
+  // Quick edit saved transaction modal
+  const [editingTx, setEditingTx] = useState<DompetTransaction | null>(null);
+  const [editTxDraft, setEditTxDraft] = useState<{
+    title: string;
+    amount: string;
+    type: 'masuk' | 'keluar';
+    date: string;
+  }>({ title: '', amount: '', type: 'keluar', date: '' });
+
   useEffect(() => {
     const sync = () => {
       setWallets(DompetQuStorage.getWallets());
@@ -183,6 +251,45 @@ export const DompetQuView: React.FC<DompetQuViewProps> = ({
       return true;
     });
   }, [transactions, searchQuery, filterWalletId, filterType, filterCategory]);
+
+  const recentDailyGroups = useMemo(
+    () => groupTransactionsByDay(transactions.slice(0, 20)).slice(0, 3),
+    [transactions]
+  );
+
+  const filteredDailyGroups = useMemo(
+    () => groupTransactionsByDay(filteredTransactions),
+    [filteredTransactions]
+  );
+
+  const openEditTxModal = (tx: DompetTransaction) => {
+    if (tx.type === 'transfer') return;
+    setEditingTx(tx);
+    setEditTxDraft({
+      title: tx.title,
+      amount: String(tx.amount),
+      type: tx.type,
+      date: tx.date,
+    });
+  };
+
+  const handleSaveEditedTx = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTx) return;
+    const amt = Math.max(0, Math.round(Number(editTxDraft.amount) || 0));
+    if (amt <= 0) {
+      showNotification('Nominal harus lebih dari 0.');
+      return;
+    }
+    DompetQuStorage.updateTransaction(editingTx.id, {
+      title: editTxDraft.title,
+      amount: amt,
+      type: editTxDraft.type,
+      date: editTxDraft.date,
+    });
+    setEditingTx(null);
+    showNotification('Catatan diperbarui & saldo disesuaikan.');
+  };
 
   const formatNominal = (val: number): string => {
     if (isBalanceHidden) return '••••••••';
@@ -526,10 +633,10 @@ export const DompetQuView: React.FC<DompetQuViewProps> = ({
               </div>
             </section>
 
-            {/* Recent 5 Transactions */}
+            {/* Recent Daily Receipt List */}
             <section className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
               <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-                <h2 className="text-xs font-extrabold text-slate-900">Catatan Terbaru</h2>
+                <h2 className="text-xs font-extrabold text-slate-900">Catatan Harian Terbaru</h2>
                 <button
                   type="button"
                   onClick={() => setActiveTab('mutasi')}
@@ -538,7 +645,7 @@ export const DompetQuView: React.FC<DompetQuViewProps> = ({
                   Lihat Semua
                 </button>
               </div>
-              {transactions.length === 0 ? (
+              {recentDailyGroups.length === 0 ? (
                 <div className="p-5 text-center space-y-2">
                   <p className="text-xs text-slate-500">
                     Belum ada catatan keuangan pribadi. Ketuk <strong>Catat Suara</strong> dan
@@ -546,33 +653,75 @@ export const DompetQuView: React.FC<DompetQuViewProps> = ({
                   </p>
                 </div>
               ) : (
-                <div className="divide-y divide-slate-100">
-                  {transactions.slice(0, 5).map(tx => {
-                    const wName = walletMap.get(tx.walletId)?.name || 'Dompet';
-                    return (
-                      <div key={tx.id} className="px-4 py-3 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-xs font-bold text-slate-900 truncate">{tx.title}</div>
-                          <div className="text-[11px] text-slate-500 truncate">
-                            {tx.date} · {tx.category} · {wName}
-                          </div>
-                        </div>
-                        <div
-                          className={`text-xs font-extrabold font-mono tabular-nums shrink-0 ${
-                            tx.type === 'masuk'
-                              ? 'text-emerald-700'
-                              : tx.type === 'keluar'
-                              ? 'text-rose-700'
-                              : 'text-slate-700'
+                <div className="divide-y divide-slate-200">
+                  {recentDailyGroups.map(group => (
+                    <div key={group.date}>
+                      <div className="px-4 py-2 bg-slate-50 border-b border-dashed border-slate-200 flex items-center justify-between gap-2 text-[11px]">
+                        <span className="font-bold text-slate-700">{group.label}</span>
+                        <span
+                          className={`font-mono tabular-nums font-extrabold ${
+                            group.net >= 0 ? 'text-emerald-700' : 'text-rose-700'
                           }`}
                         >
                           {isBalanceHidden
-                            ? '••••••'
-                            : `${tx.type === 'masuk' ? '+' : tx.type === 'keluar' ? '-' : ''}Rp ${tx.amount.toLocaleString('id-ID')}`}
-                        </div>
+                            ? 'Sisa ••••'
+                            : `Sisa ${group.net < 0 ? '-' : ''}Rp ${Math.abs(group.net).toLocaleString('id-ID')}`}
+                        </span>
                       </div>
-                    );
-                  })}
+                      <div className="divide-y divide-slate-100">
+                        {group.items.map(tx => {
+                          const wName = walletMap.get(tx.walletId)?.name || 'Dompet';
+                          const shortW = wName.includes('Cash')
+                            ? 'Cash'
+                            : wName.includes('ATM') || wName.includes('Bank')
+                            ? 'ATM'
+                            : wName.split(' ')[0];
+                          return (
+                            <div
+                              key={tx.id}
+                              onClick={() => openEditTxModal(tx)}
+                              className="px-4 py-2.5 flex items-center justify-between gap-3 hover:bg-slate-50 cursor-pointer"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span
+                                  className={`w-5 h-5 rounded-md font-mono font-black text-[11px] flex items-center justify-center shrink-0 ${
+                                    tx.type === 'masuk'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : tx.type === 'keluar'
+                                      ? 'bg-rose-100 text-rose-700'
+                                      : 'bg-slate-100 text-slate-600'
+                                  }`}
+                                >
+                                  {tx.type === 'masuk' ? '+' : tx.type === 'keluar' ? '-' : '⇄'}
+                                </span>
+                                <div className="min-w-0">
+                                  <div className="text-xs font-semibold text-slate-900 truncate">
+                                    {tx.title}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 truncate">
+                                    {tx.time} · {shortW}
+                                  </div>
+                                </div>
+                              </div>
+                              <div
+                                className={`text-xs font-extrabold font-mono tabular-nums shrink-0 ${
+                                  tx.type === 'masuk'
+                                    ? 'text-emerald-700'
+                                    : tx.type === 'keluar'
+                                    ? 'text-rose-700'
+                                    : 'text-slate-700'
+                                }`}
+                              >
+                                {isBalanceHidden
+                                  ? '••••••'
+                                  : `${tx.type === 'masuk' ? '+' : tx.type === 'keluar' ? '-' : ''}Rp ${tx.amount.toLocaleString('id-ID')}`}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </section>
@@ -648,52 +797,144 @@ export const DompetQuView: React.FC<DompetQuViewProps> = ({
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100">
-              {filteredTransactions.length === 0 ? (
-                <div className="p-6 text-center text-xs text-slate-500">
+            <div className="space-y-3">
+              {filteredDailyGroups.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center text-xs text-slate-500">
                   Tidak ada catatan yang cocok dengan filter.
                 </div>
               ) : (
-                filteredTransactions.map(tx => {
-                  const wName = walletMap.get(tx.walletId)?.name || 'Dompet';
-                  return (
-                    <div key={tx.id} className="px-4 py-3 flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-xs font-bold text-slate-900">{tx.title}</div>
-                        <div className="text-[11px] text-slate-500 mt-0.5">
-                          {tx.date} {tx.time} · {tx.category} · {wName}
-                        </div>
-                        {tx.note && tx.note !== tx.title && (
-                          <div className="text-[10px] text-slate-400 mt-0.5 truncate">
-                            {tx.note}
+                filteredDailyGroups.map(group => {
+                  const masukList = group.items.filter(t => t.type === 'masuk');
+                  const keluarList = group.items.filter(t => t.type === 'keluar');
+                  const transferList = group.items.filter(t => t.type === 'transfer');
+
+                  const renderLedgerLine = (tx: DompetTransaction) => {
+                    const wName = walletMap.get(tx.walletId)?.name || 'Dompet';
+                    const shortW = wName.includes('Cash')
+                      ? 'Cash'
+                      : wName.includes('ATM') || wName.includes('Bank')
+                      ? 'ATM'
+                      : wName.split(' ')[0];
+                    return (
+                      <div
+                        key={tx.id}
+                        className="px-4 py-2.5 flex items-center justify-between gap-2 border-b border-slate-100 last:border-b-0"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => openEditTxModal(tx)}
+                          className="flex-1 min-w-0 text-left flex items-center gap-2"
+                        >
+                          <span
+                            className={`w-5 h-5 rounded-md font-mono font-black text-[11px] flex items-center justify-center shrink-0 ${
+                              tx.type === 'masuk'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : tx.type === 'keluar'
+                                ? 'bg-rose-100 text-rose-700'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {tx.type === 'masuk' ? '+' : tx.type === 'keluar' ? '-' : '⇄'}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold text-slate-900 truncate">
+                              {tx.title}
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">
+                              {tx.time} · {shortW}
+                            </div>
                           </div>
-                        )}
+                        </button>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span
+                            onClick={() => openEditTxModal(tx)}
+                            className={`text-xs font-extrabold font-mono tabular-nums cursor-pointer ${
+                              tx.type === 'masuk'
+                                ? 'text-emerald-700'
+                                : tx.type === 'keluar'
+                                ? 'text-rose-700'
+                                : 'text-slate-700'
+                            }`}
+                          >
+                            {isBalanceHidden
+                              ? '••••••'
+                              : `${tx.type === 'masuk' ? '+' : tx.type === 'keluar' ? '-' : ''}Rp ${tx.amount.toLocaleString('id-ID')}`}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              DompetQuStorage.deleteTransaction(tx.id);
+                              showNotification('Catatan dihapus & saldo kantong disesuaikan.');
+                            }}
+                            className="p-1.5 text-slate-300 hover:text-rose-600 rounded-lg"
+                            title="Hapus catatan"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
+                    );
+                  };
+
+                  return (
+                    <div
+                      key={group.date}
+                      className="bg-white rounded-2xl border border-slate-200 overflow-hidden"
+                    >
+                      {/* Daily Header */}
+                      <div className="px-4 py-2.5 bg-slate-50 border-b border-dashed border-slate-300 flex items-center justify-between gap-2 text-[11px]">
+                        <span className="font-extrabold text-slate-800">{group.label}</span>
+                        <span className="font-mono tabular-nums text-slate-600">
+                          {group.items.length} item
+                        </span>
+                      </div>
+
+                      {/* Auto-separated Masuk & Keluar inside Day Receipt */}
+                      {masukList.length > 0 && (
+                        <div>
+                          <div className="px-4 pt-2 pb-1 text-[10px] font-extrabold uppercase tracking-wider text-emerald-700">
+                            Pemasukan
+                          </div>
+                          {masukList.map(renderLedgerLine)}
+                        </div>
+                      )}
+                      {keluarList.length > 0 && (
+                        <div>
+                          <div className="px-4 pt-2 pb-1 text-[10px] font-extrabold uppercase tracking-wider text-rose-700">
+                            Pengeluaran
+                          </div>
+                          {keluarList.map(renderLedgerLine)}
+                        </div>
+                      )}
+                      {transferList.length > 0 && (
+                        <div>
+                          <div className="px-4 pt-2 pb-1 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                            Pindah Kantong
+                          </div>
+                          {transferList.map(renderLedgerLine)}
+                        </div>
+                      )}
+
+                      {/* Daily Total / Remainder Receipt Footer */}
+                      <div className="px-4 py-2.5 bg-slate-50 border-t border-dashed border-slate-300 flex items-center justify-between text-[11px] font-mono tabular-nums">
+                        <div className="flex items-center gap-3">
+                          <span className="text-emerald-700 font-bold">
+                            {isBalanceHidden ? '+••••' : `+Rp ${group.income.toLocaleString('id-ID')}`}
+                          </span>
+                          <span className="text-rose-700 font-bold">
+                            {isBalanceHidden ? '-••••' : `-Rp ${group.expense.toLocaleString('id-ID')}`}
+                          </span>
+                        </div>
                         <span
-                          className={`text-xs font-extrabold font-mono tabular-nums ${
-                            tx.type === 'masuk'
-                              ? 'text-emerald-700'
-                              : tx.type === 'keluar'
-                              ? 'text-rose-700'
-                              : 'text-slate-700'
+                          className={`font-extrabold ${
+                            group.net >= 0 ? 'text-emerald-800' : 'text-rose-700'
                           }`}
                         >
                           {isBalanceHidden
-                            ? '••••••'
-                            : `${tx.type === 'masuk' ? '+' : tx.type === 'keluar' ? '-' : ''}Rp ${tx.amount.toLocaleString('id-ID')}`}
+                            ? 'Sisa ••••'
+                            : `Sisa ${group.net < 0 ? '-' : ''}Rp ${Math.abs(group.net).toLocaleString('id-ID')}`}
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            DompetQuStorage.deleteTransaction(tx.id);
-                            showNotification('Catatan dihapus & saldo kantong disesuaikan.');
-                          }}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg"
-                          title="Hapus catatan"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
                       </div>
                     </div>
                   );
@@ -1142,6 +1383,87 @@ export const DompetQuView: React.FC<DompetQuViewProps> = ({
               className="w-full min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold"
             >
               Simpan Kantong
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* Modal: Quick Edit Saved Transaction */}
+      {editingTx && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <form
+            onSubmit={handleSaveEditedTx}
+            className="bg-white w-full sm:max-w-sm rounded-t-3xl sm:rounded-2xl p-4 space-y-3 border border-slate-200 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-extrabold text-slate-900">Edit Catatan</h3>
+              <button
+                type="button"
+                onClick={() => setEditingTx(null)}
+                className="p-1 text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-2.5 text-xs">
+              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 font-bold">
+                <button
+                  type="button"
+                  onClick={() => setEditTxDraft(prev => ({ ...prev, type: 'masuk' }))}
+                  className={`px-3 py-1.5 rounded-md ${
+                    editTxDraft.type === 'masuk' ? 'bg-emerald-700 text-white' : 'text-slate-600'
+                  }`}
+                >
+                  Pemasukan (+)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditTxDraft(prev => ({ ...prev, type: 'keluar' }))}
+                  className={`px-3 py-1.5 rounded-md ${
+                    editTxDraft.type === 'keluar' ? 'bg-rose-600 text-white' : 'text-slate-600'
+                  }`}
+                >
+                  Pengeluaran (-)
+                </button>
+              </div>
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Keterangan</label>
+                <input
+                  type="text"
+                  required
+                  value={editTxDraft.title}
+                  onChange={e => setEditTxDraft(prev => ({ ...prev, title: e.target.value }))}
+                  className="w-full min-h-[40px] border border-slate-300 rounded-xl px-3"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Nominal (Rp)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    required
+                    value={editTxDraft.amount}
+                    onChange={e => setEditTxDraft(prev => ({ ...prev, amount: e.target.value }))}
+                    className="w-full min-h-[40px] border border-slate-300 rounded-xl px-3 font-mono tabular-nums"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Tanggal</label>
+                  <input
+                    type="date"
+                    value={editTxDraft.date}
+                    onChange={e => setEditTxDraft(prev => ({ ...prev, date: e.target.value }))}
+                    className="w-full min-h-[40px] border border-slate-300 rounded-xl px-2 font-mono"
+                  />
+                </div>
+              </div>
+            </div>
+            <button
+              type="submit"
+              className="w-full min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold"
+            >
+              Simpan Perubahan
             </button>
           </form>
         </div>
