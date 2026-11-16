@@ -8,11 +8,13 @@ import {
   UserCheck,
   Archive,
   RefreshCw,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   CommunityInvitation,
   InvitationEventType,
   PaguyubanProfile,
+  RtOfficerAccount,
   RtSiagaStorage,
   WargaMember,
 } from '../../services/rtSiagaStorage';
@@ -60,8 +62,12 @@ export const RtExcelAndClaimSheet: React.FC<RtExcelAndClaimSheetProps> = ({
   const [isParsing, setIsParsing] = useState<boolean>(false);
 
   // --- Claim Profile State ---
+  const [claimTab, setClaimTab] = useState<'warga' | 'pengurus'>('warga');
   const [claimCode, setClaimCode] = useState<string>('');
   const [phoneLast4, setPhoneLast4] = useState<string>('');
+  const [selectedOfficerTarget, setSelectedOfficerTarget] = useState<string>('');
+  const [officerVerifyInput, setOfficerVerifyInput] = useState<string>('');
+  const officersList: RtOfficerAccount[] = RtSiagaStorage.getOfficers();
 
   // --- Create Invitation State ---
   const [invForm, setInvForm] = useState<{
@@ -138,6 +144,19 @@ export const RtExcelAndClaimSheet: React.FC<RtExcelAndClaimSheetProps> = ({
   const handleClaimSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const res = RtSiagaStorage.claimMemberProfile(claimCode, phoneLast4);
+    showNotification(res.message);
+    if (res.ok) {
+      onClose();
+    }
+  };
+
+  const handleClaimOfficerSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedOfficerTarget) {
+      showNotification('Pilih nama/jabatan pengurus atau masukkan Kode Klaim Pengurus.');
+      return;
+    }
+    const res = RtSiagaStorage.claimOfficerAccount(selectedOfficerTarget, officerVerifyInput);
     showNotification(res.message);
     if (res.ok) {
       onClose();
@@ -363,95 +382,207 @@ export const RtExcelAndClaimSheet: React.FC<RtExcelAndClaimSheetProps> = ({
   if (sheetType === 'klaim_profil') {
     return (
       <div className="space-y-4 text-xs">
-        <p className="text-[11px] text-slate-600 leading-relaxed">
-          Jika nama Anda sudah didaftarkan pengurus dari Excel, masukkan{' '}
-          <strong>Kode Klaim</strong> dari pesan WhatsApp pengurus dan{' '}
-          <strong>4 digit terakhir No HP</strong> Anda untuk menghubungkan kartu iuran & akses{' '}
-          {brandTitle}.
-        </p>
-
-        <form onSubmit={handleClaimSubmit} className="space-y-3">
-          <div>
-            <label className="font-bold text-slate-700 block mb-1">Kode Klaim Undangan</label>
-            <input
-              type="text"
-              required
-              value={claimCode}
-              onChange={e => setClaimCode(e.target.value.toUpperCase())}
-              placeholder="Contoh: RT03-B09-5588"
-              className="w-full min-h-[42px] border border-slate-300 rounded-lg px-3 font-mono uppercase tracking-wider"
-            />
-          </div>
-          <div>
-            <label className="font-bold text-slate-700 block mb-1">
-              Verifikasi 4 Digit Terakhir No HP
-            </label>
-            <input
-              type="text"
-              maxLength={4}
-              required
-              value={phoneLast4}
-              onChange={e => setPhoneLast4(e.target.value.replace(/\D/g, ''))}
-              placeholder="Contoh: 5588"
-              className="w-full min-h-[42px] border border-slate-300 rounded-lg px-3 font-mono tracking-widest"
-            />
-          </div>
+        <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-100 border border-slate-200">
           <button
-            type="submit"
-            className="w-full min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold flex items-center justify-center gap-1.5"
+            type="button"
+            onClick={() => setClaimTab('warga')}
+            className={`min-h-[36px] rounded-lg font-extrabold text-[11px] flex items-center justify-center gap-1.5 transition ${
+              claimTab === 'warga'
+                ? 'bg-white text-emerald-800 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
           >
-            <KeyRound className="w-4 h-4" />
-            <span>Klaim & Hubungkan Profil Saya</span>
+            <UserCheck className="w-3.5 h-3.5" />
+            <span>Klaim Profil Warga</span>
           </button>
-        </form>
-
-        <div className="border-t border-slate-200 pt-3 space-y-2">
-          <div className="text-[11px] font-bold text-slate-500 uppercase">
-            Simulasi Uji Klaim / Ganti Warga Aktif
-          </div>
-          <div className="divide-y divide-slate-200 border-y border-slate-200">
-            {members.map(m => {
-              const last4 = m.phone.replace(/\D/g, '').slice(-4) || '0000';
-              return (
-                <div key={m.id} className="py-2.5 flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="font-bold text-slate-900 truncate">
-                      {m.name} {m.isCurrentUser ? '(Aktif Sekarang)' : ''}
-                    </div>
-                    <div className="text-[11px] text-slate-500 font-mono">
-                      {m.block} · Kode: {m.claimCode} · HP: ••••{last4}
-                    </div>
-                  </div>
-                  {m.claimStatus !== 'claimed' ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setClaimCode(m.claimCode || '');
-                        setPhoneLast4(last4);
-                      }}
-                      className="px-2.5 py-1.5 border border-emerald-700 text-emerald-700 rounded-lg text-[11px] font-bold shrink-0"
-                    >
-                      Isi Kode
-                    </button>
-                  ) : !m.isCurrentUser ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        RtSiagaStorage.switchCurrentUser(m.id);
-                        showNotification(`Beralih ke akun ${m.name} (${m.block}).`);
-                        onClose();
-                      }}
-                      className="px-2.5 py-1.5 border border-slate-300 text-slate-700 rounded-lg text-[11px] font-semibold shrink-0 flex items-center gap-1"
-                    >
-                      <UserCheck className="w-3 h-3" />
-                      <span>Pakai</span>
-                    </button>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
+          <button
+            type="button"
+            onClick={() => setClaimTab('pengurus')}
+            className={`min-h-[36px] rounded-lg font-extrabold text-[11px] flex items-center justify-center gap-1.5 transition ${
+              claimTab === 'pengurus'
+                ? 'bg-white text-emerald-800 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>Klaim Akun Pengurus ({officersList.length})</span>
+          </button>
         </div>
+
+        {claimTab === 'warga' ? (
+          <>
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              Jika nama Anda sudah terdaftar dari hasil Smart Import / Excel, masukkan{' '}
+              <strong>Kode Klaim</strong> (atau pilih nama Anda di bawah) beserta{' '}
+              <strong>4 digit terakhir No HP</strong> untuk menghubungkan kartu iuran &amp; akses{' '}
+              {brandTitle}.
+            </p>
+
+            <form onSubmit={handleClaimSubmit} className="space-y-3">
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Kode Klaim Undangan</label>
+                <input
+                  type="text"
+                  required
+                  value={claimCode}
+                  onChange={e => setClaimCode(e.target.value.toUpperCase())}
+                  placeholder="Contoh: RT03-B09-5588"
+                  className="w-full min-h-[42px] border border-slate-300 rounded-lg px-3 font-mono uppercase tracking-wider"
+                />
+              </div>
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Verifikasi 4 Digit Terakhir No HP
+                </label>
+                <input
+                  type="text"
+                  maxLength={4}
+                  required
+                  value={phoneLast4}
+                  onChange={e => setPhoneLast4(e.target.value.replace(/\D/g, ''))}
+                  placeholder="Contoh: 5588"
+                  className="w-full min-h-[42px] border border-slate-300 rounded-lg px-3 font-mono tracking-widest"
+                />
+              </div>
+              <button
+                type="submit"
+                className="w-full min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold flex items-center justify-center gap-1.5"
+              >
+                <KeyRound className="w-4 h-4" />
+                <span>Klaim &amp; Hubungkan Profil Saya</span>
+              </button>
+            </form>
+
+            <div className="border-t border-slate-200 pt-3 space-y-2">
+              <div className="text-[11px] font-bold text-slate-500 uppercase">
+                Daftar Warga Pra-Terdaftar / Ganti Akun
+              </div>
+              <div className="divide-y divide-slate-200 border-y border-slate-200 max-h-56 overflow-y-auto">
+                {members.map(m => {
+                  const last4 = m.phone.replace(/\D/g, '').slice(-4) || '0000';
+                  return (
+                    <div key={m.id} className="py-2.5 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-900 truncate">
+                          {m.name} {m.isCurrentUser ? '(Aktif Sekarang)' : ''}
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-mono">
+                          {m.block} · Kode: {m.claimCode} · HP: ••••{last4}
+                        </div>
+                      </div>
+                      {m.claimStatus !== 'claimed' ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setClaimCode(m.claimCode || '');
+                            setPhoneLast4(last4);
+                          }}
+                          className="px-2.5 py-1.5 border border-emerald-700 text-emerald-700 rounded-lg text-[11px] font-bold shrink-0"
+                        >
+                          Isi Kode
+                        </button>
+                      ) : !m.isCurrentUser ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            RtSiagaStorage.switchCurrentUser(m.id);
+                            showNotification(`Beralih ke akun ${m.name} (${m.block}).`);
+                            onClose();
+                          }}
+                          className="px-2.5 py-1.5 border border-slate-300 text-slate-700 rounded-lg text-[11px] font-semibold shrink-0 flex items-center gap-1"
+                        >
+                          <UserCheck className="w-3 h-3" />
+                          <span>Pakai</span>
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              Nama Anda sudah tercatat di struktur pengurus dari dokumen yang diimpor? Pilih nama &amp; jabatan Anda di bawah lalu verifikasi dengan{' '}
+              <strong>4 digit terakhir No HP</strong> atau <strong>PIN Pengurus</strong> untuk langsung mengambil alih otoritas akun pengurus.
+            </p>
+
+            {officersList.length === 0 ? (
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-500">
+                Belum ada daftar pengurus terdata pada komunitas ini.
+              </div>
+            ) : (
+              <form onSubmit={handleClaimOfficerSubmit} className="space-y-3">
+                <div className="divide-y divide-slate-200 border border-slate-200 rounded-xl overflow-hidden">
+                  {officersList.map(off => {
+                    const isPicked =
+                      selectedOfficerTarget === off.id ||
+                      (off.claimCode && selectedOfficerTarget === off.claimCode);
+                    const isClaimed = off.claimStatus === 'claimed';
+                    return (
+                      <button
+                        key={off.id}
+                        type="button"
+                        onClick={() => setSelectedOfficerTarget(off.id)}
+                        className={`w-full px-3 py-2.5 text-left flex items-center justify-between gap-2 transition ${
+                          isPicked ? 'bg-emerald-50' : 'bg-white hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-extrabold text-emerald-700">
+                            {off.role}
+                            {off.division ? ` · ${off.division}` : ''}
+                          </div>
+                          <div className="text-xs font-bold text-slate-900 truncate">
+                            {off.name}
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            {off.claimCode ? `Kode: ${off.claimCode} · ` : ''}
+                            {off.phone && off.phone !== '-' ? `HP: ${off.phone}` : 'Verifikasi PIN'}
+                          </div>
+                        </div>
+                        <span
+                          className={`text-[10px] font-extrabold px-2 py-0.5 rounded shrink-0 ${
+                            isPicked
+                              ? 'bg-emerald-700 text-white'
+                              : isClaimed
+                              ? 'bg-slate-100 text-slate-600'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {isPicked ? 'Dipilih' : isClaimed ? 'Terklaim' : 'Siap Klaim'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">
+                    Verifikasi (4 Digit Terakhir No HP atau PIN Pengurus)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={officerVerifyInput}
+                    onChange={e => setOfficerVerifyInput(e.target.value)}
+                    placeholder="Contoh: 1122 atau PIN 1234"
+                    className="w-full min-h-[42px] border border-slate-300 rounded-lg px-3 font-mono"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold flex items-center justify-center gap-1.5"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>Klaim Akun Pengurus Ini</span>
+                </button>
+              </form>
+            )}
+          </>
+        )}
       </div>
     );
   }

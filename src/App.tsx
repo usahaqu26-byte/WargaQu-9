@@ -10,6 +10,7 @@ import { MuamalahQuView } from './components/muamalahqu/MuamalahQuView';
 import { AreaQuView } from './components/areaqu/AreaQuView';
 import { BantuanView } from './components/bantuan/BantuanView';
 import { LeluhurQuView } from './components/leluhurqu/LeluhurQuView';
+import { DompetQuView } from './components/dompetqu/DompetQuView';
 import { LoginModal } from './components/auth/LoginModal';
 import { AccountView } from './components/auth/AccountView';
 import { AdminZeroTrustView } from './components/admin/AdminZeroTrustView';
@@ -46,7 +47,7 @@ import {
 import { FirebaseSyncService } from './services/firebaseSyncService';
 import { AutoBackupService } from './services/autoBackupService';
 
-type AppScreen = 'warga' | 'akun' | 'admin_zero_trust' | 'leluhurqu' | 'rtqu' | 'siagaqu' | 'chatqu' | 'muamalahqu' | 'areaqu' | 'usahaqu' | 'modularqu' | 'bantuan' | 'empty_module';
+type AppScreen = 'warga' | 'dompetqu' | 'akun' | 'admin_zero_trust' | 'leluhurqu' | 'rtqu' | 'siagaqu' | 'chatqu' | 'muamalahqu' | 'areaqu' | 'usahaqu' | 'modularqu' | 'bantuan' | 'empty_module';
 
 export default function App() {
   // Screen Navigation State
@@ -352,6 +353,7 @@ export default function App() {
     }
 
     const screenToGuideMap: Partial<Record<AppScreen, GuideModuleId>> = {
+      dompetqu: 'dompetqu',
       leluhurqu: 'leluhurqu',
       rtqu: 'rtqu',
       areaqu: 'areaqu',
@@ -436,6 +438,11 @@ export default function App() {
     };
   }, []);
 
+  const handleOpenDompetQu = () => {
+    setCurrentScreen('dompetqu');
+    window.history.pushState({ screen: 'dompetqu' }, '', '#dompetqu');
+  };
+
   const handleOpenLeluhurQu = () => {
     setCurrentScreen('leluhurqu');
     window.history.pushState({ screen: 'leluhurqu' }, '', '#leluhurqu');
@@ -511,6 +518,10 @@ export default function App() {
     }
     if (moduleId === 'admin_zero_trust') {
       handleOpenAdminZeroTrust();
+      return;
+    }
+    if (moduleId === 'dompetqu') {
+      handleOpenDompetQu();
       return;
     }
     if (moduleId === 'leluhurqu') {
@@ -609,6 +620,7 @@ export default function App() {
       {/* Screen 1: WargaQu Mobile App Dashboard */}
       {currentScreen === 'warga' && (
         <WargaDashboard
+          onOpenDompetQu={handleOpenDompetQu}
           onOpenLeluhurQu={handleOpenLeluhurQu}
           onOpenRtQu={handleOpenRtQu}
           onOpenSiagaQu={handleOpenSiagaQu}
@@ -621,6 +633,14 @@ export default function App() {
           onOpenEmptyModule={handleOpenEmptyModule}
           onOpenLogin={handleOpenLogin}
           activeOrderCount={activeOrderCount}
+        />
+      )}
+
+      {/* Screen DompetQu: Keuangan Pribadi Terisolasi */}
+      {currentScreen === 'dompetqu' && (
+        <DompetQuView
+          onBackToWarga={handleBackToWarga}
+          showNotification={showNotification}
         />
       )}
 

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
+import { GoogleGenAI, Type } from '@google/genai';
 
 /**
  * Stateless Pass-Through Real-Time Relay Server (Port 3000)
@@ -39,6 +40,344 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
+
+  // Stateless Gemini Multimodal Smart Import for RTQu / PaguyubanQu / Komunitas
+  // Registered BEFORE global 256kb parser so multi-photo/PDF base64 payloads work cleanly.
+  app.post('/api/rtqu/smart-import', express.json({ limit: '25mb' }), async (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({
+        error: 'Layanan Smart Import AI belum dikonfigurasi (GEMINI_API_KEY tidak tersedia di server).',
+      });
+      return;
+    }
+
+    const body = req.body as {
+      files?: Array<{ name?: string; mimeType?: string; base64?: string }>;
+      textTables?: Array<{ fileName?: string; sheetName?: string; csvText?: string }>;
+      orgTypeHint?: string;
+      yearHint?: number;
+    };
+
+    const incomingFiles = Array.isArray(body?.files) ? body.files.slice(0, 12) : [];
+    const textTables = Array.isArray(body?.textTables) ? body.textTables.slice(0, 12) : [];
+
+    if (incomingFiles.length === 0 && textTables.length === 0) {
+      res.status(400).json({ error: 'Unggah minimal 1 file (Excel, Foto/Screenshot, atau PDF).' });
+      return;
+    }
+
+    const allowedMime = (m: string) =>
+      m.startsWith('image/') || m === 'application/pdf' || m === 'text/plain' || m === 'text/csv';
+
+    const parts: Array<
+      | { text: string }
+      | { inlineData: { mimeType: string; data: string } }
+    > = [];
+
+    const orgHintText = body?.orgTypeHint ? `Petunjuk kategori awal dari pengguna: "${body.orgTypeHint}".` : '';
+    const yearHintNumber =
+      typeof body?.yearHint === 'number' && body.yearHint >= 2020 && body.yearHint <= 2035
+        ? body.yearHint
+        : new Date().getFullYear();
+
+    const promptText = `Anda adalah asisten ekstraksi data administrasi komunitas warga Indonesia (RT, RW, Paguyuban Cluster/Perumahan, Organisasi, atau Sosial/DKM).
+Tugas Anda: membaca seluruh gambar/foto/screenshot/PDF/tabel Excel yang diunggah lalu mengekstraknya menjadi data terstruktur lengkap agar siap ditinjau dalam tabel Excel.
+
+${orgHintText}
+Tahun acuan default jika tidak tertulis jelas: ${yearHintNumber}.
+
+ATURAN EKSTRAKSI PENTING:
+1. PROFIL KOMUNITAS:
+   - Deteksi nama paguyuban / RT / RW / komunitas (contoh: "RT 03 / RW 05", "Paguyuban Cluster Harmoni", "DKM Al-Ikhlas").
+   - Tentukan orgType paling sesuai: "RT", "Paguyuban", "Organisasi", atau "Sosial".
+   - Deteksi areaName (kelurahan/perumahan/wilayah), nominal iuran bulanan default (monthlyDuesAmount dalam Rupiah integer, 0 jika tidak ditemukan/sukarela), tahun buku (year), dan openingBalance (saldo awal / saldo akhir pindahan jika tertulis).
+2. PENGURUS:
+   - Ekstrak semua nama pengurus beserta jabatannya (Ketua RT, Wakil Ketua, Sekretaris, Bendahara, Keamanan, Kebersihan, Koordinator, dll) ke array officers.
+   - Isi division yang relevan (misal: "Pimpinan & Pengesahan", "Administrasi & Surat Warga", "Iuran & Transparansi Kas", "Keamanan & SiagaQu").
+   - Sertakan phone / email bila tertera.
+3. DAFTAR WARGA & STATUS IURAN:
+   - Ekstrak daftar nama warga/KK/anggota ke array members.
+   - Sertakan block (blok/no rumah/unit/alamat singkat), phone, residentType ("Tetap" atau "Kontrak").
+   - Jika ada tanda centang (v/✓/Lunas/nominal) per bulan (Jan=1 .. Des=12), isi paidMonths sebagai array angka bulan 1..12 yang sudah dibayar, dan paidMonthsCount sebagai jumlah bulan lunas (0..12). Jika hanya ada jumlah bulan lunas (misal "Lunas 8 bln"), isi paidMonthsCount=8 dan paidMonths=[1..8].
+   - Sertakan priorArrears (nominal tunggakan Rp jika ada) dan priorArrearsNote.
+4. PEMASUKAN & PENGELUARAN KAS:
+   - Ekstrak seluruh mutasi pemasukan dan pengeluaran kas yang terlihat (misal: iuran terkumpul, sumbangan, gaji satpam/keamanan, petugas sampah, listrik pos, perbaikan lampu/jalan, konsumsi rapat, dll).
+   - Untuk setiap transaksi tentukan:
+     - date: tanggal ringkas (misal "05 Okt 2026" atau sesuai catatan)
+     - type: "masuk" atau "keluar"
+     - category: pilih TEPAT SATU dari: "Iuran Warga" | "Donasi / Kas" | "Gaji Keamanan" | "Petugas Sampah" | "Listrik & Pos Ronda" | "Perbaikan Fasilitas"
+     - title: keterangan jelas transaksi
+     - amount: nominal Rupiah integer positif (>0)
+     - recordedBy: nama pencatat/bendahara jika tertera, atau "Impor Dokumen"
+5. ARSIP TAHUNAN (opsional):
+   - Jika dokumen memuat rekap tahun-tahun sebelumnya (misal rekap total tahun 2023/2024/2025), masukkan ringkasannya ke archives.
+6. JANGAN mengarang data warga atau transaksi fiktif yang tidak ada di dokumen. Jika suatu kolom tidak tercantum (misal nomor HP), isi string kosong "" atau "-" sesuai tipe. Nominal Rupiah tulis angka integer murni tanpa titik/koma.`;
+
+    parts.push({ text: promptText });
+
+    for (const f of incomingFiles) {
+      const mimeType = typeof f.mimeType === 'string' ? f.mimeType.trim() : '';
+      const rawB64 = typeof f.base64 === 'string' ? f.base64.trim() : '';
+      if (!mimeType || !rawB64 || !allowedMime(mimeType)) continue;
+      const cleanB64 = rawB64.includes('base64,') ? rawB64.split('base64,')[1] || '' : rawB64;
+      if (!cleanB64) continue;
+      parts.push({ text: `Dokumen terlampir: ${f.name || 'lampiran'}` });
+      parts.push({
+        inlineData: {
+          mimeType,
+          data: cleanB64,
+        },
+      });
+    }
+
+    for (const tbl of textTables) {
+      if (typeof tbl?.csvText === 'string' && tbl.csvText.trim()) {
+        parts.push({
+          text: `Tabel Excel (${tbl.fileName || 'excel.xlsx'} - Sheet "${tbl.sheetName || 'Sheet1'}"):\n${tbl.csvText.slice(0, 35000)}`,
+        });
+      }
+    }
+
+    if (parts.length <= 1) {
+      res.status(400).json({ error: 'Tidak ada isi dokumen valid untuk diproses.' });
+      return;
+    }
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: [{ role: 'user', parts }],
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              profile: {
+                type: Type.OBJECT,
+                properties: {
+                  orgType: { type: Type.STRING },
+                  customBrandName: { type: Type.STRING },
+                  orgName: { type: Type.STRING },
+                  areaName: { type: Type.STRING },
+                  monthlyDuesAmount: { type: Type.INTEGER },
+                  year: { type: Type.INTEGER },
+                  openingBalance: { type: Type.INTEGER },
+                  openingBalanceNote: { type: Type.STRING },
+                },
+                required: ['orgType', 'orgName', 'areaName', 'monthlyDuesAmount', 'year'],
+              },
+              officers: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    role: { type: Type.STRING },
+                    division: { type: Type.STRING },
+                    phone: { type: Type.STRING },
+                    email: { type: Type.STRING },
+                  },
+                  required: ['name', 'role'],
+                },
+              },
+              members: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    block: { type: Type.STRING },
+                    phone: { type: Type.STRING },
+                    residentType: { type: Type.STRING },
+                    paidMonthsCount: { type: Type.INTEGER },
+                    paidMonths: {
+                      type: Type.ARRAY,
+                      items: { type: Type.INTEGER },
+                    },
+                    priorArrears: { type: Type.INTEGER },
+                    priorArrearsNote: { type: Type.STRING },
+                  },
+                  required: ['name'],
+                },
+              },
+              transactions: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    date: { type: Type.STRING },
+                    type: { type: Type.STRING },
+                    category: { type: Type.STRING },
+                    title: { type: Type.STRING },
+                    amount: { type: Type.INTEGER },
+                    recordedBy: { type: Type.STRING },
+                  },
+                  required: ['type', 'category', 'title', 'amount'],
+                },
+              },
+              archives: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    year: { type: Type.INTEGER },
+                    totalIncome: { type: Type.INTEGER },
+                    totalExpense: { type: Type.INTEGER },
+                    endingBalance: { type: Type.INTEGER },
+                    note: { type: Type.STRING },
+                  },
+                  required: ['year', 'endingBalance'],
+                },
+              },
+              summaryNotes: { type: Type.STRING },
+            },
+            required: ['profile', 'officers', 'members', 'transactions'],
+          },
+        },
+      });
+
+      const rawText = response.text;
+      if (!rawText) {
+        res.status(502).json({ error: 'Respons AI kosong saat membaca dokumen.' });
+        return;
+      }
+      const parsed = JSON.parse(rawText);
+      res.json({ ok: true, draft: parsed });
+    } catch (err) {
+      console.error('[WargaQu SmartImport] Gemini error:', err);
+      res.status(500).json({
+        error:
+          err instanceof Error
+            ? `Gagal menganalisa dokumen: ${err.message}`
+            : 'Terjadi kesalahan saat menganalisa dokumen.',
+      });
+    }
+  });
+
+  // Stateless Gemini Natural-Language / Speech-to-Text Parser for DompetQu
+  app.post('/api/dompetqu/parse-speech', express.json({ limit: '1mb' }), async (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({
+        error: 'Layanan Smart Voice DompetQu belum dikonfigurasi (GEMINI_API_KEY tidak tersedia).',
+      });
+      return;
+    }
+
+    const body = req.body as {
+      transcript?: string;
+      wallets?: Array<{ id?: string; name?: string; kind?: string }>;
+    };
+
+    const transcript = typeof body?.transcript === 'string' ? body.transcript.trim() : '';
+    if (!transcript || transcript.length < 3) {
+      res.status(400).json({ error: 'Teks atau hasil rekaman suara masih kosong.' });
+      return;
+    }
+
+    const walletList = Array.isArray(body?.wallets) ? body.wallets.slice(0, 12) : [];
+    const walletContext =
+      walletList.length > 0
+        ? walletList
+            .map(w => `- id="${w.id || ''}" nama="${w.name || ''}" jenis="${w.kind || 'cash'}"`)
+            .join('\n')
+        : `- id="cash" nama="Dompet Cash" jenis="cash"\n- id="bank" nama="Tabungan ATM / Bank" jenis="bank"\n- id="ewallet" nama="E-Wallet" jenis="ewallet"`;
+
+    const prompt = `Anda adalah asisten pencatat keuangan pribadi Indonesia untuk modul DompetQu.
+Tugas Anda: memecah kalimat ucapan sehari-hari (bisa banyak item sekaligus, dipisah koma atau kata sambung) menjadi daftar transaksi keuangan yang rapi agar pengguna tinggal mengecek dan mengedit sebelum disimpan.
+
+Daftar kantong saldo milik pengguna:
+${walletContext}
+
+Teks ucapan pengguna:
+"${transcript.slice(0, 4000)}"
+
+ATURAN EKSTRAKSI:
+1. Pecah setiap item pemasukan atau pengeluaran menjadi objek terpisah.
+   Contoh input: "gaji 5 juta masuk atm, belanja sayur 75rb, cicilan rumah 1,5 juta, jajan bocah 20rb, ongkos kerja 35rb, makan siang 40rb"
+2. Tentukan "type": "masuk" (gaji, bonus, komisi, dapat uang, jual, transfer masuk, dll) atau "keluar" (belanja, rumah, listrik, sewa, jajan bocah, ongkos kerja, bensin, parkir, makan, kopi, obat, dll).
+3. Pilih "category" TEPAT SATU dari daftar berikut:
+   - Pemasukan: "Gaji", "Bonus & Lembur", "Usaha & Sampingan", "Pemasukan Lainnya"
+   - Pengeluaran: "Belanja Harian", "Rumah & Tagihan", "Jajan Bocah", "Ongkos Kerja", "Makan & Minum", "Kesehatan & Obat", "Keluarga & Sosial", "Pengeluaran Lainnya"
+4. Konversi angka bahasa Indonesia sehari-hari ke Rupiah integer murni:
+   - "rb" / "ribu" = x1000 ("75rb" -> 75000, "dua puluh lima ribu" -> 25000)
+   - "jt" / "juta" = x1000000 ("5jt" -> 5000000, "1,5 juta" / "satu setengah juta" -> 1500000)
+   - "setengah juta" -> 500000, "gocap" -> 50000, "ceban" -> 10000, "noban" -> 20000, "goban" -> 50000, "seceng" -> 1000, "cepek" -> 100000 (atau 100 jika konteks jelas, untuk belanja Indonesia biasanya 100000)
+5. Tentukan "walletId" yang paling cocok dari daftar kantong pengguna:
+   - Jika disebut "atm", "bank", "rekening", "transfer", atau gaji bulanan tanpa keterangan -> pilih kantong jenis "bank".
+   - Jika disebut "gopay", "ovo", "dana", "shopeepay", "qris", "ewallet" -> pilih kantong jenis "ewallet".
+   - Jika disebut "cash", "tunai", "dompet", "uang saku" atau pengeluaran kecil harian (jajan bocah, ongkos, parkir, warung) tanpa sebut rekening -> pilih kantong jenis "cash".
+   - Jika ragu, gunakan id kantong pertama yang tersedia.
+6. "title": ringkas dan jelas (misal "Gaji Bulanan", "Belanja Harian", "Keperluan Rumah", "Jajan Bocah", "Ongkos Kerja", "Makan").
+7. Jangan mengarang transaksi yang tidak disebutkan. Jika nominal tidak disebut sama sekali pada satu item, isi amount = 0 agar pengguna mengisinya di tabel revisi.`;
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              items: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    type: { type: Type.STRING },
+                    category: { type: Type.STRING },
+                    title: { type: Type.STRING },
+                    amount: { type: Type.INTEGER },
+                    walletId: { type: Type.STRING },
+                    note: { type: Type.STRING },
+                  },
+                  required: ['type', 'category', 'title', 'amount', 'walletId'],
+                },
+              },
+            },
+            required: ['items'],
+          },
+        },
+      });
+
+      const rawText = response.text;
+      if (!rawText) {
+        res.status(502).json({ error: 'Respons AI kosong saat memproses ucapan.' });
+        return;
+      }
+      const parsed = JSON.parse(rawText);
+      res.json({ ok: true, items: Array.isArray(parsed?.items) ? parsed.items : [] });
+    } catch (err) {
+      console.error('[WargaQu DompetQu ParseSpeech] Gemini error:', err);
+      res.status(500).json({
+        error:
+          err instanceof Error
+            ? `Gagal memproses suara: ${err.message}`
+            : 'Terjadi kesalahan saat memproses catatan suara.',
+      });
+    }
+  });
+
   app.use(express.json({ limit: '256kb' }));
 
   const server = http.createServer(app);

@@ -3,7 +3,6 @@ import {
   Bell,
   Headphones,
   User,
-  ShieldCheck,
   Eye,
   EyeOff,
   Receipt,
@@ -24,14 +23,18 @@ import {
   Info,
   Mic,
   GitFork,
-  LogIn
+  LogIn,
+  Wallet
 } from 'lucide-react';
 import { PWAInstallBanner } from '../pwa/PWAInstallBanner';
 import { WargaQuLogoIcon } from '../common/WargaQuLogo';
 import { AUTH_SYNC_EVENT, AuthAccount, AuthService } from '../../services/authService';
 import { RT_SYNC_EVENT, RtSiagaStorage, WargaMember, PaguyubanProfile } from '../../services/rtSiagaStorage';
+import { DOMPETQU_SYNC_EVENT, DompetQuStorage, DompetWallet } from '../../services/dompetQuStorage';
+import { DompetSmartVoiceModal } from '../dompetqu/DompetSmartVoiceModal';
 
 interface WargaDashboardProps {
+  onOpenDompetQu: () => void;
   onOpenLeluhurQu: () => void;
   onOpenRtQu: (tab?: 'ringkasan' | 'forum' | 'keuangan' | 'iuran' | 'pengurus') => void;
   onOpenSiagaQu: () => void;
@@ -44,13 +47,6 @@ interface WargaDashboardProps {
   onOpenEmptyModule: (moduleId: string) => void;
   onOpenLogin?: (reason?: string) => void;
   activeOrderCount?: number;
-}
-
-function getLiveKasMasukFormatted(): string {
-  const total = RtSiagaStorage.getTransactions()
-    .filter(tx => tx.type === 'masuk')
-    .reduce((sum, tx) => sum + tx.amount, 0);
-  return total.toLocaleString('id-ID');
 }
 
 function getLiveUnreadChatCount(): number {
@@ -66,6 +62,7 @@ function getLiveUnreadChatCount(): number {
 }
 
 export const WargaDashboard: React.FC<WargaDashboardProps> = ({
+  onOpenDompetQu,
   onOpenLeluhurQu,
   onOpenRtQu,
   onOpenSiagaQu,
@@ -79,13 +76,22 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
   onOpenLogin,
   activeOrderCount = 0,
 }) => {
-  const [isBalanceHidden, setIsBalanceHidden] = useState<boolean>(false);
+  // Default mata tertutup agar saldo pribadi tidak terlihat orang di sekitar
+  const [isBalanceHidden, setIsBalanceHidden] = useState<boolean>(
+    () => DompetQuStorage.getPrivacySettings().hideBalanceByDefault !== false
+  );
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [authAccount, setAuthAccount] = useState<AuthAccount | null>(() => AuthService.getAccount());
   const [rtProfile, setRtProfile] = useState<PaguyubanProfile>(() => RtSiagaStorage.getProfile());
   const [rtMember, setRtMember] = useState<WargaMember>(() => RtSiagaStorage.getCurrentMember());
   const [hasRtCommunity, setHasRtCommunity] = useState<boolean>(() => RtSiagaStorage.hasCommunities());
-  const [realBalance, setRealBalance] = useState<string>(() => getLiveKasMasukFormatted());
+  const [dompetWallets, setDompetWallets] = useState<DompetWallet[]>(() =>
+    DompetQuStorage.getWallets()
+  );
+  const [dompetTotal, setDompetTotal] = useState<number>(() =>
+    DompetQuStorage.getTotalCombinedBalance()
+  );
+  const [smartVoiceOpen, setSmartVoiceOpen] = useState<boolean>(false);
   const [unreadChatCount, setUnreadChatCount] = useState<number>(() => getLiveUnreadChatCount());
 
   useEffect(() => {
@@ -94,15 +100,18 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
       setRtProfile(RtSiagaStorage.getProfile());
       setRtMember(RtSiagaStorage.getCurrentMember());
       setHasRtCommunity(RtSiagaStorage.hasCommunities());
-      setRealBalance(getLiveKasMasukFormatted());
+      setDompetWallets(DompetQuStorage.getWallets());
+      setDompetTotal(DompetQuStorage.getTotalCombinedBalance());
       setUnreadChatCount(getLiveUnreadChatCount());
     };
     window.addEventListener(AUTH_SYNC_EVENT, syncAll);
     window.addEventListener(RT_SYNC_EVENT, syncAll);
+    window.addEventListener(DOMPETQU_SYNC_EVENT, syncAll);
     window.addEventListener('focus', syncAll);
     return () => {
       window.removeEventListener(AUTH_SYNC_EVENT, syncAll);
       window.removeEventListener(RT_SYNC_EVENT, syncAll);
+      window.removeEventListener(DOMPETQU_SYNC_EVENT, syncAll);
       window.removeEventListener('focus', syncAll);
     };
   }, []);
@@ -197,65 +206,83 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
         {/* PWA Direct Mobile Install Banner */}
         <PWAInstallBanner showToast={showToast} />
 
-        {/* MAIN CARD WIDGET: TOTAL IURAN */}
+        {/* MAIN CARD WIDGET: SISA DOMPET GABUNGAN (TERISOLASI & PRIVASI MATA TERTUTUP) */}
         <div className="bg-white rounded-2xl p-4 shadow-sm border border-emerald-100/90 relative overflow-hidden">
-          {/* Top ID Badge Row */}
-          <div className="flex justify-between items-center pb-3 border-b border-emerald-50 gap-2">
-            <div className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-800 px-2.5 py-1 rounded-lg text-xs font-semibold border border-emerald-200/60 min-w-0">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span className="truncate">
-                {!hasRtCommunity
-                  ? 'Belum Gabung RT / Komunitas'
-                  : rtMember.siagaStatus === 'active'
-                  ? `SIAGA AKTIF: ${rtProfile.orgName}`
-                  : `${rtProfile.orgType}: ${rtProfile.orgName}`}
-              </span>
-            </div>
-            <span className="text-xs text-slate-500 font-medium truncate">
-              {hasRtCommunity ? rtMember.block : 'Khusus Undangan / Buat Baru'}
-            </span>
+          {/* Top Status Row: DompetQu Privacy + RTQu Shortcut */}
+          <div className="flex justify-between items-center pb-2.5 border-b border-emerald-50 gap-2">
+            <button
+              type="button"
+              onClick={onOpenDompetQu}
+              className="inline-flex items-center gap-1.5 text-emerald-800 text-xs font-bold min-w-0 hover:underline"
+            >
+              <Wallet className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+              <span className="truncate">DompetQu Pribadi · Terisolasi</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenRtQu(hasRtCommunity ? 'iuran' : 'ringkasan')}
+              className="text-[11px] text-slate-500 hover:text-emerald-700 font-medium truncate"
+            >
+              {hasRtCommunity ? `${rtProfile.orgName} · ${rtMember.block}` : 'Ruang RTQu'}
+            </button>
           </div>
 
-          {/* Primary Metric Display */}
+          {/* Primary Metric Display: Combined Cash + ATM + E-Wallet */}
           <div className="pt-3 pb-2">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center gap-2">
               <span className="text-xs font-medium text-slate-500">
-                Total Iuran Masuk (Awal - Sekarang)
+                Sisa Dompet Gabungan (Cash &amp; ATM)
               </span>
               <button
-                onClick={() => setIsBalanceHidden(!isBalanceHidden)}
-                className="text-emerald-700 hover:text-emerald-900 transition p-1 active:scale-95"
-                title="Sembunyikan / Tampilkan Saldo"
+                type="button"
+                onClick={() => setIsBalanceHidden(prev => !prev)}
+                className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg text-emerald-700 hover:bg-emerald-50 transition active:scale-95"
+                title={isBalanceHidden ? 'Tampilkan Saldo' : 'Tutup Saldo (Privasi)'}
               >
                 {isBalanceHidden ? (
-                  <EyeOff className="w-4 h-4 text-emerald-600" />
+                  <EyeOff className="w-4 h-4 text-emerald-700" />
                 ) : (
-                  <Eye className="w-4 h-4 text-emerald-600" />
+                  <Eye className="w-4 h-4 text-emerald-700" />
                 )}
               </button>
             </div>
-            <div className="mt-1 flex items-baseline gap-1">
-              <span className="text-sm font-bold text-emerald-700">IDR</span>
-              <span className="text-2xl font-extrabold text-slate-800 tracking-tight font-mono">
-                {isBalanceHidden ? maskedBalance : realBalance}
+            <div className="mt-0.5 flex items-baseline gap-1.5">
+              <span className="text-sm font-bold text-emerald-700">Rp</span>
+              <span className="text-2xl font-extrabold text-slate-900 tracking-tight font-mono tabular-nums">
+                {isBalanceHidden ? maskedBalance : dompetTotal.toLocaleString('id-ID')}
               </span>
+            </div>
+            <div className="mt-1.5 text-[11px] text-slate-500 font-mono tabular-nums truncate">
+              {dompetWallets.map((w, idx) => (
+                <React.Fragment key={w.id}>
+                  {idx > 0 && <span className="mx-1.5 text-slate-300">·</span>}
+                  <span>
+                    {w.kind === 'cash' ? 'Cash' : w.kind === 'bank' ? 'ATM' : 'E-Wallet'}{' '}
+                    {isBalanceHidden ? '••••' : `Rp ${w.balance.toLocaleString('id-ID')}`}
+                  </span>
+                </React.Fragment>
+              ))}
             </div>
           </div>
 
-          {/* Card Footer Link */}
-          <div className="pt-2 border-t border-emerald-50 flex justify-between items-center text-xs font-semibold text-emerald-700">
+          {/* Card Footer Actions */}
+          <div className="pt-2.5 border-t border-emerald-50 flex justify-between items-center gap-2 text-xs font-semibold">
             <button
-              onClick={() => onOpenRtQu(hasRtCommunity ? 'iuran' : 'ringkasan')}
-              className="flex items-center gap-1.5 hover:text-emerald-800 hover:underline active:opacity-80"
+              type="button"
+              onClick={() => setSmartVoiceOpen(true)}
+              className="flex items-center gap-1.5 text-emerald-700 hover:text-emerald-900 hover:underline active:opacity-80"
             >
-              <Receipt className="w-4 h-4 text-emerald-600" />
-              <span>
-                {hasRtCommunity
-                  ? 'Lihat Riwayat Pembayaran'
-                  : 'Gabung Undangan atau Buat Komunitas RTQu'}
-              </span>
+              <Mic className="w-4 h-4 text-emerald-700" />
+              <span>Catat Suara Cepat</span>
             </button>
-            <ChevronRight className="w-4 h-4 text-emerald-500" />
+            <button
+              type="button"
+              onClick={onOpenDompetQu}
+              className="flex items-center gap-1 text-slate-700 hover:text-emerald-700 font-bold"
+            >
+              <span>Buka DompetQu</span>
+              <ChevronRight className="w-4 h-4 text-emerald-600" />
+            </button>
           </div>
         </div>
 
@@ -273,9 +300,23 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
             </button>
           </div>
 
-          {/* Grid Items (Menu Utama): LeluhurQu, RtQu, MuamalahQu, AreaQu, SiagaQu, UsahaQu, ChatQu, Setting */}
+          {/* Grid Items (Menu Utama - 12 Modul Simetris 4x3) */}
           <div className="grid grid-cols-4 gap-y-4 gap-x-2">
-            {/* 1. LeluhurQu (Silsilah Trah Keluarga) */}
+            {/* 1. DompetQu */}
+            <button
+              onClick={onOpenDompetQu}
+              className="flex flex-col items-center group relative active:scale-95 transition"
+              title="Buka DompetQu (Keuangan Pribadi Terisolasi)"
+            >
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 group-hover:scale-105 transition shadow-xs">
+                <Wallet className="w-6 h-6 text-emerald-700" />
+              </div>
+              <span className="text-[11px] font-bold text-emerald-900 mt-1.5 text-center leading-tight">
+                DompetQu
+              </span>
+            </button>
+
+            {/* 2. LeluhurQu (Silsilah Trah Keluarga) */}
             <button
               onClick={onOpenLeluhurQu}
               className="flex flex-col items-center group relative active:scale-95 transition"
@@ -289,7 +330,7 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
               </span>
             </button>
 
-            {/* 2. RtQu */}
+            {/* 3. RtQu */}
             <button
               onClick={() => onOpenRtQu('ringkasan')}
               className="flex flex-col items-center group active:scale-95 transition"
@@ -303,7 +344,7 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
               </span>
             </button>
 
-            {/* 2. MuamalahQu */}
+            {/* 4. MuamalahQu */}
             <button
               onClick={onOpenMuamalahQu}
               className="flex flex-col items-center group active:scale-95 transition"
@@ -317,7 +358,7 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
               </span>
             </button>
 
-            {/* 3. AreaQu */}
+            {/* 5. AreaQu */}
             <button
               onClick={() => onOpenAreaQu('jelajah')}
               className="flex flex-col items-center group active:scale-95 transition"
@@ -331,7 +372,7 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
               </span>
             </button>
 
-            {/* 4. SiagaQu (Panic Button) */}
+            {/* 6. SiagaQu (Panic Button) */}
             <button
               onClick={onOpenSiagaQu}
               className="flex flex-col items-center group relative active:scale-95 transition"
@@ -348,7 +389,7 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
               </span>
             </button>
 
-            {/* 5. UsahaQu (2-in-1 POS: Resto & Modular AI) */}
+            {/* 7. UsahaQu (2-in-1 POS: Resto & Modular AI) */}
             <button
               onClick={() => onOpenUsahaQu('resto')}
               className="flex flex-col items-center group relative active:scale-95 transition"
@@ -357,7 +398,6 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-100 via-teal-100 to-emerald-200 border-2 border-emerald-500 flex items-center justify-center text-emerald-800 group-hover:scale-105 transition shadow-md shadow-emerald-200/50">
                 <ShoppingBag className="w-6 h-6 text-emerald-700" />
               </div>
-              {/* Highlight badge for UsahaQu 2-in-1 */}
               <span className="absolute -top-1.5 -right-1 bg-emerald-700 text-white text-[8px] font-black px-1.5 py-0.2 rounded-full shadow-xs uppercase tracking-tight">
                 2-in-1
               </span>
@@ -369,12 +409,9 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
               <span className="text-[11px] font-bold text-emerald-900 mt-1.5 text-center leading-tight flex items-center gap-0.5">
                 UsahaQu
               </span>
-              <span className="text-[9px] text-emerald-600 font-semibold leading-none">
-                Resto & AI
-              </span>
             </button>
 
-            {/* 7. ChatQu */}
+            {/* 8. ChatQu */}
             <button
               onClick={() => onOpenChatQu('chats')}
               className="flex flex-col items-center group relative active:scale-95 transition"
@@ -393,7 +430,49 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
               </span>
             </button>
 
-            {/* 8. Setting */}
+            {/* 9. Bayar / QRIS RTQu */}
+            <button
+              onClick={() => onOpenRtQu('iuran')}
+              className="flex flex-col items-center group active:scale-95 transition"
+              title="Bayar Iuran & QRIS RTQu"
+            >
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-700 group-hover:scale-105 transition shadow-xs">
+                <QrCode className="w-6 h-6" />
+              </div>
+              <span className="text-[11px] font-medium text-slate-700 mt-1.5 text-center leading-tight">
+                Bayar QRIS
+              </span>
+            </button>
+
+            {/* 10. Riwayat Iuran RT */}
+            <button
+              onClick={() => onOpenRtQu('keuangan')}
+              className="flex flex-col items-center group active:scale-95 transition"
+              title="Laporan Kas RTQu"
+            >
+              <div className="w-12 h-12 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-700 group-hover:scale-105 transition shadow-xs">
+                <Receipt className="w-6 h-6" />
+              </div>
+              <span className="text-[11px] font-medium text-slate-700 mt-1.5 text-center leading-tight">
+                Kas RT
+              </span>
+            </button>
+
+            {/* 11. Smart Care */}
+            <button
+              onClick={onOpenBantuan}
+              className="flex flex-col items-center group active:scale-95 transition"
+              title="UsahaQu Smart Care & Bantuan"
+            >
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 group-hover:scale-105 transition shadow-xs">
+                <Headphones className="w-6 h-6" />
+              </div>
+              <span className="text-[11px] font-medium text-slate-700 mt-1.5 text-center leading-tight">
+                Smart Care
+              </span>
+            </button>
+
+            {/* 12. Setting */}
             <button
               onClick={() => onOpenEmptyModule('setting')}
               className="flex flex-col items-center group active:scale-95 transition"
@@ -406,12 +485,6 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
                 Setting
               </span>
             </button>
-          </div>
-
-          {/* Indicator dots */}
-          <div className="flex justify-center items-center gap-1.5 mt-5">
-            <span className="w-5 h-1.5 bg-emerald-600 rounded-full"></span>
-            <span className="w-1.5 h-1.5 bg-emerald-200 rounded-full"></span>
           </div>
         </div>
 
@@ -619,28 +692,28 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
           <span className="text-[10px] font-medium">Aktivitas</span>
         </button>
 
-        {/* CENTER FLOATING WargaPay / QRIS BUTTON */}
+        {/* CENTER FLOATING SMART VOICE CATAT DOMPETQU BUTTON */}
         <div className="relative -top-5 flex flex-col items-center">
           <button
-            onClick={() => onOpenRtQu('iuran')}
-            className="w-14 h-14 bg-gradient-to-tr from-[#047857] via-[#059669] to-[#2dd4bf] rounded-full p-0.5 shadow-lg shadow-emerald-700/30 flex items-center justify-center text-white border-4 border-[#f0fdf4] pulse-animation active:scale-95 transition"
-            title="Bayar Iuran & QRIS RTQu"
+            type="button"
+            onClick={() => setSmartVoiceOpen(true)}
+            className="w-14 h-14 bg-gradient-to-tr from-[#047857] via-[#059669] to-[#14b8a6] rounded-full p-0.5 shadow-lg shadow-emerald-700/30 flex items-center justify-center text-white border-4 border-[#f0fdf4] active:scale-95 transition"
+            title="Catat Suara Cerdas ke DompetQu"
           >
             <div className="w-full h-full rounded-full flex flex-col items-center justify-center">
-              <QrCode className="w-6 h-6 text-white" />
+              <Mic className="w-6 h-6 text-white" />
             </div>
           </button>
-          <span className="text-[10px] font-extrabold text-emerald-700 mt-0.5">QRIS</span>
+          <span className="text-[10px] font-extrabold text-emerald-700 mt-0.5">Catat Suara</span>
         </div>
 
-        {/* Untukmu */}
+        {/* DompetQu */}
         <button
           className="flex flex-col items-center gap-0.5 text-slate-400 hover:text-emerald-700 relative active:scale-95 transition"
-          onClick={onOpenMuamalahQu}
+          onClick={onOpenDompetQu}
         >
-          <Sparkles className="w-5 h-5" />
-          <span className="text-[10px] font-medium">Untukmu</span>
-          <span className="absolute top-0 right-2 w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+          <Wallet className="w-5 h-5" />
+          <span className="text-[10px] font-medium">DompetQu</span>
         </button>
 
         {/* Akun Saya */}
@@ -652,6 +725,13 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
           <span className="text-[10px] font-medium">Akun Saya</span>
         </button>
       </div>
+
+      {/* SMART VOICE TO TABLE MODAL (LANGSUNG DARI HALAMAN UTAMA) */}
+      <DompetSmartVoiceModal
+        open={smartVoiceOpen}
+        onClose={() => setSmartVoiceOpen(false)}
+        showNotification={showToast}
+      />
 
       {/* TOAST NOTIFICATION CONTAINER */}
       <div

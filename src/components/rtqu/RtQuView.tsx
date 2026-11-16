@@ -69,6 +69,8 @@ import { AuthService, AUTH_SYNC_EVENT } from '../../services/authService';
 import { RtExcelService } from '../../services/rtExcelService';
 import { RtExcelAndClaimSheet, ExtraSheetType } from './RtExcelAndClaimSheet';
 import { RtGovernanceManager, RtTenureBanner } from './RtGovernancePanel';
+import { RtSmartImportWizardModal } from './RtSmartImportWizardModal';
+import { RtInviteQrBlock, RtQrScannerModal } from './RtInviteQrBlock';
 import { RtGovernanceCloudService } from '../../services/rtGovernanceCloudService';
 import { FIREBASE_AUTH_SYNC_EVENT, FirebaseSyncService } from '../../services/firebaseSyncService';
 import { MonetizationService } from '../../services/monetizationService';
@@ -160,6 +162,14 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
   } | null>(null);
   const [compactInviteToken, setCompactInviteToken] = useState<string>('');
   const [shortInviteUrl, setShortInviteUrl] = useState<string>('');
+  const [smartImportOpen, setSmartImportOpen] = useState<boolean>(false);
+  const [smartImportOrgType, setSmartImportOrgType] = useState<OrgType>('RT');
+  const [smartImportTargetMode, setSmartImportTargetMode] = useState<
+    'create_new' | 'merge_active' | 'replace_active'
+  >('create_new');
+  const [onboardingPickType, setOnboardingPickType] = useState<OrgType>('RT');
+  const [createMethodPick, setCreateMethodPick] = useState<'pick' | 'manual'>('pick');
+  const [qrScannerOpen, setQrScannerOpen] = useState<boolean>(false);
   const [createCommForm, setCreateCommForm] = useState<{
     orgType: OrgType;
     customBrandName: string;
@@ -1101,7 +1111,10 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
               </button>
             ) : (
               <button
-                onClick={() => setActiveSheet('buat_komunitas')}
+                onClick={() => {
+                  setCreateMethodPick('pick');
+                  setActiveSheet('buat_komunitas');
+                }}
                 className="min-h-[38px] px-3 py-1.5 rounded-lg bg-emerald-700 text-white text-[11px] font-bold flex items-center gap-1 transition shrink-0"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -1152,13 +1165,16 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
             <button
               onClick={() => setActiveSheet('undang_komunitas')}
               className="min-h-[32px] px-2.5 py-1 rounded-lg border border-emerald-600 text-emerald-700 bg-emerald-50 text-[11px] font-bold whitespace-nowrap flex items-center gap-1 shrink-0"
-              title="Bagikan Link Undangan Warga"
+              title="Bagikan Barcode & Link Undangan Warga"
             >
-              <Link2 className="w-3 h-3" />
-              <span>Undang</span>
+              <QrCode className="w-3 h-3" />
+              <span>Undang / QR</span>
             </button>
             <button
-              onClick={() => setActiveSheet('buat_komunitas')}
+              onClick={() => {
+                setCreateMethodPick('pick');
+                setActiveSheet('buat_komunitas');
+              }}
               className="min-h-[32px] px-2.5 py-1 rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 text-[11px] font-bold whitespace-nowrap flex items-center gap-1 shrink-0"
               title="Buat Komunitas RT / Paguyuban / Organisasi / Sosial Baru"
             >
@@ -1286,26 +1302,105 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                   {isJoiningInvite ? 'Memproses...' : 'Gabung'}
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={() => setQrScannerOpen(true)}
+                className="w-full min-h-[38px] border border-emerald-700 text-emerald-700 hover:bg-emerald-50 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
+              >
+                <QrCode className="w-4 h-4" />
+                <span>Scan / Unggah Barcode QR Undangan</span>
+              </button>
             </form>
 
-            {/* Option 2: Create New Community */}
+            {/* Option 2: Create New Community (Immediate Manual vs Smart Import Choice) */}
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 space-y-3">
               <div>
                 <h3 className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
                   <Building2 className="w-4 h-4 text-emerald-700" />
-                  <span>Belum Ada yang Mengurus di Lingkungan Anda?</span>
+                  <span>Buat Ruang RTQu / PaguyubanQu / Komunitas Baru</span>
                 </h3>
                 <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
-                  Buat ruang digital sendiri untuk <strong>RTQu</strong>, <strong>PaguyubanQu</strong> (cluster/perumahan yang RT-nya belum aktif), <strong>Organisasi</strong> (partai/ormas/komunitas), atau <strong>Sosial</strong> (DKM/panti/yayasan) — gratis & langsung bisa undang warga via WA.
+                  Siapa saja (termasuk warga biasa) bisa membuat ruang terlebih dahulu, lalu kirim{' '}
+                  <strong>Barcode QR Undangan</strong> ke pengurus &amp; warga untuk klaim akun.
                 </p>
               </div>
-              <button
-                onClick={() => setActiveSheet('buat_komunitas')}
-                className="w-full min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Buat RT / Paguyuban / Organisasi Baru</span>
-              </button>
+
+              <div>
+                <div className="text-[11px] font-bold text-slate-700 mb-1.5">
+                  1. Pilih Komunitas:
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[
+                    { id: 'RT' as OrgType, label: 'RTQu', desc: 'RT / RW Resmi' },
+                    { id: 'Paguyuban' as OrgType, label: 'PaguyubanQu', desc: 'Cluster / Perumahan' },
+                    { id: 'Organisasi' as OrgType, label: 'Organisasi', desc: 'Ormas / Alumni' },
+                    { id: 'Sosial' as OrgType, label: 'Sosial / DKM', desc: 'Masjid / Yayasan' },
+                  ].map(opt => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setOnboardingPickType(opt.id)}
+                      className={`p-2 rounded-xl border text-left transition ${
+                        onboardingPickType === opt.id
+                          ? 'bg-emerald-700 text-white border-emerald-700'
+                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="text-[11px] font-extrabold">{opt.label}</div>
+                      <div
+                        className={`text-[10px] ${
+                          onboardingPickType === opt.id ? 'text-emerald-100' : 'text-slate-500'
+                        }`}
+                      >
+                        {opt.desc}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-bold text-slate-700">
+                  2. Pilih Cara Pengisian Data:
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSmartImportOrgType(onboardingPickType);
+                      setSmartImportTargetMode('create_new');
+                      setSmartImportOpen(true);
+                    }}
+                    className="p-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-left space-y-1 transition shadow-xs"
+                  >
+                    <div className="text-xs font-extrabold flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-emerald-200 shrink-0" />
+                      <span>Smart Import Dokumen</span>
+                    </div>
+                    <p className="text-[10px] text-emerald-100 leading-snug">
+                      Unggah Excel, Foto Catatan, Screenshot WA, atau PDF → Revisi Tabel → Auto-isi semua menu + Barcode!
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCreateCommForm(prev => ({ ...prev, orgType: onboardingPickType }));
+                      setCreateMethodPick('manual');
+                      setActiveSheet('buat_komunitas');
+                    }}
+                    className="p-3 rounded-xl border border-emerald-700 bg-white hover:bg-emerald-50 text-emerald-950 text-left space-y-1 transition"
+                  >
+                    <div className="text-xs font-extrabold flex items-center gap-1.5">
+                      <Plus className="w-4 h-4 text-emerald-700 shrink-0" />
+                      <span>Buat Manual</span>
+                    </div>
+                    <p className="text-[10px] text-slate-600 leading-snug">
+                      Isi nama komunitas, nominal iuran, &amp; daftar pengurus secara manual dari awal.
+                    </p>
+                  </button>
+                </div>
+              </div>
             </div>
 
             {isOwner && (
@@ -2278,27 +2373,49 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                   />
                 )}
 
-                {coordinators.map(coord => (
-                  <div key={coord.id} className="px-4 py-3.5 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-[11px] font-bold text-emerald-700">
-                        {coord.role}
-                        {coord.canVerifySiaga ? ' · Otoritas SiagaQu' : ''}
+                {coordinators.map(coord => {
+                  const matchingOfficer = officers.find(o => o.id === coord.id);
+                  const isUnclaimed = matchingOfficer?.claimStatus === 'unclaimed';
+                  return (
+                    <div key={coord.id} className="px-4 py-3.5 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-bold text-emerald-700 flex items-center gap-1.5 flex-wrap">
+                          <span>
+                            {coord.role}
+                            {coord.canVerifySiaga ? ' · Otoritas SiagaQu' : ''}
+                          </span>
+                          {isUnclaimed && (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[9px] font-extrabold">
+                              Siap Klaim Akun
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs font-bold text-slate-900 mt-0.5">{coord.name}</div>
+                        <div className="text-[11px] text-slate-500 font-mono tabular-nums">
+                          {coord.division} · {coord.phone}
+                        </div>
                       </div>
-                      <div className="text-xs font-bold text-slate-900 mt-0.5">{coord.name}</div>
-                      <div className="text-[11px] text-slate-500 font-mono tabular-nums">
-                        {coord.division} · {coord.phone}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {isUnclaimed && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveSheet('klaim_profil')}
+                            className="min-h-[34px] px-2.5 border border-emerald-700 text-emerald-700 hover:bg-emerald-50 rounded-lg text-[11px] font-bold"
+                          >
+                            Klaim
+                          </button>
+                        )}
+                        <button
+                          onClick={() => showNotification(`Menghubungi ${coord.name} (${coord.phone})`)}
+                          className="min-h-[38px] min-w-[38px] border border-slate-300 rounded-lg flex items-center justify-center text-slate-700 hover:bg-slate-50 shrink-0"
+                          title="Hubungi Pengurus"
+                        >
+                          <PhoneCall className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
-                    <button
-                      onClick={() => showNotification(`Menghubungi ${coord.name} (${coord.phone})`)}
-                      className="min-h-[38px] min-w-[38px] border border-slate-300 rounded-lg flex items-center justify-center text-slate-700 hover:bg-slate-50 shrink-0"
-                      title="Hubungi Pengurus"
-                    >
-                      <PhoneCall className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {activeCommunity && (
                   <RtGovernanceManager
@@ -2324,11 +2441,22 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                 <div className="px-4 py-3 space-y-2.5 bg-slate-50/70">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <button
-                      onClick={() => setActiveSheet('import_excel')}
+                      onClick={() => {
+                        setSmartImportOrgType(profile.orgType);
+                        setSmartImportTargetMode('merge_active');
+                        setSmartImportOpen(true);
+                      }}
                       className="min-h-[36px] px-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-[11px] font-bold flex items-center gap-1"
                     >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Smart Import (Foto/PDF/Excel)</span>
+                    </button>
+                    <button
+                      onClick={() => setActiveSheet('import_excel')}
+                      className="min-h-[36px] px-2.5 border border-emerald-700 text-emerald-700 bg-white hover:bg-emerald-50 rounded-lg text-[11px] font-bold flex items-center gap-1"
+                    >
                       <FileSpreadsheet className="w-3.5 h-3.5" />
-                      <span>Impor Excel</span>
+                      <span>Impor .xlsx Cepat</span>
                     </button>
                     <button
                       onClick={() => {
@@ -3243,9 +3371,102 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                 </div>
               )}
 
-              {/* SHEET: BUAT KOMUNITAS BARU */}
-              {activeSheet === 'buat_komunitas' && (
+              {/* SHEET: BUAT KOMUNITAS BARU (PILIH MANUAL vs SMART IMPORT) */}
+              {activeSheet === 'buat_komunitas' && createMethodPick === 'pick' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1.5">
+                      1. Pilih Kategori Komunitas
+                    </label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {[
+                        { id: 'RT' as OrgType, label: 'RTQu (Rukun Tetangga)', desc: 'RT resmi / wilayah' },
+                        { id: 'Paguyuban' as OrgType, label: 'PaguyubanQu', desc: 'Cluster / perumahan / warga' },
+                        { id: 'Organisasi' as OrgType, label: 'Organisasi', desc: 'Ormas / partai / alumni' },
+                        { id: 'Sosial' as OrgType, label: 'Sosial / DKM', desc: 'Masjid / panti / yayasan' },
+                      ].map(opt => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setCreateCommForm(prev => ({ ...prev, orgType: opt.id }))}
+                          className={`p-2 rounded-xl border text-left transition ${
+                            createCommForm.orgType === opt.id
+                              ? 'bg-emerald-700 text-white border-emerald-700'
+                              : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                          }`}
+                        >
+                          <div className="text-[11px] font-extrabold">{opt.label}</div>
+                          <div
+                            className={`text-[10px] ${
+                              createCommForm.orgType === opt.id ? 'text-emerald-100' : 'text-slate-500'
+                            }`}
+                          >
+                            {opt.desc}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="font-bold text-slate-700 block">
+                      2. Pilih Cara Pembuatan
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveSheet(null);
+                        setSmartImportOrgType(createCommForm.orgType);
+                        setSmartImportTargetMode('create_new');
+                        setSmartImportOpen(true);
+                      }}
+                      className="w-full p-3.5 rounded-2xl bg-emerald-700 hover:bg-emerald-800 text-white text-left space-y-1 transition shadow-xs"
+                    >
+                      <div className="text-xs font-extrabold flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-emerald-200" />
+                        <span>Smart Import (Excel / Beberapa Foto / SS / PDF)</span>
+                      </div>
+                      <p className="text-[11px] text-emerald-100 leading-relaxed">
+                        Unggah file catatan lama → Tinjau &amp; revisi di tabel gaya Excel → Auto-isi semua menu (warga, iuran, kas masuk/keluar, pengurus tinggal klaim) + Barcode QR!
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setCreateMethodPick('manual')}
+                      className="w-full p-3.5 rounded-2xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-900 text-left space-y-1 transition"
+                    >
+                      <div className="text-xs font-extrabold flex items-center gap-1.5">
+                        <Plus className="w-4 h-4 text-emerald-700" />
+                        <span>Buat Manual dari Awal</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        Isi formulir profil komunitas, nominal iuran, dan pengurus secara manual.
+                      </p>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {activeSheet === 'buat_komunitas' && createMethodPick === 'manual' && (
                 <form onSubmit={handleCreateCommunitySubmit} className="space-y-3">
+                  <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+                    <span className="text-[11px] font-bold text-slate-500">Mode Buat Manual</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveSheet(null);
+                        setSmartImportOrgType(createCommForm.orgType);
+                        setSmartImportTargetMode('create_new');
+                        setSmartImportOpen(true);
+                      }}
+                      className="text-[11px] font-extrabold text-emerald-700 hover:underline flex items-center gap-1"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      <span>Pindah ke Smart Import</span>
+                    </button>
+                  </div>
+
                   <div>
                     <label className="font-bold text-slate-700 block mb-1.5">
                       Pilih Kategori Komunitas
@@ -3427,93 +3648,69 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                     type="submit"
                     className="w-full min-h-[44px] bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold"
                   >
-                    Simpan & Aktifkan Komunitas Baru
+                    Simpan &amp; Aktifkan Komunitas Baru
                   </button>
                 </form>
               )}
 
-              {/* SHEET: BAGIKAN LINK JUDUL KOMUNITAS (SINKRONISASI SAAT MASUK) */}
+              {/* SHEET: BAGIKAN BARCODE QR & LINK JUDUL KOMUNITAS (SINKRONISASI SAAT MASUK) */}
               {activeSheet === 'undang_komunitas' && activeCommunity && (
                 <div className="space-y-3">
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 space-y-1">
-                    <div className="font-extrabold text-emerald-900 text-xs">
-                      Link Judul Komunitas (Sinkronisasi Saat Masuk)
-                    </div>
-                    <p className="text-[11px] text-emerald-800 leading-relaxed">
-                      Link hanya memuat judul <strong>{profile.orgName}</strong> agar ringkas dan mudah dibaca. Saat warga mengklik link, data komunitas otomatis disinkronkan ke HP masing-masing (tanpa DB server).
-                    </p>
-                  </div>
+                  <RtInviteQrBlock
+                    orgName={profile.orgName}
+                    brandTitle={brandTitle}
+                    memberCount={members.length}
+                    officerCount={officers.length}
+                    inviteUrl={communityInviteUrl}
+                    compactToken={compactInviteToken}
+                    inviterName={currentUser.name}
+                    showNotification={showNotification}
+                  />
 
-                  <div className="space-y-1.5">
-                    <label className="font-bold text-slate-700 block">
-                      Link Judul ({brandTitle})
-                    </label>
-                    <div className="p-2.5 rounded-xl border border-slate-200 bg-slate-50 font-mono text-[11px] text-slate-800 break-all">
-                      {communityInviteUrl}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-2">
+                  {compactInviteToken && (
                     <button
                       type="button"
-                      disabled={!communityInviteUrl}
                       onClick={async () => {
-                        if (!communityInviteUrl) return;
                         try {
-                          await navigator.clipboard.writeText(communityInviteUrl);
-                          showNotification('Link judul komunitas disalin!');
+                          await navigator.clipboard.writeText(compactInviteToken);
+                          showNotification('Kode cadangan offline disalin!');
                         } catch {
-                          showNotification('Gagal menyalin link.');
+                          showNotification('Gagal menyalin kode.');
                         }
                       }}
-                      className="w-full min-h-[44px] bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-xl font-bold flex items-center justify-center gap-1.5"
+                      className="w-full min-h-[40px] border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-xl font-bold text-[11px]"
                     >
-                      <Copy className="w-4 h-4" />
-                      <span>Salin Link Judul</span>
+                      Salin Kode Offline Saja (Jika Tanpa Jaringan)
                     </button>
-
-                    <button
-                      type="button"
-                      disabled={!communityInviteUrl}
-                      onClick={async () => {
-                        if (!communityInviteUrl) return;
-                        const waText = `Halo Bpk/Ibu/Rekan,\nMari bergabung ke grup digital *${profile.orgName}* (${brandTitle}) di aplikasi WargaQu untuk info warga, forum, iuran transparan & keamanan SiagaQu.\n\n👉 Klik link judul (sinkronisasi saat masuk):\n${communityInviteUrl}\n\nSalam,\n${currentUser.name}`;
-                        try {
-                          await navigator.clipboard.writeText(waText);
-                          showNotification('Pesan undangan WhatsApp disalin!');
-                        } catch {
-                          showNotification('Gagal menyalin pesan WA.');
-                        }
-                      }}
-                      className="w-full min-h-[44px] border border-emerald-700 text-emerald-700 hover:bg-emerald-50 rounded-xl font-bold flex items-center justify-center gap-1.5"
-                    >
-                      <Share2 className="w-4 h-4" />
-                      <span>Salin Pesan Undangan Grup WA</span>
-                    </button>
-
-                    {compactInviteToken && (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(compactInviteToken);
-                            showNotification('Kode cadangan offline disalin!');
-                          } catch {
-                            showNotification('Gagal menyalin kode.');
-                          }
-                        }}
-                        className="w-full min-h-[40px] border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-xl font-bold text-[11px]"
-                      >
-                        Salin Kode Offline Saja (Jika Tanpa Jaringan)
-                      </button>
-                    )}
-                  </div>
+                  )}
                 </div>
               )}
             </div>
           </div>
         </div>
       )}
+
+      {/* SMART IMPORT WIZARD MODAL (EXCEL / MULTI-FOTO / SCREENSHOT / PDF -> TABEL REVISI -> AUTO-GENERATE + BARCODE) */}
+      <RtSmartImportWizardModal
+        open={smartImportOpen}
+        initialOrgType={smartImportOrgType}
+        targetMode={smartImportTargetMode}
+        onClose={() => setSmartImportOpen(false)}
+        onCompleted={(_ws, isOfficer) => {
+          setActiveTab('ringkasan');
+          setIsPengurusMode(isOfficer);
+          setAutoJoinedBanner(null);
+        }}
+        showNotification={showNotification}
+      />
+
+      {/* QR SCANNER MODAL UNTUK WARGA & PENGURUS YANG KLAIM AKUN */}
+      <RtQrScannerModal
+        open={qrScannerOpen}
+        onClose={() => setQrScannerOpen(false)}
+        onDetectedPayload={payload => handleJoinByInviteInput(undefined, payload)}
+        showNotification={showNotification}
+      />
     </div>
   );
 };

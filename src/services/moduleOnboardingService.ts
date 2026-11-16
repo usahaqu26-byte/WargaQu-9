@@ -1,6 +1,7 @@
 import { AuthService } from './authService';
 
 export type GuideModuleId =
+  | 'dompetqu'
   | 'leluhurqu'
   | 'rtqu'
   | 'areaqu'
@@ -31,6 +32,38 @@ export interface ModuleGuideInfo {
 }
 
 export const MODULE_GUIDES: ModuleGuideInfo[] = [
+  {
+    id: 'dompetqu',
+    name: 'DompetQu',
+    category: 'Keuangan Pribadi Terisolasi',
+    tagline: 'Catat gaji, belanja harian, kebutuhan rumah, jajan bocah, hingga ongkos kerja cukup lewat suara atau ketik cepat dengan privasi mata tertutup.',
+    benefits: [
+      'Menyatukan sisa saldo gabungan Dompet Cash, Tabungan ATM/Bank, dan E-Wallet dalam satu ringkasan privat.',
+      'Smart Catat Suara mengubah ucapan panjang sekaligus menjadi tabel edit yang bisa dicek sebelum disimpan.',
+      'Terisolasi ketat per akun dengan ikon mata tertutup otomatis saat dibuka serta opsi kunci PIN 4–6 digit.',
+    ],
+    steps: [
+      {
+        title: 'Ketuk Mikrofon Catat Suara',
+        desc: 'Sebutkan sekaligus seperti: "gaji 5 juta masuk atm, belanja 100rb cash, jajan bocah 20rb, ongkos kerja 30rb, makan 35rb".',
+      },
+      {
+        title: 'Periksa & Revisi di Tabel Edit',
+        desc: 'Sesuaikan nominal, kategori, atau kantong sumber (Cash / ATM / E-Wallet) sebelum menekan Simpan.',
+      },
+      {
+        title: 'Pantau Pos & Aktifkan PIN Privasi',
+        desc: 'Atur batas anggaran bulanan di tab Anggaran dan pasang PIN pribadi di tab Privasi agar aman dari intipan.',
+      },
+    ],
+    privacyNote: 'Data DompetQu 100% terisolasi pada akun Anda dan tidak dibagikan ke RTQu, pengurus, atau pengguna lain.',
+    faq: [
+      {
+        q: 'Apakah orang lain atau pengurus RT bisa melihat saldo DompetQu saya?',
+        a: 'Tidak bisa. DompetQu disimpan terpisah khusus untuk akun Anda saja, dan saldo otomatis tertutup ikon mata saat aplikasi dibuka.',
+      },
+    ],
+  },
   {
     id: 'leluhurqu',
     name: 'LeluhurQu',

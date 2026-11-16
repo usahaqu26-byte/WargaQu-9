@@ -277,7 +277,7 @@ function buildHierarchyFromMembers(members: FamilyMember[]) {
 }
 
 // ============================================================================
-// GENERATOR LAYOUT PINTAR BERBASIS DATA TABEL (PARENT-CHILD + SPOUSE)
+// GENERATOR LAYOUT PINTAR BERBASIS DATA TABEL (RAPAT, DEKAT INDUK, ANTI-SILANG)
 // ============================================================================
 export function generateSmartLayoutFromTable(
   members: FamilyMember[],
@@ -297,351 +297,156 @@ export function generateSmartLayoutFromTable(
   const cardW = Math.max(54, cardSize.w);
   const cardH = Math.max(26, cardSize.h);
   const topSafeY = 72;
-  const bottomSafeMargin = 88; // sisakan ruang untuk caption bar bawah
+  const bottomSafeMargin = 88;
   const usableH = Math.max(240, boardHeight - topSafeY - bottomSafeMargin);
 
-  // -------------------------------------------------------------------------
-  // MODE 0: ISI PENUH KERTAS (ANTI-KOSONG & PENUNJUK GENERASI/HIRARKI)
-  // -------------------------------------------------------------------------
-  if (presetId === 'hierarchy_grid_fill') {
-    const leftLabelMargin = 82; // ruang label GEN 1, GEN 2 di sisi kiri kertas
-    const rightMargin = 34;
-    const usableW = Math.max(320, boardWidth - leftLabelMargin - rightMargin);
-    const coupleGap = Math.max(6, Math.round(cardW * 0.08));
-    const minUnitGap = Math.max(14, Math.round(cardW * 0.16));
+  const coupleGap = Math.max(6, Math.round(cardW * 0.08));
+  const compactSiblingGap = Math.max(12, Math.round(cardW * 0.14));
+  const compactRowGap = Math.max(40, Math.min(72, Math.round(cardH * 0.42)));
 
-    interface GenUnit {
+  // -------------------------------------------------------------------------
+  // HELPER BERSAMA: POHON RANTING KOMPAK (PARENT TERPUSAT TEPAT DI ATAS ANAK)
+  // Mendukung pembungkusan rapi anak-daun agar lebar pohon tidak melebihi kertas
+  // -------------------------------------------------------------------------
+  const runCompactTreeLayout = (opts: {
+    wrapLeafSiblingsMaxCols: number;
+    leftMargin: number;
+    rightMargin: number;
+    rowStepY: number;
+    rootGapX: number;
+  }) => {
+    interface TreeBlock {
       member: FamilyMember;
-      gen: number;
-      dfsOrder: number;
       unitW: number;
       spouses: NonNullable<FamilyMember['spouses']>;
+      depth: number;
+      children: TreeBlock[];
+      isLeafGrid: boolean;
+      leafCols: number;
+      leafRows: number;
+      blockW: number;
+      blockH: number;
     }
 
-    const unitsByGen = new Map<number, GenUnit[]>();
-    const visited = new Set<string>();
-    let dfsCounter = 0;
-
-    const visit = (m: FamilyMember, depth: number) => {
-      if (visited.has(m.id)) return;
-      visited.add(m.id);
-      const gen = Math.max(depth, m.generationLevel ?? depth);
+    const seen = new Set<string>();
+    const measureBlock = (m: FamilyMember, depth: number): TreeBlock => {
+      seen.add(m.id);
       const spouses = m.spouses || [];
       const unitW = cardW + spouses.length * (cardW + coupleGap);
 
-      if (!unitsByGen.has(gen)) unitsByGen.set(gen, []);
-      unitsByGen.get(gen)!.push({
-        member: m,
-        gen,
-        dfsOrder: dfsCounter++,
-        unitW,
-        spouses,
-      });
+      const rawKids = (childrenMap.get(m.id) || []).filter((k) => !seen.has(k.id));
+      const measuredKids = rawKids.map((k) => measureBlock(k, depth + 1));
 
-      const kids = childrenMap.get(m.id) || [];
-      kids.forEach((c) => visit(c, gen + 1));
-    };
+      // Jika semua anak adalah daun (tidak punya cucu) dan jumlahnya banyak, susun rapi jadi grid 2..4 kolom tepat di bawah orang tua agar jarak tetap pendek!
+      const allKidsAreSingleLeaves =
+        measuredKids.length > opts.wrapLeafSiblingsMaxCols &&
+        measuredKids.every((k) => k.children.length === 0);
 
-    roots.forEach((r) => visit(r, r.generationLevel ?? 0));
-    members.forEach((m) => {
-      if (!visited.has(m.id)) visit(m, m.generationLevel ?? 0);
-    });
-
-    const sortedGens = Array.from(unitsByGen.keys()).sort((a, b) => a - b);
-
-    // Bagi setiap generasi ke dalam sub-baris seimbang agar pas lebar kertas tanpa meluber ke A2
-    const packGenIntoSubRows = (units: GenUnit[]): GenUnit[][] => {
-      if (units.length === 0) return [];
-      const rows: GenUnit[][] = [];
-      let currentRow: GenUnit[] = [];
-      let currentW = 0;
-
-      units.forEach((u) => {
-        const nextW = currentRow.length === 0 ? u.unitW : currentW + minUnitGap + u.unitW;
-        if (currentRow.length > 0 && nextW > usableW) {
-          rows.push(currentRow);
-          currentRow = [u];
-          currentW = u.unitW;
-        } else {
-          currentRow.push(u);
-          currentW = nextW;
-        }
-      });
-      if (currentRow.length > 0) rows.push(currentRow);
-
-      // Seimbangkan jumlah item jika baris terakhir terlalu jomplang
-      if (rows.length === 2 && rows[0].length > rows[1].length + 2) {
-        const merged = [...rows[0], ...rows[1]];
-        const splitIdx = Math.ceil(merged.length / 2);
-        const firstHalf = merged.slice(0, splitIdx);
-        const secondHalf = merged.slice(splitIdx);
-        const sumW = (arr: GenUnit[]) =>
-          arr.reduce((s, x) => s + x.unitW, 0) + Math.max(0, arr.length - 1) * minUnitGap;
-        if (sumW(firstHalf) <= usableW && sumW(secondHalf) <= usableW) {
-          return [firstHalf, secondHalf];
-        }
-      }
-      return rows;
-    };
-
-    interface PlannedSubRow {
-      gen: number;
-      genIndex: number;
-      isFirstInGen: boolean;
-      units: GenUnit[];
-    }
-
-    const memberNodePosX = new Map<string, number>();
-    const memberNodeIdMap = new Map<string, string>();
-    const allSubRows: PlannedSubRow[] = [];
-
-    sortedGens.forEach((genVal, gIdx) => {
-      const genUnits = [...(unitsByGen.get(genVal) || [])];
-      // Urutkan berdasarkan posisi X orang tua agar garis ke anak tetap dekat dan minim silang
-      genUnits.sort((a, b) => {
-        const pxA = a.member.parentId ? memberNodePosX.get(a.member.parentId) : undefined;
-        const pxB = b.member.parentId ? memberNodePosX.get(b.member.parentId) : undefined;
-        if (pxA !== undefined && pxB !== undefined && pxA !== pxB) {
-          return pxA - pxB;
-        }
-        return a.dfsOrder - b.dfsOrder;
-      });
-
-      const subRows = packGenIntoSubRows(genUnits);
-      subRows.forEach((sr, srIdx) => {
-        allSubRows.push({
-          gen: genVal,
-          genIndex: gIdx,
-          isFirstInGen: srIdx === 0,
-          units: sr,
-        });
-      });
-
-      // Simpan estimasi X sementara untuk pengurutan generasi berikutnya
-      subRows.forEach((sr) => {
-        const unitsSumW = sr.reduce((s, u) => s + u.unitW, 0);
-        const extraSpace = Math.max(0, usableW - unitsSumW);
-        const dynamicGap =
-          sr.length > 1
-            ? Math.min(Math.max(minUnitGap, Math.round(cardW * 0.65)), Math.floor(extraSpace / (sr.length - 1)))
-            : minUnitGap;
-        const rowContentW = unitsSumW + Math.max(0, sr.length - 1) * dynamicGap;
-        let cx = leftLabelMargin + Math.max(0, (usableW - rowContentW) / 2);
-        sr.forEach((u) => {
-          memberNodePosX.set(u.member.id, cx + u.unitW / 2);
-          cx += u.unitW + dynamicGap;
-        });
-      });
-    });
-
-    const totalSubRows = Math.max(1, allSubRows.length);
-    const totalCardsHeight = totalSubRows * cardH;
-    const rawAvailableGapTotal = Math.max(0, usableH - totalCardsHeight);
-
-    // Hitung bobot celah: celah antar-generasi sedikit lebih lega daripada sub-baris dalam 1 generasi
-    const gapWeights = allSubRows.slice(1).map((sr) => (sr.isFirstInGen ? 1.45 : 1.0));
-    const sumWeights = gapWeights.reduce((s, w) => s + w, 0) || 1;
-
-    const desiredMinGap = Math.max(18, Math.round(cardH * 0.24));
-    const maxUniformGap = Math.max(desiredMinGap + 24, Math.round(cardH * 0.95));
-    // Jika banyak baris sehingga celah standar berisiko meluap ke bawah kertas, kompres celah secara proporsional agar semua baris muat tanpa menumpuk!
-    const adaptiveMinGap =
-      allSubRows.length > 1
-        ? Math.max(8, Math.min(desiredMinGap, Math.floor(rawAvailableGapTotal / sumWeights)))
-        : desiredMinGap;
-
-    const effectiveGapTotal = Math.min(
-      rawAvailableGapTotal,
-      Math.max(sumWeights * adaptiveMinGap, sumWeights * maxUniformGap)
-    );
-    const unitGapWeightPx = sumWeights > 0 ? effectiveGapTotal / sumWeights : 0;
-
-    const totalLayoutH = totalCardsHeight + (allSubRows.length > 1 ? effectiveGapTotal : 0);
-    let curY = topSafeY + Math.max(0, (usableH - totalLayoutH) / 2);
-
-    allSubRows.forEach((sr, idx) => {
-      if (idx > 0) {
-        const w = sr.isFirstInGen ? 1.45 : 1.0;
-        curY += Math.max(adaptiveMinGap, Math.round(unitGapWeightPx * w));
+      if (allKidsAreSingleLeaves) {
+        const leafCols = Math.max(2, Math.min(opts.wrapLeafSiblingsMaxCols, measuredKids.length));
+        const leafRows = Math.ceil(measuredKids.length / leafCols);
+        const maxChildUnitW = Math.max(...measuredKids.map((k) => k.unitW));
+        const gridW = leafCols * maxChildUnitW + (leafCols - 1) * compactSiblingGap;
+        const gridH = leafRows * cardH + (leafRows - 1) * Math.max(22, Math.round(cardH * 0.25));
+        const blockW = Math.max(unitW, gridW);
+        const blockH = cardH + opts.rowStepY + gridH;
+        return {
+          member: m,
+          unitW,
+          spouses,
+          depth,
+          children: measuredKids,
+          isLeafGrid: true,
+          leafCols,
+          leafRows,
+          blockW,
+          blockH,
+        };
       }
 
-      const srUnits = sr.units;
-      const unitsSumW = srUnits.reduce((s, u) => s + u.unitW, 0);
-      const extraSpace = Math.max(0, usableW - unitsSumW);
-
-      // Sebar unit dalam baris agar memenuhi lebar kertas dengan proporsional (namun pasangan tetap nempel rapat!)
-      const dynamicUnitGap =
-        srUnits.length > 1
-          ? Math.min(
-              Math.max(minUnitGap, Math.round(usableW / Math.max(srUnits.length, 4) * 0.35)),
-              Math.floor(extraSpace / (srUnits.length - 1))
-            )
-          : minUnitGap;
-
-      const rowContentW = unitsSumW + Math.max(0, srUnits.length - 1) * dynamicUnitGap;
-      let curX = leftLabelMargin + Math.max(0, (usableW - rowContentW) / 2);
-
-      srUnits.forEach((u) => {
-        const m = u.member;
-        const primaryId = `n_${m.id}`;
-        memberNodeIdMap.set(m.id, primaryId);
-
-        nodes.push({
-          id: primaryId,
-          name: m.name,
-          sub: m.callName || (sr.genIndex === 0 ? 'Leluhur Utama' : `Generasi ${sr.genIndex + 1}`),
-          x: Math.round(curX),
-          y: Math.round(curY),
-          photo: m.photoUrl || '',
-          wafat: m.isDeceased,
-          gender: m.gender,
-          memberId: m.id,
-          genLevel: sr.genIndex,
-        });
-
-        u.spouses.forEach((sp, sIdx) => {
-          const spId = `n_${m.id}_sp_${sIdx + 1}`;
-          nodes.push({
-            id: spId,
-            name: sp.name,
-            sub: `Pasangan (${
-              sp.status === 'cerai_mati'
-                ? 'Wafat'
-                : sp.status === 'cerai_hidup'
-                ? 'Cerai'
-                : 'Menikah'
-            })`,
-            x: Math.round(curX + (sIdx + 1) * (cardW + coupleGap)),
-            y: Math.round(curY),
-            photo: '',
-            wafat: sp.status === 'cerai_mati',
-            gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
-            genLevel: sr.genIndex,
-          });
-          edges.push({ from: primaryId, to: spId, type: 'couple' });
-        });
-
-        curX += u.unitW + dynamicUnitGap;
-      });
-
-      curY += cardH;
-    });
-
-    // Sambungkan seluruh garis keturunan orang tua -> anak
-    members.forEach((m) => {
-      if (m.parentId && memberNodeIdMap.has(m.parentId) && memberNodeIdMap.has(m.id)) {
-        edges.push({
-          from: memberNodeIdMap.get(m.parentId)!,
-          to: memberNodeIdMap.get(m.id)!,
-          type: 'child',
-        });
-      }
-    });
-
-    return clampNodesSafe(nodes, edges, boardWidth, boardHeight, cardW, cardH);
-  }
-
-  // -------------------------------------------------------------------------
-  // MODE 1 & 4: SUBTREE VERTIKAL ANTI-SILANG (Top-Down)
-  // -------------------------------------------------------------------------
-  if (presetId === 'subtree_vertical' || presetId === 'heritage_showcase') {
-    const coupleGap = Math.max(6, Math.round(cardW * 0.08));
-    const siblingGap = Math.max(16, Math.round(cardW * 0.22));
-
-    interface MeasuredBranch {
-      member: FamilyMember;
-      unitW: number;
-      childrenTotalW: number;
-      subtreeW: number;
-      depth: number;
-      children: MeasuredBranch[];
-    }
-
-    let maxTreeDepth = 0;
-    const seen = new Set<string>();
-    const measure = (m: FamilyMember, depth: number): MeasuredBranch => {
-      seen.add(m.id);
-      maxTreeDepth = Math.max(maxTreeDepth, depth);
-      const spCount = m.spouses ? m.spouses.length : 0;
-      const unitW = cardW + spCount * (cardW + coupleGap);
-
-      const rawChildren = (childrenMap.get(m.id) || []).filter(
-        (c) => !seen.has(c.id)
-      );
-      const measuredChildren = rawChildren.map((c) => measure(c, depth + 1));
-
-      const childrenTotalW =
-        measuredChildren.length > 0
-          ? measuredChildren.reduce((sum, ch) => sum + ch.subtreeW, 0) +
-            (measuredChildren.length - 1) * siblingGap
+      const kidsTotalW =
+        measuredKids.length > 0
+          ? measuredKids.reduce((s, ch) => s + ch.blockW, 0) +
+            (measuredKids.length - 1) * compactSiblingGap
           : 0;
+      const kidsMaxH =
+        measuredKids.length > 0 ? Math.max(...measuredKids.map((ch) => ch.blockH)) : 0;
 
-      const subtreeW = Math.max(unitW, childrenTotalW);
+      const blockW = Math.max(unitW, kidsTotalW);
+      const blockH = measuredKids.length > 0 ? cardH + opts.rowStepY + kidsMaxH : cardH;
+
       return {
         member: m,
         unitW,
-        childrenTotalW,
-        subtreeW,
+        spouses,
         depth,
-        children: measuredChildren,
+        children: measuredKids,
+        isLeafGrid: false,
+        leafCols: 0,
+        leafRows: 0,
+        blockW,
+        blockH,
       };
     };
 
-    const measuredRoots = roots
+    const rootBlocks = roots
       .filter((r) => !seen.has(r.id))
-      .map((r) => measure(r, 0));
+      .map((r) => measureBlock(r, r.generationLevel ?? 0));
+    members.forEach((m) => {
+      if (!seen.has(m.id)) {
+        rootBlocks.push(measureBlock(m, m.generationLevel ?? 0));
+      }
+    });
 
-    // Hitung tinggi baris adaptif agar generasi mengisi tinggi kertas secara seimbang
-    const numLevels = maxTreeDepth + 1;
-    const idealRowStep =
-      numLevels > 1
-        ? Math.min(
-            cardH + 135,
-            Math.max(cardH + 46, Math.floor((usableH - cardH) / (numLevels - 1)))
-          )
-        : cardH + 75;
+    const usableW = Math.max(320, boardWidth - opts.leftMargin - opts.rightMargin);
 
-    const forestTotalW =
-      measuredRoots.reduce((s, r) => s + r.subtreeW, 0) +
-      Math.max(0, measuredRoots.length - 1) * 48;
+    // Susun rootBlocks ke dalam baris-baris yang muat di lebar kertas (jika ada >1 trah/cabang akar)
+    const rootRows: TreeBlock[][] = [];
+    let curRow: TreeBlock[] = [];
+    let curRowW = 0;
+    rootBlocks.forEach((rb) => {
+      const nextW = curRow.length === 0 ? rb.blockW : curRowW + opts.rootGapX + rb.blockW;
+      if (curRow.length > 0 && nextW > usableW) {
+        rootRows.push(curRow);
+        curRow = [rb];
+        curRowW = rb.blockW;
+      } else {
+        curRow.push(rb);
+        curRowW = nextW;
+      }
+    });
+    if (curRow.length > 0) rootRows.push(curRow);
 
-    const scaleCompression =
-      forestTotalW > boardWidth - 80
-        ? Math.max(0.56, (boardWidth - 80) / forestTotalW)
-        : 1;
-
-    const place = (
-      branch: MeasuredBranch,
+    const placeBlock = (
+      block: TreeBlock,
       leftX: number,
       topY: number,
-      parentPrimaryNodeId: string | null,
-      depth: number
+      parentNodeId: string | null
     ) => {
-      const m = branch.member;
-      const effectiveSubtreeW = branch.subtreeW * scaleCompression;
-      const unitStartX = leftX + (effectiveSubtreeW - branch.unitW) / 2;
-
+      const m = block.member;
+      const unitStartX = leftX + (block.blockW - block.unitW) / 2;
       const primaryId = `n_${m.id}`;
+
       nodes.push({
         id: primaryId,
         name: m.name,
         sub:
           m.callName ||
-          (depth === 0 ? 'Leluhur Utama' : `Generasi ${depth + 1}`),
+          (block.depth === 0 ? 'Leluhur Utama' : `Generasi ${block.depth + 1}`),
         x: Math.round(unitStartX),
         y: Math.round(topY),
         photo: m.photoUrl || '',
         wafat: m.isDeceased,
         gender: m.gender,
         memberId: m.id,
-        genLevel: depth,
+        genLevel: m.generationLevel ?? block.depth,
       });
 
-      if (parentPrimaryNodeId) {
-        edges.push({ from: parentPrimaryNodeId, to: primaryId, type: 'child' });
+      if (parentNodeId) {
+        edges.push({ from: parentNodeId, to: primaryId, type: 'child' });
       }
 
-      (m.spouses || []).forEach((sp, sIdx) => {
+      block.spouses.forEach((sp, sIdx) => {
         const spId = `n_${m.id}_sp_${sIdx + 1}`;
         nodes.push({
           id: spId,
@@ -658,43 +463,102 @@ export function generateSmartLayoutFromTable(
           photo: '',
           wafat: sp.status === 'cerai_mati',
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
-          genLevel: depth,
+          genLevel: m.generationLevel ?? block.depth,
         });
         edges.push({ from: primaryId, to: spId, type: 'couple' });
       });
 
-      if (branch.children.length > 0) {
-        const effChildrenTotalW = branch.childrenTotalW * scaleCompression;
-        let childX =
-          leftX + Math.max(0, (effectiveSubtreeW - effChildrenTotalW) / 2);
-        const childY = topY + idealRowStep;
+      if (block.children.length === 0) return;
 
-        branch.children.forEach((ch) => {
-          place(ch, childX, childY, primaryId, depth + 1);
-          childX += (ch.subtreeW + siblingGap) * scaleCompression;
+      const childTopY = topY + cardH + opts.rowStepY;
+
+      if (block.isLeafGrid) {
+        const maxChildUnitW = Math.max(...block.children.map((k) => k.unitW));
+        const gridTotalW =
+          block.leafCols * maxChildUnitW + (block.leafCols - 1) * compactSiblingGap;
+        const gridStartX = leftX + (block.blockW - gridTotalW) / 2;
+        const subRowStepY = cardH + Math.max(22, Math.round(cardH * 0.25));
+
+        block.children.forEach((ch, idx) => {
+          const col = idx % block.leafCols;
+          const r = Math.floor(idx / block.leafCols);
+          const cellLeftX = gridStartX + col * (maxChildUnitW + compactSiblingGap);
+          const cellCenteredX = cellLeftX + (maxChildUnitW - ch.unitW) / 2;
+          placeBlock(ch, cellCenteredX, childTopY + r * subRowStepY, primaryId);
+        });
+      } else {
+        const kidsTotalW =
+          block.children.reduce((s, ch) => s + ch.blockW, 0) +
+          (block.children.length - 1) * compactSiblingGap;
+        let childX = leftX + (block.blockW - kidsTotalW) / 2;
+        block.children.forEach((ch) => {
+          placeBlock(ch, childX, childTopY, primaryId);
+          childX += ch.blockW + compactSiblingGap;
         });
       }
     };
 
-    const totalRenderW = forestTotalW * scaleCompression;
-    let curRootX = Math.max(36, (boardWidth - totalRenderW) / 2);
-    const totalTreeH = numLevels > 1 ? (numLevels - 1) * idealRowStep + cardH : cardH;
-    const startY = topSafeY + Math.max(0, (usableH - totalTreeH) / 2);
+    const rowHeights = rootRows.map((rr) => Math.max(...rr.map((rb) => rb.blockH)));
+    const totalTreeH =
+      rowHeights.reduce((s, h) => s + h, 0) + Math.max(0, rootRows.length - 1) * 44;
 
-    measuredRoots.forEach((rb) => {
-      place(rb, curRootX, startY, null, 0);
-      curRootX += (rb.subtreeW + 48) * scaleCompression;
+    let curY = topSafeY + Math.max(0, (usableH - totalTreeH) / 2);
+
+    rootRows.forEach((rr, rIdx) => {
+      const rowW =
+        rr.reduce((s, rb) => s + rb.blockW, 0) +
+        Math.max(0, rr.length - 1) * opts.rootGapX;
+      let curX = opts.leftMargin + Math.max(0, (usableW - rowW) / 2);
+      rr.forEach((rb) => {
+        placeBlock(rb, curX, curY, null);
+        curX += rb.blockW + opts.rootGapX;
+      });
+      curY += rowHeights[rIdx] + 44;
+    });
+  };
+
+  // -------------------------------------------------------------------------
+  // MODE 0: ISI PENUH KERTAS (RAPAT, DEKAT INDUK & PITA GENERASI)
+  // -------------------------------------------------------------------------
+  if (presetId === 'hierarchy_grid_fill') {
+    const leftLabelMargin = 78;
+    const rightMargin = 28;
+    const usableW = Math.max(320, boardWidth - leftLabelMargin - rightMargin);
+    const maxLeafCols = Math.max(2, Math.min(4, Math.floor((usableW + compactSiblingGap) / (cardW + compactSiblingGap))));
+
+    runCompactTreeLayout({
+      wrapLeafSiblingsMaxCols: maxLeafCols,
+      leftMargin: leftLabelMargin,
+      rightMargin,
+      rowStepY: compactRowGap,
+      rootGapX: Math.max(24, Math.round(cardW * 0.25)),
     });
 
-    return clampAndCenterNodes(nodes, edges, boardWidth, boardHeight, cardW, cardH);
+    return fitNodesInsideBoard(nodes, edges, boardWidth, boardHeight, cardW, cardH, leftLabelMargin);
   }
 
   // -------------------------------------------------------------------------
-  // MODE 2: CABANG HORIZONTAL KIRI -> KANAN
+  // MODE 1 & 4: POHON RANTING VERTIKAL ANTI-SILANG (KOMPAK & LURUS)
+  // -------------------------------------------------------------------------
+  if (presetId === 'subtree_vertical' || presetId === 'heritage_showcase') {
+    const maxLeafCols = Math.max(3, Math.min(5, Math.floor((boardWidth - 80) / (cardW + compactSiblingGap))));
+    runCompactTreeLayout({
+      wrapLeafSiblingsMaxCols: maxLeafCols,
+      leftMargin: 32,
+      rightMargin: 32,
+      rowStepY: compactRowGap,
+      rootGapX: Math.max(26, Math.round(cardW * 0.28)),
+    });
+
+    return fitNodesInsideBoard(nodes, edges, boardWidth, boardHeight, cardW, cardH, 24);
+  }
+
+  // -------------------------------------------------------------------------
+  // MODE 2: ALUR CABANG KIRI -> KANAN (KOMPAK & DEKAT INDUK)
   // -------------------------------------------------------------------------
   if (presetId === 'subtree_horizontal') {
     const spouseGapY = Math.max(6, Math.round(cardH * 0.08));
-    const siblingGapY = Math.max(14, Math.round(cardH * 0.16));
+    const siblingGapY = Math.max(12, Math.round(cardH * 0.14));
 
     interface HBranch {
       member: FamilyMember;
@@ -736,21 +600,24 @@ export function generateSmartLayoutFromTable(
     const measuredRoots = roots
       .filter((r) => !seen.has(r.id))
       .map((r) => measureH(r, 0));
+    members.forEach((m) => {
+      if (!seen.has(m.id)) measuredRoots.push(measureH(m, 0));
+    });
 
     const numLevels = maxTreeDepth + 1;
-    const usableW = Math.max(320, boardWidth - 100);
+    const usableW = Math.max(320, boardWidth - 80);
+    // Jarak kolom dibuat rapat agar garis horizontal pendek & mudah dibaca
     const colGap =
       numLevels > 1
         ? Math.min(
-            cardW + 150,
-            Math.max(cardW + 46, Math.floor((usableW - cardW) / (numLevels - 1)))
+            cardW + 68,
+            Math.max(cardW + 38, Math.floor((usableW - cardW) / (numLevels - 1)))
           )
-        : cardW + 90;
+        : cardW + 60;
 
     const totalH =
       measuredRoots.reduce((s, r) => s + r.subtreeH, 0) +
-      Math.max(0, measuredRoots.length - 1) * 32;
-    const scaleY = totalH > usableH ? Math.max(0.55, usableH / totalH) : 1;
+      Math.max(0, measuredRoots.length - 1) * 24;
 
     const placeH = (
       branch: HBranch,
@@ -760,8 +627,7 @@ export function generateSmartLayoutFromTable(
       depth: number
     ) => {
       const m = branch.member;
-      const effSubtreeH = branch.subtreeH * scaleY;
-      const unitStartY = topY + (effSubtreeH - branch.unitH) / 2;
+      const unitStartY = topY + (branch.subtreeH - branch.unitH) / 2;
 
       const primaryId = `n_${m.id}`;
       nodes.push({
@@ -776,7 +642,7 @@ export function generateSmartLayoutFromTable(
         wafat: m.isDeceased,
         gender: m.gender,
         memberId: m.id,
-        genLevel: depth,
+        genLevel: m.generationLevel ?? depth,
       });
 
       if (parentPrimaryNodeId) {
@@ -800,265 +666,98 @@ export function generateSmartLayoutFromTable(
           photo: '',
           wafat: sp.status === 'cerai_mati',
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
-          genLevel: depth,
+          genLevel: m.generationLevel ?? depth,
         });
         edges.push({ from: primaryId, to: spId, type: 'couple' });
       });
 
       if (branch.children.length > 0) {
-        const effChildrenH = branch.childrenTotalH * scaleY;
-        let childY = topY + Math.max(0, (effSubtreeH - effChildrenH) / 2);
+        let childY = topY + Math.max(0, (branch.subtreeH - branch.childrenTotalH) / 2);
         const childX = leftX + colGap;
         branch.children.forEach((ch) => {
           placeH(ch, childX, childY, primaryId, depth + 1);
-          childY += (ch.subtreeH + siblingGapY) * scaleY;
+          childY += ch.subtreeH + siblingGapY;
         });
       }
     };
 
     const totalTreeW = numLevels > 1 ? (numLevels - 1) * colGap + cardW : cardW;
-    const startX = Math.max(40, (boardWidth - totalTreeW) / 2);
-    let curY = topSafeY + Math.max(0, (usableH - totalH * scaleY) / 2);
+    const startX = Math.max(36, (boardWidth - totalTreeW) / 2);
+    let curY = topSafeY + Math.max(0, (usableH - totalH) / 2);
 
     measuredRoots.forEach((rb) => {
       placeH(rb, startX, curY, null, 0);
-      curY += (rb.subtreeH + 32) * scaleY;
+      curY += rb.subtreeH + 24;
     });
 
-    return clampAndCenterNodes(nodes, edges, boardWidth, boardHeight, cardW, cardH);
+    return fitNodesInsideBoard(nodes, edges, boardWidth, boardHeight, cardW, cardH, 24);
   }
 
   // -------------------------------------------------------------------------
-  // MODE 3: KLASTER KELUARGA INTI (GARIS PENDEK & BERDEKATAN)
+  // MODE 3: KLASTER KELUARGA INTI (GARIS PENDEK, PADAT 2 KOLOM ANAK)
   // -------------------------------------------------------------------------
-  const sortedByGen = [...members].sort(
-    (a, b) =>
-      (a.generationLevel || 0) - (b.generationLevel || 0) ||
-      (a.orderIndex || 0) - (b.orderIndex || 0)
-  );
-
-  const parentGroups = sortedByGen.filter(
-    (m) => (childrenMap.get(m.id) || []).length > 0
-  );
-  const placedMemberIds = new Set<string>();
-  const coupleGap = Math.max(6, Math.round(cardW * 0.08));
-  const childGap = Math.max(10, Math.round(cardW * 0.1));
-  const clusterPaddingX = Math.max(24, Math.round(cardW * 0.24));
-  const clusterGapY = Math.max(36, Math.round(cardH * 0.35));
-
-  let cursorX = 44;
-  let cursorY = 78;
-  let rowMaxH = 0;
-
-  const memberNodeIdMap = new Map<string, string>();
-
-  parentGroups.forEach((parent) => {
-    const kids = (childrenMap.get(parent.id) || []).filter(
-      (k) => !placedMemberIds.has(k.id)
-    );
-
-    const parentUnitCount = 1 + (parent.spouses ? parent.spouses.length : 0);
-    const parentRowW = parentUnitCount * cardW + (parentUnitCount - 1) * coupleGap;
-
-    const kidsRowW =
-      kids.length > 0
-        ? kids.length * cardW + (kids.length - 1) * childGap
-        : 0;
-
-    const clusterW = Math.max(parentRowW, kidsRowW);
-    const clusterH = kids.length > 0 ? cardH * 2 + 50 : cardH;
-
-    if (cursorX + clusterW > boardWidth - 40 && cursorX > 44) {
-      cursorX = 44;
-      cursorY += rowMaxH + clusterGapY;
-      rowMaxH = 0;
-    }
-
-    const parentGen = parent.generationLevel || 0;
-    let parentNodeId = memberNodeIdMap.get(parent.id);
-    if (!parentNodeId) {
-      parentNodeId = `n_${parent.id}`;
-      memberNodeIdMap.set(parent.id, parentNodeId);
-      placedMemberIds.add(parent.id);
-
-      const parentStartX = cursorX + (clusterW - parentRowW) / 2;
-      nodes.push({
-        id: parentNodeId,
-        name: parent.name,
-        sub: parent.callName || `Generasi ${parentGen + 1}`,
-        x: Math.round(parentStartX),
-        y: Math.round(cursorY),
-        photo: parent.photoUrl || '',
-        wafat: parent.isDeceased,
-        gender: parent.gender,
-        memberId: parent.id,
-        genLevel: parentGen,
-      });
-
-      (parent.spouses || []).forEach((sp, sIdx) => {
-        const spId = `n_${parent.id}_sp_${sIdx + 1}`;
-        nodes.push({
-          id: spId,
-          name: sp.name,
-          sub: 'Pasangan',
-          x: Math.round(parentStartX + (sIdx + 1) * (cardW + coupleGap)),
-          y: Math.round(cursorY),
-          photo: '',
-          wafat: sp.status === 'cerai_mati',
-          gender: parent.gender === 'L' ? 'P' : parent.gender === 'P' ? 'L' : undefined,
-          genLevel: parentGen,
-        });
-        edges.push({ from: parentNodeId!, to: spId, type: 'couple' });
-      });
-    }
-
-    if (kids.length > 0) {
-      const parentNodeObj = nodes.find((n) => n.id === parentNodeId);
-      const kidsY = parentNodeObj ? parentNodeObj.y + cardH + 46 : cursorY + cardH + 46;
-      const kidsStartX = cursorX + (clusterW - kidsRowW) / 2;
-
-      kids.forEach((kid, kIdx) => {
-        const kidId = `n_${kid.id}`;
-        const kidGen = kid.generationLevel ?? parentGen + 1;
-        memberNodeIdMap.set(kid.id, kidId);
-        placedMemberIds.add(kid.id);
-
-        const kx = kidsStartX + kIdx * (cardW + childGap);
-        nodes.push({
-          id: kidId,
-          name: kid.name,
-          sub: kid.callName || `Generasi ${kidGen + 1}`,
-          x: Math.round(kx),
-          y: Math.round(kidsY),
-          photo: kid.photoUrl || '',
-          wafat: kid.isDeceased,
-          gender: kid.gender,
-          memberId: kid.id,
-          genLevel: kidGen,
-        });
-        edges.push({ from: parentNodeId!, to: kidId, type: 'child' });
-      });
-    }
-
-    cursorX += clusterW + clusterPaddingX;
-    rowMaxH = Math.max(rowMaxH, clusterH);
+  runCompactTreeLayout({
+    wrapLeafSiblingsMaxCols: 2,
+    leftMargin: 32,
+    rightMargin: 32,
+    rowStepY: Math.max(32, Math.round(cardH * 0.34)),
+    rootGapX: Math.max(20, Math.round(cardW * 0.2)),
   });
 
-  sortedByGen.forEach((m) => {
-    if (placedMemberIds.has(m.id)) return;
-    if (cursorX + cardW > boardWidth - 40 && cursorX > 44) {
-      cursorX = 44;
-      cursorY += rowMaxH + clusterGapY;
-      rowMaxH = 0;
-    }
-    const id = `n_${m.id}`;
-    const gen = m.generationLevel || 0;
-    memberNodeIdMap.set(m.id, id);
-    placedMemberIds.add(m.id);
-    nodes.push({
-      id,
-      name: m.name,
-      sub: m.callName || `Generasi ${gen + 1}`,
-      x: Math.round(cursorX),
-      y: Math.round(cursorY),
-      photo: m.photoUrl || '',
-      wafat: m.isDeceased,
-      gender: m.gender,
-      memberId: m.id,
-      genLevel: gen,
-    });
-    if (m.parentId && memberNodeIdMap.has(m.parentId)) {
-      edges.push({
-        from: memberNodeIdMap.get(m.parentId)!,
-        to: id,
-        type: 'child',
-      });
-    }
-    cursorX += cardW + 18;
-    rowMaxH = Math.max(rowMaxH, cardH);
-  });
-
-  return clampAndCenterNodes(nodes, edges, boardWidth, boardHeight, cardW, cardH);
+  return fitNodesInsideBoard(nodes, edges, boardWidth, boardHeight, cardW, cardH, 24);
 }
 
-function clampNodesSafe(
+// Menjaga seluruh pohon tetap di dalam batas kertas secara proporsional tanpa menggeser kartu jadi tumpang tindih!
+function fitNodesInsideBoard(
   nodes: InteractiveNode[],
   edges: InteractiveEdge[],
   boardWidth: number,
   boardHeight: number,
   cardW: number,
-  cardH: number
+  cardH: number,
+  minLeftX = 20
 ): { nodes: InteractiveNode[]; edges: InteractiveEdge[] } {
   if (nodes.length === 0) return { nodes, edges };
 
-  const minBoundX = 16;
-  const maxBoundX = Math.max(minBoundX + 10, boardWidth - cardW - 16);
+  const minBoundX = minLeftX;
+  const maxBoundX = Math.max(minBoundX + 10, boardWidth - cardW - 20);
   const minBoundY = 66;
-  const maxBoundY = Math.max(minBoundY + 10, boardHeight - cardH - 16);
+  const maxBoundY = Math.max(minBoundY + 10, boardHeight - cardH - 22);
 
+  const curMinX = Math.min(...nodes.map((n) => n.x));
+  const curMaxX = Math.max(...nodes.map((n) => n.x));
   const curMinY = Math.min(...nodes.map((n) => n.y));
   const curMaxY = Math.max(...nodes.map((n) => n.y));
-  const curSpanY = curMaxY - curMinY;
-  const availSpanY = maxBoundY - minBoundY;
 
-  // Jika baris paling bawah melampaui batas kertas, kompres Y secara proporsional agar TIDAK ada baris yang tergencet menumpuk di dasar kertas
-  const needYCompress = curMaxY > maxBoundY && curSpanY > availSpanY && curSpanY > 0;
+  const curSpanX = curMaxX - curMinX;
+  const curSpanY = curMaxY - curMinY;
+  const availSpanX = Math.max(10, maxBoundX - minBoundX);
+  const availSpanY = Math.max(10, maxBoundY - minBoundY);
+
+  // Kompres proporsional seluruh posisi X jika lebar total melebihi kertas (sehingga tidak ada kartu bertumpuk di tepi kanan)
+  const scaleX = curSpanX > availSpanX && curSpanX > 0 ? availSpanX / curSpanX : 1;
+  const scaleY = curSpanY > availSpanY && curSpanY > 0 ? availSpanY / curSpanY : 1;
+
+  const renderedSpanX = curSpanX * scaleX + cardW;
+  const centerOffsetX =
+    scaleX === 1 && renderedSpanX < boardWidth - minLeftX - 24
+      ? Math.max(minBoundX, (boardWidth - renderedSpanX) / 2)
+      : minBoundX;
 
   const adjusted = nodes.map((n) => {
-    const rawY = needYCompress
-      ? minBoundY + ((n.y - curMinY) / curSpanY) * availSpanY
-      : n.y;
+    const mappedX =
+      scaleX === 1
+        ? centerOffsetX + (n.x - curMinX)
+        : minBoundX + (n.x - curMinX) * scaleX;
+    const mappedY =
+      scaleY === 1
+        ? Math.max(minBoundY, Math.min(maxBoundY, n.y))
+        : minBoundY + (n.y - curMinY) * scaleY;
+
     return {
       ...n,
-      x: Math.max(minBoundX, Math.min(maxBoundX, Math.round(n.x))),
-      y: Math.max(minBoundY, Math.min(maxBoundY, Math.round(rawY))),
-    };
-  });
-  return { nodes: adjusted, edges };
-}
-
-// Menjaga seluruh posisi berada rapi di dalam margin kertas dan terpusat
-function clampAndCenterNodes(
-  nodes: InteractiveNode[],
-  edges: InteractiveEdge[],
-  boardWidth: number,
-  boardHeight: number,
-  cardW: number,
-  cardH: number
-): { nodes: InteractiveNode[]; edges: InteractiveEdge[] } {
-  if (nodes.length === 0) return { nodes, edges };
-
-  const minX = Math.min(...nodes.map((n) => n.x));
-  const maxX = Math.max(...nodes.map((n) => n.x + cardW));
-  const treeW = maxX - minX;
-
-  let shiftX = 0;
-  if (treeW < boardWidth - 60) {
-    const desiredLeft = (boardWidth - treeW) / 2;
-    shiftX = desiredLeft - minX;
-  } else if (minX < 24) {
-    shiftX = 24 - minX;
-  }
-
-  const minBoundX = 16;
-  const maxBoundX = Math.max(minBoundX + 10, boardWidth - cardW - 16);
-  const minBoundY = 66;
-  const maxBoundY = Math.max(minBoundY + 10, boardHeight - cardH - 16);
-
-  const curMinY = Math.min(...nodes.map((n) => n.y));
-  const curMaxY = Math.max(...nodes.map((n) => n.y));
-  const curSpanY = curMaxY - curMinY;
-  const availSpanY = maxBoundY - minBoundY;
-  const needYCompress = curMaxY > maxBoundY && curSpanY > availSpanY && curSpanY > 0;
-
-  const adjusted = nodes.map((n) => {
-    const rawY = needYCompress
-      ? minBoundY + ((n.y - curMinY) / curSpanY) * availSpanY
-      : n.y;
-    return {
-      ...n,
-      x: Math.max(minBoundX, Math.min(maxBoundX, Math.round(n.x + shiftX))),
-      y: Math.max(minBoundY, Math.min(maxBoundY, Math.round(rawY))),
+      x: Math.max(minBoundX, Math.min(maxBoundX, Math.round(mappedX))),
+      y: Math.max(minBoundY, Math.min(maxBoundY, Math.round(mappedY))),
     };
   });
 

@@ -47,6 +47,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Layers,
+  Split,
 } from 'lucide-react';
 import { FamilyMember, TrahCategory } from './LeluhurQuView';
 import { MonetizationService } from '../../services/monetizationService';
@@ -84,6 +86,21 @@ export interface CanvasCaptionInfo {
   showLineLegend: boolean;
 }
 
+export interface MergedCardMember {
+  originalNodeId: string;
+  memberId?: string;
+  name: string;
+  sub: string;
+  photo: string;
+  wafat: boolean;
+  gender?: 'L' | 'P';
+  genLevel?: number;
+  customBgColor?: string;
+  customBorderColor?: string;
+  relX: number;
+  relY: number;
+}
+
 export interface InteractiveNode {
   id: string;
   name: string;
@@ -98,6 +115,9 @@ export interface InteractiveNode {
   customBgColor?: string;
   customBorderColor?: string;
   genLevel?: number;
+  mergedMembers?: MergedCardMember[];
+  mergedCols?: number;
+  mergedEdgesSnapshot?: InteractiveEdge[];
 }
 
 export interface InteractiveEdge {
@@ -254,6 +274,94 @@ function getScaledPhotoDim(
   };
 }
 
+function getMergedGridMetrics(
+  membersCount: number,
+  displayMode: CardDisplayMode,
+  photoSize: PhotoFrameSize,
+  cardScale = 1,
+  customCols?: number
+): {
+  cols: number;
+  rows: number;
+  cellW: number;
+  cellH: number;
+  gap: number;
+  padX: number;
+  padY: number;
+  headerH: number;
+  w: number;
+  h: number;
+} {
+  const defaultCols =
+    membersCount <= 2
+      ? 2
+      : membersCount === 3
+      ? 3
+      : membersCount === 4
+      ? 2
+      : membersCount <= 6
+      ? 3
+      : 4;
+  const cols = Math.max(1, Math.min(membersCount, customCols || defaultCols));
+  const rows = Math.max(1, Math.ceil(membersCount / cols));
+  const pDim = PHOTO_DIMENSIONS[photoSize];
+  const gap = Math.max(4, Math.round((displayMode === 'photo_only' ? 6 : 8) * cardScale));
+  const padX = Math.max(6, Math.round(10 * cardScale));
+  const padY = Math.max(6, Math.round(10 * cardScale));
+
+  if (displayMode === 'photo_only') {
+    const cellW = Math.max(28, Math.round(pDim.w * cardScale));
+    const cellH = Math.max(28, Math.round(pDim.h * cardScale));
+    return {
+      cols,
+      rows,
+      cellW,
+      cellH,
+      gap,
+      padX,
+      padY,
+      headerH: 0,
+      w: cols * cellW + (cols - 1) * gap + padX * 2,
+      h: rows * cellH + (rows - 1) * gap + padY * 2,
+    };
+  }
+
+  if (displayMode === 'name_only') {
+    const cellW = Math.max(76, Math.round(114 * cardScale));
+    const cellH = Math.max(22, Math.round(28 * cardScale));
+    const headerH = Math.max(16, Math.round(20 * cardScale));
+    return {
+      cols,
+      rows,
+      cellW,
+      cellH,
+      gap,
+      padX,
+      padY,
+      headerH,
+      w: cols * cellW + (cols - 1) * gap + padX * 2,
+      h: headerH + rows * cellH + (rows - 1) * gap + padY * 2,
+    };
+  }
+
+  // 'full'
+  const cellW = Math.max(76, Math.round(Math.max(98, pDim.w + 28) * cardScale));
+  const cellH = Math.max(58, Math.round((pDim.h + 46) * cardScale));
+  const headerH = Math.max(18, Math.round(24 * cardScale));
+  return {
+    cols,
+    rows,
+    cellW,
+    cellH,
+    gap,
+    padX,
+    padY,
+    headerH,
+    w: cols * cellW + (cols - 1) * gap + padX * 2,
+    h: headerH + rows * cellH + (rows - 1) * gap + padY * 2,
+  };
+}
+
 // Hitung dimensi aktual kartu agar garis konektor & alat Sejajarkan presisi 100%
 function getNodeSize(
   node: InteractiveNode,
@@ -261,6 +369,17 @@ function getNodeSize(
   photoSize: PhotoFrameSize,
   cardScale = 1
 ): { w: number; h: number } {
+  if (node.mergedMembers && node.mergedMembers.length >= 2) {
+    const m = getMergedGridMetrics(
+      node.mergedMembers.length,
+      displayMode,
+      photoSize,
+      cardScale,
+      node.mergedCols
+    );
+    return { w: m.w, h: m.h };
+  }
+
   const pDim = PHOTO_DIMENSIONS[photoSize];
 
   if (displayMode === 'photo_only') {
@@ -866,6 +985,146 @@ function findNonOverlappingSlot(
   return { x: clampedPrefX, y: clampedPrefY };
 }
 
+function shiftNodesAwayFromRect(
+  fixedRect: { x: number; y: number; w: number; h: number },
+  movingNodes: InteractiveNode[],
+  getSize: (n: InteractiveNode) => { w: number; h: number },
+  boardW: number,
+  boardH: number
+): InteractiveNode[] {
+  const GAP_X = 22;
+  const GAP_Y = 24;
+  const MIN_X = 16;
+  const MIN_Y = 58;
+
+  const clampNode = (x: number, y: number, w: number, h: number) => ({
+    x: Math.max(MIN_X, Math.min(Math.max(MIN_X, boardW - w - 16), Math.round(x))),
+    y: Math.max(MIN_Y, Math.min(Math.max(MIN_Y, boardH - h - 24), Math.round(y))),
+  });
+
+  const items = movingNodes.map((n) => {
+    const sz = getSize(n);
+    return { node: { ...n }, w: sz.w, h: sz.h };
+  });
+
+  const fCx = fixedRect.x + fixedRect.w / 2;
+  const fCy = fixedRect.y + fixedRect.h / 2;
+
+  items.sort((a, b) => {
+    const da = Math.hypot(a.node.x + a.w / 2 - fCx, a.node.y + a.h / 2 - fCy);
+    const db = Math.hypot(b.node.x + b.w / 2 - fCx, b.node.y + b.h / 2 - fCy);
+    return da - db;
+  });
+
+  const pushOutFromBox = (
+    target: { node: InteractiveNode; w: number; h: number },
+    blocker: { x: number; y: number; w: number; h: number }
+  ): boolean => {
+    const overlapX =
+      Math.min(target.node.x + target.w + GAP_X, blocker.x + blocker.w) -
+      Math.max(target.node.x, blocker.x - GAP_X);
+    const overlapY =
+      Math.min(target.node.y + target.h + GAP_Y, blocker.y + blocker.h) -
+      Math.max(target.node.y, blocker.y - GAP_Y);
+
+    if (overlapX <= 0 || overlapY <= 0) return false;
+
+    const tCx = target.node.x + target.w / 2;
+    const tCy = target.node.y + target.h / 2;
+    const bCx = blocker.x + blocker.w / 2;
+    const bCy = blocker.y + blocker.h / 2;
+
+    const sameRowBand = Math.abs(tCy - bCy) < (target.h + blocker.h) * 0.45;
+    let nextX = target.node.x;
+    let nextY = target.node.y;
+
+    if (sameRowBand || overlapX < overlapY) {
+      if (tCx < bCx) {
+        const candidateLeft = blocker.x - GAP_X - target.w;
+        if (candidateLeft >= MIN_X) {
+          nextX = candidateLeft;
+        } else {
+          nextX = blocker.x + blocker.w + GAP_X;
+        }
+      } else {
+        const candidateRight = blocker.x + blocker.w + GAP_X;
+        if (candidateRight + target.w <= boardW - 16) {
+          nextX = candidateRight;
+        } else {
+          const candidateLeft = blocker.x - GAP_X - target.w;
+          if (candidateLeft >= MIN_X) {
+            nextX = candidateLeft;
+          } else {
+            nextY = blocker.y + blocker.h + GAP_Y;
+          }
+        }
+      }
+    } else {
+      if (tCy >= bCy) {
+        const candidateDown = blocker.y + blocker.h + GAP_Y;
+        if (candidateDown + target.h <= boardH - 24) {
+          nextY = candidateDown;
+        } else {
+          nextX =
+            tCx < bCx
+              ? blocker.x - GAP_X - target.w
+              : blocker.x + blocker.w + GAP_X;
+        }
+      } else {
+        const candidateUp = blocker.y - GAP_Y - target.h;
+        if (candidateUp >= MIN_Y) {
+          nextY = candidateUp;
+        } else {
+          nextY = blocker.y + blocker.h + GAP_Y;
+        }
+      }
+    }
+
+    const clamped = clampNode(nextX, nextY, target.w, target.h);
+    if (clamped.x === target.node.x && clamped.y === target.node.y) {
+      const downFallback = clampNode(
+        target.node.x,
+        blocker.y + blocker.h + GAP_Y,
+        target.w,
+        target.h
+      );
+      if (downFallback.x === target.node.x && downFallback.y === target.node.y) {
+        return false;
+      }
+      target.node.x = downFallback.x;
+      target.node.y = downFallback.y;
+      return true;
+    }
+    target.node.x = clamped.x;
+    target.node.y = clamped.y;
+    return true;
+  };
+
+  for (let pass = 0; pass < 14; pass++) {
+    let movedAny = false;
+    for (let i = 0; i < items.length; i++) {
+      if (pushOutFromBox(items[i], fixedRect)) {
+        movedAny = true;
+      }
+      for (let j = 0; j < i; j++) {
+        if (
+          pushOutFromBox(items[i], {
+            x: items[j].node.x,
+            y: items[j].node.y,
+            w: items[j].w,
+            h: items[j].h,
+          })
+        ) {
+          movedAny = true;
+        }
+      }
+    }
+    if (!movedAny) break;
+  }
+
+  return items.map((it) => it.node);
+}
+
 function reconcileCanvasWithMembers(
   currentNodes: InteractiveNode[],
   currentEdges: InteractiveEdge[],
@@ -896,7 +1155,7 @@ function reconcileCanvasWithMembers(
   const memberMap = new Map<string, FamilyMember>(members.map((m) => [m.id, m]));
   let changed = false;
 
-  // 1. Perbarui metadata node yang terhubung & hapus node anggota yang sudah tidak ada di tabel
+  // 1. Perbarui metadata node yang terhubung (termasuk anggota dalam Card Besar Gabungan)
   let updatedNodes: InteractiveNode[] = currentNodes
     .filter((n) => {
       if (n.memberId && !memberMap.has(n.memberId)) {
@@ -906,6 +1165,70 @@ function reconcileCanvasWithMembers(
       return true;
     })
     .map((n) => {
+      if (n.mergedMembers && n.mergedMembers.length > 0) {
+        let subChanged = false;
+        const syncedMerged = n.mergedMembers
+          .filter((mm) => {
+            if (mm.memberId && !memberMap.has(mm.memberId)) {
+              subChanged = true;
+              return false;
+            }
+            return true;
+          })
+          .map((mm) => {
+            if (!mm.memberId) return mm;
+            const m = memberMap.get(mm.memberId);
+            if (!m) return mm;
+            const nextSub =
+              m.callName ||
+              (m.birthYear ? `Lahir ${m.birthYear}` : `Gen ${m.generationLevel}`);
+            const nextPhoto = m.photoUrl || mm.photo;
+            if (
+              mm.name !== m.name ||
+              mm.sub !== nextSub ||
+              mm.photo !== nextPhoto ||
+              mm.wafat !== m.isDeceased ||
+              mm.gender !== m.gender ||
+              mm.genLevel !== m.generationLevel
+            ) {
+              subChanged = true;
+              return {
+                ...mm,
+                name: m.name,
+                sub: nextSub,
+                photo: nextPhoto,
+                wafat: m.isDeceased,
+                gender: m.gender,
+                genLevel: m.generationLevel,
+              };
+            }
+            return mm;
+          });
+
+        if (subChanged) {
+          changed = true;
+          if (syncedMerged.length === 1) {
+            const lone = syncedMerged[0];
+            return {
+              id: lone.originalNodeId || n.id,
+              memberId: lone.memberId,
+              name: lone.name,
+              sub: lone.sub,
+              x: n.x,
+              y: n.y,
+              photo: lone.photo,
+              wafat: lone.wafat,
+              gender: lone.gender,
+              genLevel: lone.genLevel,
+              customBgColor: lone.customBgColor || n.customBgColor,
+              customBorderColor: lone.customBorderColor || n.customBorderColor,
+            };
+          }
+          return { ...n, mergedMembers: syncedMerged };
+        }
+        return n;
+      }
+
       if (!n.memberId) return n;
       const m = memberMap.get(n.memberId);
       if (!m) return n;
@@ -942,9 +1265,15 @@ function reconcileCanvasWithMembers(
     return keep;
   });
 
-  const presentMemberIds = new Set(
-    updatedNodes.map((n) => n.memberId).filter((id): id is string => Boolean(id))
-  );
+  const presentMemberIds = new Set<string>();
+  updatedNodes.forEach((n) => {
+    if (n.memberId) presentMemberIds.add(n.memberId);
+    if (n.mergedMembers) {
+      n.mergedMembers.forEach((mm) => {
+        if (mm.memberId) presentMemberIds.add(mm.memberId);
+      });
+    }
+  });
   const missingMembers = members.filter((m) => !presentMemberIds.has(m.id));
 
   // Deteksi apakah kartu yang tersimpan mengalami penumpukan parah (mis. koordinat hampir sama)
@@ -2266,6 +2595,422 @@ export const InteractiveGridCanvasView: React.FC<
     setNodes(nextNodes);
     persistCurrentDesign(nextNodes, edges);
     showNotification('Ikatan Group berhasil dilepas.');
+  };
+
+  // =========================================================================
+  // GABUNG JADI 1 CARD BESAR (GARIS DIRINGKAS JADI 1 + KARTU LAIN BERGESER)
+  // =========================================================================
+  const handleMergeSelectedIntoBigCard = () => {
+    if (selectedIds.length < 2) {
+      showNotification('Pilih minimal 2 foto/card untuk digabung menjadi 1 Card Besar!');
+      return;
+    }
+
+    const selSet = new Set(selectedIds);
+    const selectedNodes = nodes
+      .filter((n) => selSet.has(n.id))
+      .sort((a, b) => (Math.abs(a.y - b.y) > 40 ? a.y - b.y : a.x - b.x));
+
+    if (selectedNodes.length < 2) return;
+
+    const minX = Math.min(...selectedNodes.map((n) => n.x));
+    const minY = Math.min(...selectedNodes.map((n) => n.y));
+    const maxX = Math.max(
+      ...selectedNodes.map((n) => {
+        const sz = getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale);
+        return n.x + sz.w;
+      })
+    );
+
+    const flatMembers: MergedCardMember[] = [];
+    const inheritedSnapshots: InteractiveEdge[] = [];
+
+    selectedNodes.forEach((n) => {
+      if (n.mergedMembers && n.mergedMembers.length > 0) {
+        n.mergedMembers.forEach((mm) => {
+          flatMembers.push({
+            ...mm,
+            relX: Math.round(n.x - minX + mm.relX),
+            relY: Math.round(n.y - minY + mm.relY),
+          });
+        });
+        if (n.mergedEdgesSnapshot) {
+          inheritedSnapshots.push(...n.mergedEdgesSnapshot);
+        }
+      } else {
+        flatMembers.push({
+          originalNodeId: n.id,
+          memberId: n.memberId,
+          name: n.name,
+          sub: n.sub,
+          photo: n.photo,
+          wafat: n.wafat,
+          gender: n.gender,
+          genLevel: n.genLevel,
+          customBgColor: n.customBgColor,
+          customBorderColor: n.customBorderColor,
+          relX: Math.round(n.x - minX),
+          relY: Math.round(n.y - minY),
+        });
+      }
+    });
+
+    const snapshotEdges = [
+      ...inheritedSnapshots,
+      ...edges.filter((e) => selSet.has(e.from) || selSet.has(e.to)),
+    ];
+
+    const mergedId = `merged_${Date.now().toString().slice(-5)}`;
+    const firstNames = flatMembers.slice(0, 2).map((m) => m.name.split(' ')[0]);
+    const combinedTitle =
+      flatMembers.length === 2
+        ? `${flatMembers[0].name} & ${flatMembers[1].name}`
+        : `${firstNames.join(', ')} (+${flatMembers.length - 2})`;
+
+    const minGenLevel = selectedNodes.reduce<number | undefined>((acc, n) => {
+      if (n.genLevel === undefined) return acc;
+      return acc === undefined ? n.genLevel : Math.min(acc, n.genLevel);
+    }, undefined);
+
+    const draftMergedNode: InteractiveNode = {
+      id: mergedId,
+      name: combinedTitle,
+      sub: `Gabungan ${flatMembers.length} Kartu`,
+      x: minX,
+      y: minY,
+      photo: flatMembers[0]?.photo || '',
+      wafat: flatMembers.every((m) => m.wafat),
+      genLevel: minGenLevel,
+      customBgColor: selectedNodes.find((n) => n.customBgColor)?.customBgColor,
+      customBorderColor: selectedNodes.find((n) => n.customBorderColor)?.customBorderColor,
+      mergedMembers: flatMembers,
+      mergedEdgesSnapshot: snapshotEdges,
+    };
+
+    const mergedSize = getNodeSize(
+      draftMergedNode,
+      cardDisplayMode,
+      photoFrameSize,
+      cardScale
+    );
+
+    // Jika kartu terpilih punya Induk (Parent) di luar pilihan, tarik Card Besar mendekati induknya agar garis pendek & rapi!
+    const externalParentEdge = edges.find(
+      (ed) => ed.type === 'child' && selSet.has(ed.to) && !selSet.has(ed.from)
+    );
+    const externalParentNode = externalParentEdge
+      ? nodes.find((n) => n.id === externalParentEdge.from)
+      : undefined;
+
+    let targetX: number;
+    let targetY: number;
+
+    if (externalParentNode) {
+      const pSz = getNodeSize(
+        externalParentNode,
+        cardDisplayMode,
+        photoFrameSize,
+        cardScale
+      );
+      const pCenterX = externalParentNode.x + pSz.w / 2;
+      targetX = Math.max(
+        16,
+        Math.min(
+          Math.max(16, boardWidth - mergedSize.w - 16),
+          Math.round(pCenterX - mergedSize.w / 2)
+        )
+      );
+      targetY = Math.max(
+        58,
+        Math.min(
+          Math.max(58, boardHeight - mergedSize.h - 24),
+          Math.round(externalParentNode.y + pSz.h + 44)
+        )
+      );
+    } else {
+      const selCenterX = (minX + maxX) / 2;
+      targetX = Math.max(
+        16,
+        Math.min(
+          Math.max(16, boardWidth - mergedSize.w - 16),
+          Math.round(selCenterX - mergedSize.w / 2)
+        )
+      );
+      targetY = Math.max(
+        58,
+        Math.min(Math.max(58, boardHeight - mergedSize.h - 24), Math.round(minY))
+      );
+    }
+
+    const mergedNode: InteractiveNode = {
+      ...draftMergedNode,
+      x: targetX,
+      y: targetY,
+    };
+
+    // Ringkas garis: hapus garis internal antar-kartu yg digabung & gabungkan garis luar jadi 1 jalur per pasangan kartu
+    let touchedBeforeCount = 0;
+    const edgePairMap = new Map<string, InteractiveEdge>();
+    edges.forEach((ed) => {
+      const fromIn = selSet.has(ed.from);
+      const toIn = selSet.has(ed.to);
+      if (fromIn || toIn) touchedBeforeCount++;
+      if (fromIn && toIn) return; // Garis internal antar kartu yang digabung dihapus
+
+      const nextFrom = fromIn ? mergedId : ed.from;
+      const nextTo = toIn ? mergedId : ed.to;
+      if (nextFrom === nextTo) return;
+
+      const pairKey = [nextFrom, nextTo].sort().join('::');
+      const existing = edgePairMap.get(pairKey);
+      const cleanEdge: InteractiveEdge =
+        fromIn || toIn
+          ? { from: nextFrom, to: nextTo, type: ed.type }
+          : { ...ed };
+
+      if (!existing) {
+        edgePairMap.set(pairKey, cleanEdge);
+      } else if (existing.type === 'couple' && cleanEdge.type === 'child') {
+        // Prioritaskan garis keturunan bila bentrok pasangan & keturunan pada simpul gabungan
+        edgePairMap.set(pairKey, cleanEdge);
+      }
+    });
+
+    const consolidatedEdges = Array.from(edgePairMap.values());
+    const mergedExternalEdgesCount = consolidatedEdges.filter(
+      (e) => e.from === mergedId || e.to === mergedId
+    ).length;
+
+    // Geser otomatis kartu lain di sekitar agar tidak bertabrakan/tertutup Card Besar
+    const otherNodes = nodes.filter((n) => !selSet.has(n.id));
+    const shiftedOthers = shiftNodesAwayFromRect(
+      { x: mergedNode.x, y: mergedNode.y, w: mergedSize.w, h: mergedSize.h },
+      otherNodes,
+      (n) => getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale),
+      boardWidth,
+      boardHeight
+    );
+
+    const nextNodes = [...shiftedOthers, mergedNode];
+    setNodes(nextNodes);
+    setEdges(consolidatedEdges);
+    setSelectedIds([mergedId]);
+    setMoveUnlockedIds([]);
+    setMoveAnchorId(null);
+    setLayoutMode('manual');
+    persistCurrentDesign(nextNodes, consolidatedEdges);
+
+    showNotification(
+      externalParentNode
+        ? `${flatMembers.length} kartu digabung & ditarik mendekati induk (${externalParentNode.name})! Garis jadi ${mergedExternalEdgesCount} & kartu lain bergeser.`
+        : `${flatMembers.length} kartu digabung jadi 1 Card Besar! Garis diringkas (${touchedBeforeCount} → ${mergedExternalEdgesCount} garis) & kartu lain otomatis bergeser.`
+    );
+  };
+
+  const handleUnmergeSelectedCard = (explicitId?: string) => {
+    const targetId =
+      explicitId || (selectedIds.length === 1 ? selectedIds[0] : '');
+    if (!targetId) return;
+
+    const mergedNode = nodes.find((n) => n.id === targetId);
+    if (!mergedNode?.mergedMembers || mergedNode.mergedMembers.length < 2) return;
+
+    const remainingNodes = nodes.filter((n) => n.id !== targetId);
+    const mergedSize = getNodeSize(
+      mergedNode,
+      cardDisplayMode,
+      photoFrameSize,
+      cardScale
+    );
+    const mergedCenterX = mergedNode.x + mergedSize.w / 2;
+
+    const restoredNodes: InteractiveNode[] = [];
+    const usedIds = new Set(remainingNodes.map((n) => n.id));
+    const gapX = 14;
+    const gapY = 22;
+    const gm = getMergedGridMetrics(
+      mergedNode.mergedMembers.length,
+      cardDisplayMode,
+      photoFrameSize,
+      cardScale,
+      mergedNode.mergedCols
+    );
+    const cols = gm.cols;
+
+    // Bangun dulu kartu satuan untuk mengukur ukuran aktual tiap baris di posisi terbaru Card Besar
+    const rawRestored = mergedNode.mergedMembers.map((mm, idx) => {
+      let nodeId = mm.originalNodeId || `n_unmerged_${Date.now()}_${idx}`;
+      if (usedIds.has(nodeId)) {
+        nodeId = `${nodeId}_${idx}`;
+      }
+      usedIds.add(nodeId);
+
+      const candidate: InteractiveNode = {
+        id: nodeId,
+        memberId: mm.memberId,
+        name: mm.name,
+        sub: mm.sub,
+        x: mergedNode.x,
+        y: mergedNode.y,
+        photo: mm.photo,
+        wafat: mm.wafat,
+        gender: mm.gender,
+        genLevel: mm.genLevel ?? mergedNode.genLevel,
+        customBgColor: mm.customBgColor,
+        customBorderColor: mm.customBorderColor,
+      };
+      const sz = getNodeSize(candidate, cardDisplayMode, photoFrameSize, cardScale);
+      return { candidate, sz };
+    });
+
+    // Tata kartu pecahan tetap rapat di posisi terbaru Card Besar saat ini (terpusat di mergedCenterX, mergedNode.y)
+    const rowsCount = Math.ceil(rawRestored.length / cols);
+    let curRowY = Math.max(58, mergedNode.y);
+    let blockMinX = Infinity;
+    let blockMinY = Infinity;
+    let blockMaxX = -Infinity;
+    let blockMaxY = -Infinity;
+
+    for (let r = 0; r < rowsCount; r++) {
+      const rowItems = rawRestored.slice(r * cols, (r + 1) * cols);
+      const rowTotalW =
+        rowItems.reduce((s, it) => s + it.sz.w, 0) +
+        Math.max(0, rowItems.length - 1) * gapX;
+      const rowMaxH = Math.max(...rowItems.map((it) => it.sz.h));
+      let curX = Math.max(
+        16,
+        Math.min(
+          Math.max(16, boardWidth - rowTotalW - 16),
+          Math.round(mergedCenterX - rowTotalW / 2)
+        )
+      );
+      const clampedRowY = Math.max(
+        58,
+        Math.min(Math.max(58, boardHeight - rowMaxH - 24), Math.round(curRowY))
+      );
+
+      rowItems.forEach(({ candidate, sz }) => {
+        candidate.x = Math.round(curX);
+        candidate.y = clampedRowY;
+        blockMinX = Math.min(blockMinX, candidate.x);
+        blockMinY = Math.min(blockMinY, candidate.y);
+        blockMaxX = Math.max(blockMaxX, candidate.x + sz.w);
+        blockMaxY = Math.max(blockMaxY, candidate.y + sz.h);
+        restoredNodes.push(candidate);
+        curX += sz.w + gapX;
+      });
+
+      curRowY = clampedRowY + rowMaxH + gapY;
+    }
+
+    // Geser kartu tetangga di luar blok pecahan agar memberi ruang, sehingga kartu yg baru dipisah TETAP di posisi terbaru!
+    const shiftedNeighbors =
+      blockMinX < Infinity
+        ? shiftNodesAwayFromRect(
+            {
+              x: blockMinX,
+              y: blockMinY,
+              w: Math.max(40, blockMaxX - blockMinX),
+              h: Math.max(40, blockMaxY - blockMinY),
+            },
+            remainingNodes,
+            (n) => getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale),
+            boardWidth,
+            boardHeight
+          )
+        : remainingNodes;
+
+    const allValidIds = new Set([
+      ...shiftedNeighbors.map((n) => n.id),
+      ...restoredNodes.map((n) => n.id),
+    ]);
+
+    const nextEdgeMap = new Map<string, InteractiveEdge>();
+    const addUniqueEdge = (ed: InteractiveEdge) => {
+      if (!allValidIds.has(ed.from) || !allValidIds.has(ed.to) || ed.from === ed.to) {
+        return;
+      }
+      const key = `${ed.from}->${ed.to}:${ed.type}`;
+      if (!nextEdgeMap.has(key)) nextEdgeMap.set(key, { ...ed });
+    };
+
+    // Pertahankan garis lain di luar kartu gabungan
+    edges.forEach((ed) => {
+      if (ed.from !== targetId && ed.to !== targetId) {
+        addUniqueEdge(ed);
+      }
+    });
+
+    // Pulihkan garis asli sebelum digabung
+    (mergedNode.mergedEdgesSnapshot || []).forEach(addUniqueEdge);
+
+    // Jika ada garis baru yang dibuat setelah penggabungan, pindahkan ke kartu pertama
+    if (restoredNodes[0]) {
+      edges.forEach((ed) => {
+        if (ed.from === targetId || ed.to === targetId) {
+          const mappedFrom = ed.from === targetId ? restoredNodes[0].id : ed.from;
+          const mappedTo = ed.to === targetId ? restoredNodes[0].id : ed.to;
+          const existsToRestored = Array.from(nextEdgeMap.values()).some(
+            (x) =>
+              (x.from === mappedFrom || restoredNodes.some((r) => r.id === x.from)) &&
+              (x.to === mappedTo || restoredNodes.some((r) => r.id === x.to)) &&
+              (x.from === ed.from || x.to === ed.to || x.from === mappedFrom || x.to === mappedTo)
+          );
+          if (!existsToRestored) {
+            addUniqueEdge({ from: mappedFrom, to: mappedTo, type: ed.type });
+          }
+        }
+      });
+    }
+
+    const nextNodes = [...shiftedNeighbors, ...restoredNodes];
+    const nextEdges = Array.from(nextEdgeMap.values());
+    setNodes(nextNodes);
+    setEdges(nextEdges);
+    setSelectedIds(restoredNodes.map((n) => n.id));
+    persistCurrentDesign(nextNodes, nextEdges);
+    showNotification(
+      `Card Besar dipisah menjadi ${restoredNodes.length} kartu tetap di posisi terbaru (kartu sekitar otomatis bergeser)!`
+    );
+  };
+
+  const handleUpdateMergedCols = (nodeId: string, colsValue?: number) => {
+    const target = nodes.find((n) => n.id === nodeId);
+    if (!target?.mergedMembers || target.mergedMembers.length < 2) return;
+
+    const updatedTarget: InteractiveNode = {
+      ...target,
+      mergedCols: colsValue,
+    };
+    const nextSize = getNodeSize(
+      updatedTarget,
+      cardDisplayMode,
+      photoFrameSize,
+      cardScale
+    );
+    const clampedX = Math.max(
+      16,
+      Math.min(Math.max(16, boardWidth - nextSize.w - 16), updatedTarget.x)
+    );
+    const clampedY = Math.max(
+      58,
+      Math.min(Math.max(58, boardHeight - nextSize.h - 24), updatedTarget.y)
+    );
+    updatedTarget.x = clampedX;
+    updatedTarget.y = clampedY;
+
+    const others = nodes.filter((n) => n.id !== nodeId);
+    const shiftedOthers = shiftNodesAwayFromRect(
+      { x: updatedTarget.x, y: updatedTarget.y, w: nextSize.w, h: nextSize.h },
+      others,
+      (n) => getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale),
+      boardWidth,
+      boardHeight
+    );
+
+    const nextNodes = [...shiftedOthers, updatedTarget];
+    setNodes(nextNodes);
+    persistCurrentDesign(nextNodes, edges);
   };
 
   // Hitung kotak pembatas (bounding box) setiap Group agar terlihat jelas di kanvas
@@ -4463,14 +5208,25 @@ export const InteractiveGridCanvasView: React.FC<
                     <p className="text-[11px] text-emerald-400 font-bold">
                       {selectedIds.length} kartu sedang dipilih!
                     </p>
-                    <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={handleMergeSelectedIntoBigCard}
+                      className="w-full py-2 px-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-emerald-500 hover:brightness-110 text-slate-950 font-black text-[11.5px] flex items-center justify-center gap-1.5 shadow-md"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>Gabung Jadi 1 Card Besar (1 Garis)</span>
+                    </button>
+                    <p className="text-[10px] opacity-75 leading-snug">
+                      Foto/kartu bergabung jadi 1 frame besar, garis penghubung diringkas jadi 1, dan kartu lain otomatis bergeser agar tidak tertutup.
+                    </p>
+                    <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-slate-700/40">
                       <button
                         type="button"
                         onClick={handleGroupSelected}
                         className="py-1.5 px-2 rounded-lg bg-purple-600 text-white font-bold text-[11px] flex items-center justify-center gap-1"
                       >
                         <Group className="w-3.5 h-3.5" />
-                        <span>Gabung Group</span>
+                        <span>Group Drag</span>
                       </button>
                       <button
                         type="button"
@@ -4488,6 +5244,115 @@ export const InteractiveGridCanvasView: React.FC<
                     >
                       Hapus {selectedIds.length} Kartu Terpilih
                     </button>
+                  </div>
+                ) : primarySelectedNode?.mergedMembers &&
+                  primarySelectedNode.mergedMembers.length >= 2 ? (
+                  <div className="space-y-2.5 text-xs">
+                    <div className="p-2 rounded-xl border border-amber-500/40 bg-amber-500/10 space-y-1">
+                      <div className="font-extrabold text-[11px] text-amber-400 flex items-center gap-1.5">
+                        <Layers className="w-3.5 h-3.5" />
+                        <span>Card Besar Gabungan ({primarySelectedNode.mergedMembers.length} Foto)</span>
+                      </div>
+                      <p className="text-[10px] opacity-80">
+                        Menyatukan beberapa anggota dalam 1 card dengan garis tunggal.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold opacity-75 block mb-1">
+                        Judul Kartu Gabungan
+                      </label>
+                      <input
+                        type="text"
+                        value={primarySelectedNode.name}
+                        onChange={(e) =>
+                          updateSelectedField({ name: e.target.value })
+                        }
+                        className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-bold outline-hidden ${
+                          isDark
+                            ? 'bg-[#0f172a] border-slate-700 text-white'
+                            : 'bg-stone-50 border-stone-300 text-stone-900'
+                        }`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold opacity-75 block mb-1">
+                        Susunan Kolom Foto di Dalam Card
+                      </label>
+                      <div className="grid grid-cols-4 gap-1">
+                        {[
+                          { label: 'Auto', val: undefined },
+                          { label: '2 Kol', val: 2 },
+                          { label: '3 Kol', val: 3 },
+                          { label: '4 Kol', val: 4 },
+                        ].map((opt) => (
+                          <button
+                            key={opt.label}
+                            type="button"
+                            onClick={() =>
+                              handleUpdateMergedCols(primarySelectedNode.id, opt.val)
+                            }
+                            className={`py-1 rounded-lg border text-[10px] font-bold ${
+                              primarySelectedNode.mergedCols === opt.val
+                                ? 'bg-amber-500 text-slate-950 border-amber-400'
+                                : 'border-slate-600 opacity-80'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-bold opacity-75 block">
+                        Anggota Tergabung:
+                      </span>
+                      <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
+                        {primarySelectedNode.mergedMembers.map((mm, mIdx) => (
+                          <div
+                            key={`${mm.originalNodeId}_${mIdx}`}
+                            className="flex items-center gap-2 px-2 py-1 rounded-lg bg-black/20 border border-slate-700/50 text-[10.5px]"
+                          >
+                            <span className="font-mono text-amber-400 font-bold">
+                              {mIdx + 1}.
+                            </span>
+                            <span className="truncate font-semibold">{mm.name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleUnmergeSelectedCard(primarySelectedNode.id)}
+                      className="w-full py-2 px-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-black text-[11px] flex items-center justify-center gap-1.5"
+                    >
+                      <Split className="w-3.5 h-3.5" />
+                      <span>
+                        Pisah Kembali ke {primarySelectedNode.mergedMembers.length} Card
+                      </span>
+                    </button>
+
+                    <div className="grid grid-cols-2 gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={removeConnectionsOfSelected}
+                        className="py-1.5 px-2 rounded-lg border border-slate-600 hover:border-amber-400 text-[11px] font-bold flex items-center justify-center gap-1"
+                      >
+                        <Unlink className="w-3 h-3" />
+                        <span>Putus Garis</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={deleteSelectedNodes}
+                        className="py-1.5 px-2 rounded-lg border border-rose-500 text-rose-500 hover:bg-rose-500/10 text-[11px] font-bold flex items-center justify-center gap-1"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Hapus Card</span>
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   primarySelectedNode && (
@@ -5169,95 +6034,227 @@ export const InteractiveGridCanvasView: React.FC<
                       }`}
                     />
 
-                    {/* Mode Card: Seukuran Foto Saja (2x3 / 3x4 / 4x6 / Bulat) */}
-                    {cardDisplayMode === 'photo_only' && (
-                      <div
-                        style={{ width: `${pDim.w}px`, height: `${pDim.h}px` }}
-                        className={`overflow-hidden flex items-center justify-center font-extrabold text-sm border relative ${
-                          isDark
-                            ? 'bg-[#0f172a] border-slate-600 text-amber-400'
-                            : 'bg-stone-100 border-stone-300 text-amber-700'
-                        } ${photoFrameSize === 'bulat' ? 'rounded-full' : 'rounded-lg'}`}
-                      >
-                        {node.photo ? (
-                          <img
-                            src={node.photo}
-                            alt={node.name}
-                            className="w-full h-full object-cover pointer-events-none"
-                          />
-                        ) : (
-                          <span>{getInitials(node.name)}</span>
-                        )}
-                      </div>
-                    )}
+                    {node.mergedMembers && node.mergedMembers.length >= 2 ? (
+                      (() => {
+                        const mList = node.mergedMembers;
+                        const gm = getMergedGridMetrics(
+                          mList.length,
+                          cardDisplayMode,
+                          photoFrameSize,
+                          cardScale,
+                          node.mergedCols
+                        );
+                        const cellNamePx = Math.max(7.5, Math.round(10.5 * cardScale));
+                        const cellSubPx = Math.max(6.5, Math.round(8.5 * cardScale));
+                        return (
+                          <div className="w-full h-full flex flex-col items-center justify-center">
+                            {isSelected && (
+                              <button
+                                type="button"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onTouchStart={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleUnmergeSelectedCard(node.id);
+                                }}
+                                className="absolute -top-2.5 right-1.5 px-1.5 py-0.5 rounded-full bg-sky-500 hover:bg-sky-400 text-slate-950 text-[8.5px] font-black shadow z-30 flex items-center gap-0.5 print:hidden"
+                                title="Pisah kembali ke kartu satuan"
+                              >
+                                <Split className="w-2.5 h-2.5" />
+                                <span>Pisah</span>
+                              </button>
+                            )}
 
-                    {/* Mode Card: Nama Saja */}
-                    {cardDisplayMode === 'name_only' && (
-                      <div
-                        style={{ fontSize: `${scaledNamePx}px` }}
-                        className="font-extrabold leading-tight truncate w-full flex items-center justify-center gap-1"
-                      >
-                        {node.gender && (
-                          <span className="shrink-0 opacity-90">
-                            {node.gender === 'P' ? '👩' : '👨'}
-                          </span>
-                        )}
-                        <span className="truncate">{node.name}</span>
-                      </div>
-                    )}
+                            {cardDisplayMode !== 'photo_only' && (
+                              <div
+                                style={{
+                                  height: `${gm.headerH}px`,
+                                  fontSize: `${Math.max(8, Math.round(10.5 * cardScale))}px`,
+                                }}
+                                className="w-full flex items-center justify-between gap-1 px-1 mb-1 border-b border-amber-500/30 font-extrabold truncate"
+                              >
+                                <span className="truncate text-amber-400">
+                                  {node.name}
+                                </span>
+                                <span className="shrink-0 px-1 rounded bg-amber-500/20 text-amber-300 text-[8.5px] font-black">
+                                  {mList.length} Foto
+                                </span>
+                              </div>
+                            )}
 
-                    {/* Mode Card: Lengkap (Foto + Nama + Keterangan) */}
-                    {cardDisplayMode === 'full' && (
-                      <>
-                        <div
-                          style={{
-                            width: `${pDim.w}px`,
-                            height: `${pDim.h}px`,
-                          }}
-                          className={`mb-1 overflow-hidden flex items-center justify-center font-extrabold text-sm border-2 shrink-0 ${
-                            isDark
-                              ? 'bg-[#0f172a] border-slate-600 text-amber-400'
-                              : 'bg-stone-100 border-stone-300 text-amber-600'
-                          } ${
-                            photoFrameSize === 'bulat'
-                              ? 'rounded-full'
-                              : 'rounded-lg'
-                          }`}
-                        >
-                          {node.photo ? (
-                            <img
-                              src={node.photo}
-                              alt={node.name}
-                              className="w-full h-full object-cover pointer-events-none"
-                            />
-                          ) : (
-                            <span>{getInitials(node.name)}</span>
-                          )}
-                        </div>
-                        <div
-                          style={{ fontSize: `${scaledNamePx}px` }}
-                          className="font-bold leading-tight break-words w-full"
-                        >
-                          {node.gender && (
-                            <span className="mr-0.5">{node.gender === 'P' ? '👩' : '👨'}</span>
-                          )}
-                          {node.name}
-                        </div>
-                        {node.sub && (
-                          <div
-                            style={{ fontSize: `${scaledSubPx}px` }}
-                            className={`mt-0.5 leading-tight ${
-                              (node.customBgColor || cardBgColor)
-                                ? isLightHexColor(node.customBgColor || cardBgColor)
-                                  ? 'text-slate-600'
-                                  : 'text-slate-300'
-                                : isDark
-                                ? 'text-slate-400'
-                                : 'text-slate-500'
-                            }`}
-                          >
-                            {node.sub}
+                            <div
+                              style={{
+                                display: 'grid',
+                                gridTemplateColumns: `repeat(${gm.cols}, minmax(0, 1fr))`,
+                                gap: `${gm.gap}px`,
+                                width: '100%',
+                              }}
+                              className="items-stretch justify-items-center"
+                            >
+                              {mList.map((mm, mIdx) => (
+                                <div
+                                  key={`${mm.originalNodeId}_${mIdx}`}
+                                  className={`w-full flex flex-col items-center justify-start rounded-lg ${
+                                    cardDisplayMode === 'photo_only'
+                                      ? ''
+                                      : isCardLight
+                                      ? 'bg-stone-100/80 border border-stone-300/80 p-1'
+                                      : 'bg-slate-900/65 border border-slate-700/80 p-1'
+                                  } ${mm.wafat ? 'border-dashed opacity-90' : ''}`}
+                                >
+                                  {cardDisplayMode !== 'name_only' && (
+                                    <div
+                                      style={{
+                                        width: `${pDim.w}px`,
+                                        height: `${pDim.h}px`,
+                                      }}
+                                      className={`overflow-hidden flex items-center justify-center font-extrabold text-xs border shrink-0 ${
+                                        isDark
+                                          ? 'bg-[#0f172a] border-slate-600 text-amber-400'
+                                          : 'bg-stone-100 border-stone-300 text-amber-700'
+                                      } ${
+                                        photoFrameSize === 'bulat'
+                                          ? 'rounded-full'
+                                          : 'rounded-md'
+                                      } ${cardDisplayMode === 'full' ? 'mb-0.5' : ''}`}
+                                    >
+                                      {mm.photo ? (
+                                        <img
+                                          src={mm.photo}
+                                          alt={mm.name}
+                                          className="w-full h-full object-cover pointer-events-none"
+                                        />
+                                      ) : (
+                                        <span>{getInitials(mm.name)}</span>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {cardDisplayMode !== 'photo_only' && (
+                                    <div
+                                      style={{ fontSize: `${cellNamePx}px` }}
+                                      className="font-bold leading-tight text-center break-words w-full line-clamp-2"
+                                    >
+                                      {mm.gender && (
+                                        <span className="mr-0.5">
+                                          {mm.gender === 'P' ? '👩' : '👨'}
+                                        </span>
+                                      )}
+                                      {mm.name}
+                                    </div>
+                                  )}
+
+                                  {cardDisplayMode === 'full' && mm.sub && (
+                                    <div
+                                      style={{ fontSize: `${cellSubPx}px` }}
+                                      className={`leading-tight text-center truncate w-full opacity-75 ${
+                                        isCardLight ? 'text-slate-600' : 'text-slate-400'
+                                      }`}
+                                    >
+                                      {mm.sub}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
                           </div>
+                        );
+                      })()
+                    ) : (
+                      <>
+                        {/* Mode Card: Seukuran Foto Saja (2x3 / 3x4 / 4x6 / Bulat) */}
+                        {cardDisplayMode === 'photo_only' && (
+                          <div
+                            style={{ width: `${pDim.w}px`, height: `${pDim.h}px` }}
+                            className={`overflow-hidden flex items-center justify-center font-extrabold text-sm border relative ${
+                              isDark
+                                ? 'bg-[#0f172a] border-slate-600 text-amber-400'
+                                : 'bg-stone-100 border-stone-300 text-amber-700'
+                            } ${photoFrameSize === 'bulat' ? 'rounded-full' : 'rounded-lg'}`}
+                          >
+                            {node.photo ? (
+                              <img
+                                src={node.photo}
+                                alt={node.name}
+                                className="w-full h-full object-cover pointer-events-none"
+                              />
+                            ) : (
+                              <span>{getInitials(node.name)}</span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Mode Card: Nama Saja */}
+                        {cardDisplayMode === 'name_only' && (
+                          <div
+                            style={{ fontSize: `${scaledNamePx}px` }}
+                            className="font-extrabold leading-tight truncate w-full flex items-center justify-center gap-1"
+                          >
+                            {node.gender && (
+                              <span className="shrink-0 opacity-90">
+                                {node.gender === 'P' ? '👩' : '👨'}
+                              </span>
+                            )}
+                            <span className="truncate">{node.name}</span>
+                          </div>
+                        )}
+
+                        {/* Mode Card: Lengkap (Foto + Nama + Keterangan) */}
+                        {cardDisplayMode === 'full' && (
+                          <>
+                            <div
+                              style={{
+                                width: `${pDim.w}px`,
+                                height: `${pDim.h}px`,
+                              }}
+                              className={`mb-1 overflow-hidden flex items-center justify-center font-extrabold text-sm border-2 shrink-0 ${
+                                isDark
+                                  ? 'bg-[#0f172a] border-slate-600 text-amber-400'
+                                  : 'bg-stone-100 border-stone-300 text-amber-600'
+                              } ${
+                                photoFrameSize === 'bulat'
+                                  ? 'rounded-full'
+                                  : 'rounded-lg'
+                              }`}
+                            >
+                              {node.photo ? (
+                                <img
+                                  src={node.photo}
+                                  alt={node.name}
+                                  className="w-full h-full object-cover pointer-events-none"
+                                />
+                              ) : (
+                                <span>{getInitials(node.name)}</span>
+                              )}
+                            </div>
+                            <div
+                              style={{ fontSize: `${scaledNamePx}px` }}
+                              className="font-bold leading-tight break-words w-full"
+                            >
+                              {node.gender && (
+                                <span className="mr-0.5">
+                                  {node.gender === 'P' ? '👩' : '👨'}
+                                </span>
+                              )}
+                              {node.name}
+                            </div>
+                            {node.sub && (
+                              <div
+                                style={{ fontSize: `${scaledSubPx}px` }}
+                                className={`mt-0.5 leading-tight ${
+                                  (node.customBgColor || cardBgColor)
+                                    ? isLightHexColor(node.customBgColor || cardBgColor)
+                                      ? 'text-slate-600'
+                                      : 'text-slate-300'
+                                    : isDark
+                                    ? 'text-slate-400'
+                                    : 'text-slate-500'
+                                }`}
+                              >
+                                {node.sub}
+                              </div>
+                            )}
+                          </>
                         )}
                       </>
                     )}
@@ -5661,8 +6658,24 @@ export const InteractiveGridCanvasView: React.FC<
                     }}
                     className="px-2 py-1 rounded-xl bg-amber-500 text-stone-950 text-[10px] font-black"
                   >
-                    Ubah Nama/Foto
+                    {primarySelectedNode?.mergedMembers?.length
+                      ? 'Edit Gabungan'
+                      : 'Ubah Nama/Foto'}
                   </button>
+                  {primarySelectedNode?.mergedMembers &&
+                    primarySelectedNode.mergedMembers.length >= 2 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleUnmergeSelectedCard(primarySelectedNode.id)
+                        }
+                        className="px-2 py-1 rounded-xl bg-sky-500 text-stone-950 text-[10px] font-black flex items-center gap-1"
+                        title="Pisahkan kembali menjadi kartu satuan"
+                      >
+                        <Split className="w-3 h-3" />
+                        <span>Pisah Card</span>
+                      </button>
+                    )}
                   <button
                     type="button"
                     onClick={startConnectMode}
@@ -5675,6 +6688,15 @@ export const InteractiveGridCanvasView: React.FC<
 
               {selectedIds.length >= 2 && (
                 <>
+                  <button
+                    type="button"
+                    onClick={handleMergeSelectedIntoBigCard}
+                    className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-500 to-emerald-500 text-stone-950 text-[10px] font-black flex items-center gap-1 shadow-xs"
+                    title="Gabung kartu/foto terpilih jadi 1 Card Besar dengan 1 garis saja & geser kartu lain"
+                  >
+                    <Layers className="w-3 h-3" />
+                    <span>Gabung 1 Card Besar</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => setShowFloatingAlign((v) => !v)}

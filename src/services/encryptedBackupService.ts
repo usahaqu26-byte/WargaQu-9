@@ -3,6 +3,7 @@ import { RT_SYNC_EVENT } from './rtSiagaStorage';
 import { SIAGA_CIRCLE_SYNC_EVENT } from './siagaCircleService';
 import { ZERO_TRUST_SYNC_EVENT, ZeroTrustService } from './zeroTrustService';
 import { MONETIZATION_SYNC_EVENT } from './monetizationService';
+import { DOMPETQU_SYNC_EVENT } from './dompetQuStorage';
 
 export type BackupScope = 'all' | 'leluhurqu' | 'rtqu';
 
@@ -149,6 +150,7 @@ export const EncryptedBackupService = {
       window.dispatchEvent(new CustomEvent(SIAGA_CIRCLE_SYNC_EVENT));
       window.dispatchEvent(new CustomEvent(ZERO_TRUST_SYNC_EVENT));
       window.dispatchEvent(new CustomEvent(MONETIZATION_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(DOMPETQU_SYNC_EVENT));
     }
 
     return restoredKeys;

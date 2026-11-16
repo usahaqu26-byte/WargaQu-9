@@ -1,8 +1,10 @@
 import * as XLSX from 'xlsx';
 import {
   HistoricalArchiveYear,
+  KasCategory,
   KasTransaction,
   MONTHS_12,
+  OrgType,
   PaguyubanProfile,
   WargaMember,
 } from './rtSiagaStorage';
@@ -13,8 +15,26 @@ export interface SmartImportedWargaRow {
   phone: string;
   residentType: 'Tetap' | 'Kontrak';
   paidMonthsCount: number;
+  paidMonths?: number[];
   priorArrears: number;
   priorArrearsNote?: string;
+}
+
+export interface SmartImportedOfficerRow {
+  name: string;
+  role: string;
+  division: string;
+  phone: string;
+  email: string;
+}
+
+export interface SmartImportedKasRow {
+  date: string;
+  type: 'masuk' | 'keluar';
+  category: KasCategory;
+  title: string;
+  amount: number;
+  recordedBy: string;
 }
 
 export interface SmartImportedArchiveRow {
@@ -25,12 +45,37 @@ export interface SmartImportedArchiveRow {
   note: string;
 }
 
+export interface SmartCommunityImportDraft {
+  profile: {
+    orgType: OrgType;
+    customBrandName?: string;
+    orgName: string;
+    areaName: string;
+    monthlyDuesAmount: number;
+    year: number;
+    openingBalance: number;
+    openingBalanceNote: string;
+  };
+  officers: SmartImportedOfficerRow[];
+  members: SmartImportedWargaRow[];
+  transactions: SmartImportedKasRow[];
+  archives: SmartImportedArchiveRow[];
+  summaryNotes?: string;
+}
+
 export interface SmartExcelPreview {
   fileName: string;
   sheetNames: string[];
   detectedMembers: SmartImportedWargaRow[];
+  detectedOfficers: SmartImportedOfficerRow[];
+  detectedTransactions: SmartImportedKasRow[];
   detectedOpeningBalance: number;
   detectedOpeningNote: string;
+  detectedOrgName?: string;
+  detectedOrgType?: OrgType;
+  detectedAreaName?: string;
+  detectedMonthlyDues?: number;
+  detectedYear?: number;
   detectedArchives: SmartImportedArchiveRow[];
   ignoredHistoricalRowsCount: number;
 }
@@ -54,6 +99,61 @@ function normalizeHeader(h: unknown): string {
 
 function findColumnIndex(headers: string[], keywords: string[]): number {
   return headers.findIndex(h => keywords.some(k => h.includes(k)));
+}
+
+function mapKasCategory(rawCategory: string, rawTitle: string, type: 'masuk' | 'keluar'): KasCategory {
+  const txt = `${rawCategory} ${rawTitle}`.toLowerCase();
+  if (txt.includes('keamanan') || txt.includes('satpam') || txt.includes('sekuriti') || txt.includes('ronda')) {
+    return type === 'keluar' ? 'Gaji Keamanan' : 'Iuran Warga';
+  }
+  if (txt.includes('sampah') || txt.includes('kebersihan') || txt.includes('petugas')) {
+    return 'Petugas Sampah';
+  }
+  if (txt.includes('listrik') || txt.includes('pos') || txt.includes('pln') || txt.includes('air') || txt.includes('pam')) {
+    return 'Listrik & Pos Ronda';
+  }
+  if (txt.includes('perbaikan') || txt.includes('lampu') || txt.includes('jalan') || txt.includes('renovasi') || txt.includes('fasilitas') || txt.includes('servis')) {
+    return 'Perbaikan Fasilitas';
+  }
+  if (txt.includes('iuran') || txt.includes('bulanan') || txt.includes('warga')) {
+    return 'Iuran Warga';
+  }
+  return type === 'masuk' ? 'Donasi / Kas' : 'Perbaikan Fasilitas';
+}
+
+const MONTH_ALIASES: Array<{ monthNum: number; tokens: string[] }> = [
+  { monthNum: 1, tokens: ['jan', 'januari', 'bln 1', 'bulan 1'] },
+  { monthNum: 2, tokens: ['feb', 'peb', 'februari', 'bln 2', 'bulan 2'] },
+  { monthNum: 3, tokens: ['mar', 'maret', 'bln 3', 'bulan 3'] },
+  { monthNum: 4, tokens: ['apr', 'april', 'bln 4', 'bulan 4'] },
+  { monthNum: 5, tokens: ['mei', 'may', 'bln 5', 'bulan 5'] },
+  { monthNum: 6, tokens: ['jun', 'juni', 'bln 6', 'bulan 6'] },
+  { monthNum: 7, tokens: ['jul', 'juli', 'bln 7', 'bulan 7'] },
+  { monthNum: 8, tokens: ['agu', 'agt', 'agustus', 'aug', 'bln 8', 'bulan 8'] },
+  { monthNum: 9, tokens: ['sep', 'sept', 'september', 'bln 9', 'bulan 9'] },
+  { monthNum: 10, tokens: ['okt', 'oct', 'oktober', 'bln 10', 'bulan 10'] },
+  { monthNum: 11, tokens: ['nov', 'november', 'bln 11', 'bulan 11'] },
+  { monthNum: 12, tokens: ['des', 'dec', 'desember', 'bln 12', 'bulan 12'] },
+];
+
+function isCellPaidTruthy(val: unknown): boolean {
+  if (typeof val === 'number') return val > 0;
+  const s = String(val || '').trim().toLowerCase();
+  if (!s || s === '-' || s === '0' || s === 'belum' || s === 'x' || s === 'tidak') return false;
+  if (
+    s.includes('lunas') ||
+    s.includes('v') ||
+    s.includes('✓') ||
+    s.includes('✔') ||
+    s.includes('ok') ||
+    s.includes('ya') ||
+    s.includes('bayar') ||
+    s.includes('sudah')
+  ) {
+    return true;
+  }
+  const num = parseNumber(s);
+  return num >= 1000;
 }
 
 export const RtExcelService = {
@@ -195,14 +295,33 @@ export const RtExcelService = {
     XLSX.writeFile(wb, `Laporan_${safeOrg}_${profile.year}_${dateStamp}.xlsx`);
   },
 
+  async extractExcelSheetTables(
+    file: File
+  ): Promise<Array<{ fileName: string; sheetName: string; csvText: string }>> {
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: 'array' });
+    return workbook.SheetNames.slice(0, 6).map(sheetName => ({
+      fileName: file.name,
+      sheetName,
+      csvText: XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName], { blankrows: false }).slice(0, 28000),
+    }));
+  },
+
   async parseSmartExcelFile(file: File): Promise<SmartExcelPreview> {
     const buffer = await file.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: 'array' });
 
     const detectedMembers: SmartImportedWargaRow[] = [];
+    const detectedOfficers: SmartImportedOfficerRow[] = [];
+    const detectedTransactions: SmartImportedKasRow[] = [];
     const detectedArchives: SmartImportedArchiveRow[] = [];
     let detectedOpeningBalance = 0;
     let detectedOpeningNote = '';
+    let detectedOrgName: string | undefined;
+    let detectedOrgType: OrgType | undefined;
+    let detectedAreaName: string | undefined;
+    let detectedMonthlyDues: number | undefined;
+    let detectedYear: number | undefined;
     let ignoredHistoricalRowsCount = 0;
 
     for (const sheetName of workbook.SheetNames) {
@@ -213,7 +332,44 @@ export const RtExcelService = {
       });
       if (matrix.length === 0) continue;
 
-      // Scan for summary keywords like "Saldo Akhir" or "Saldo Awal" anywhere in small tables
+      // Scan top lines for RT / Paguyuban metadata, dues amount & summary balance
+      for (let r = 0; r < Math.min(10, matrix.length); r++) {
+        const row = matrix[r];
+        const joinedRaw = row.map(c => String(c || '')).join(' ').trim();
+        const joined = joinedRaw.toLowerCase();
+
+        if (!detectedOrgName) {
+          const rtMatch = joinedRaw.match(/\b(RT\.?\s*\d{1,3}(?:\s*[/\-]\s*RW\.?\s*\d{1,3})?)/i);
+          const paguyubanMatch = joinedRaw.match(/(Paguyuban\s+[A-Za-z0-9\s\-]{2,35})/i);
+          const dkmMatch = joinedRaw.match(/(DKM\s+[A-Za-z0-9\s\-]{2,35}|Yayasan\s+[A-Za-z0-9\s\-]{2,35})/i);
+          if (paguyubanMatch) {
+            detectedOrgName = paguyubanMatch[1].trim();
+            detectedOrgType = 'Paguyuban';
+          } else if (rtMatch) {
+            detectedOrgName = rtMatch[1].replace(/\s+/g, ' ').trim();
+            detectedOrgType = 'RT';
+          } else if (dkmMatch) {
+            detectedOrgName = dkmMatch[1].trim();
+            detectedOrgType = 'Sosial';
+          }
+        }
+
+        if (!detectedAreaName && (joined.includes('wilayah') || joined.includes('kelurahan') || joined.includes('perumahan') || joined.includes('cluster'))) {
+          const val = String(row[1] || row[2] || '').trim();
+          if (val && val.length >= 3 && val.length <= 60) detectedAreaName = val;
+        }
+
+        if (!detectedMonthlyDues && (joined.includes('iuran/bln') || joined.includes('iuran bulanan') || joined.includes('nominal iuran'))) {
+          const nums = row.map(parseNumber).filter(n => n >= 5000 && n <= 2000000);
+          if (nums.length > 0) detectedMonthlyDues = nums[0];
+        }
+
+        if (!detectedYear) {
+          const yrMatch = joinedRaw.match(/\b(202[4-9])\b/);
+          if (yrMatch) detectedYear = parseInt(yrMatch[1], 10);
+        }
+      }
+
       for (const row of matrix) {
         const joined = row.map(c => String(c || '')).join(' ').toLowerCase();
         if (
@@ -233,15 +389,19 @@ export const RtExcelService = {
         }
       }
 
-      // Detect header row (first row within top 8 rows that matches known columns)
+      // Detect header row (first row within top 10 rows that matches known columns)
       let headerRowIdx = -1;
       let headers: string[] = [];
-      for (let i = 0; i < Math.min(8, matrix.length); i++) {
+      for (let i = 0; i < Math.min(10, matrix.length); i++) {
         const candidateHeaders = matrix[i].map(normalizeHeader);
         const hasName = findColumnIndex(candidateHeaders, ['nama', 'warga', 'kk', 'kepala keluarga']) >= 0;
+        const hasRole = findColumnIndex(candidateHeaders, ['jabatan', 'pengurus', 'divisi', 'posisi']) >= 0;
+        const hasKasDesc =
+          findColumnIndex(candidateHeaders, ['keterangan', 'uraian', 'transaksi', 'keperluan']) >= 0 &&
+          findColumnIndex(candidateHeaders, ['nominal', 'jumlah', 'pemasukan', 'pengeluaran', 'masuk', 'keluar', 'kredit', 'debit']) >= 0;
         const hasYear = findColumnIndex(candidateHeaders, ['tahun']) >= 0;
         const hasSaldo = findColumnIndex(candidateHeaders, ['saldo', 'pemasukan', 'pengeluaran']) >= 0;
-        if (hasName || (hasYear && hasSaldo)) {
+        if (hasName || hasRole || hasKasDesc || (hasYear && hasSaldo)) {
           headerRowIdx = i;
           headers = candidateHeaders;
           break;
@@ -251,19 +411,36 @@ export const RtExcelService = {
       if (headerRowIdx < 0) continue;
 
       const idxTahun = findColumnIndex(headers, ['tahun']);
-      const idxMasuk = findColumnIndex(headers, ['pemasukan', 'masuk', 'pendapatan']);
-      const idxKeluar = findColumnIndex(headers, ['pengeluaran', 'keluar', 'biaya']);
+      const idxMasuk = findColumnIndex(headers, ['pemasukan', 'masuk', 'pendapatan', 'kredit']);
+      const idxKeluar = findColumnIndex(headers, ['pengeluaran', 'keluar', 'biaya', 'debit']);
       const idxSaldo = findColumnIndex(headers, ['saldo akhir', 'saldo']);
       const idxNama = findColumnIndex(headers, ['nama', 'warga', 'kepala keluarga', 'kk']);
+      const idxJabatan = findColumnIndex(headers, ['jabatan', 'role', 'posisi', 'tugas']);
+      const idxDivisi = findColumnIndex(headers, ['divisi', 'bidang', 'seksi']);
+      const idxEmail = findColumnIndex(headers, ['email', 'mail', 'gmail']);
       const idxBlok = findColumnIndex(headers, ['blok', 'rumah', 'alamat', 'unit', 'no rumah']);
       const idxHp = findColumnIndex(headers, ['hp', 'wa', 'telepon', 'telp', 'kontak']);
       const idxStatus = findColumnIndex(headers, ['tinggal', 'status tinggal', 'hunian']);
-      const idxPaidMonths = findColumnIndex(headers, ['bulan lunas', 'lunas', 'bulan']);
+      const idxPaidMonths = findColumnIndex(headers, ['bulan lunas', 'total bulan', 'lunas']);
       const idxTunggakan = findColumnIndex(headers, ['tunggakan', 'sisa', 'hutang']);
-      const idxNote = findColumnIndex(headers, ['catatan', 'keterangan', 'ket']);
+      const idxNote = findColumnIndex(headers, ['catatan', 'keterangan', 'uraian', 'ket', 'transaksi']);
+      const idxTgl = findColumnIndex(headers, ['tanggal', 'tgl', 'waktu', 'date']);
+      const idxTipe = findColumnIndex(headers, ['tipe', 'jenis', 'arus']);
+      const idxKategori = findColumnIndex(headers, ['kategori', 'pos']);
+      const idxNominal = findColumnIndex(headers, ['nominal', 'jumlah', 'nilai', 'rupiah', 'rp']);
+      const idxPencatat = findColumnIndex(headers, ['dicatat', 'oleh', 'petugas', 'bendahara']);
 
-      // Archive summary sheet detection
-      if (idxTahun >= 0 && (idxSaldo >= 0 || idxMasuk >= 0)) {
+      // Detect individual month columns Jan..Des
+      const monthColumns: Array<{ colIdx: number; monthNum: number }> = [];
+      headers.forEach((h, colIdx) => {
+        const foundMonth = MONTH_ALIASES.find(ma => ma.tokens.some(tok => h === tok || h.startsWith(`${tok} `) || h.includes(tok)));
+        if (foundMonth && !monthColumns.some(mc => mc.monthNum === foundMonth.monthNum)) {
+          monthColumns.push({ colIdx, monthNum: foundMonth.monthNum });
+        }
+      });
+
+      // 1. Archive summary sheet detection
+      if (idxTahun >= 0 && (idxSaldo >= 0 || idxMasuk >= 0) && idxNama < 0 && idxNote !== idxNama) {
         for (let r = headerRowIdx + 1; r < matrix.length; r++) {
           const row = matrix[r];
           const yearVal = parseNumber(row[idxTahun]);
@@ -279,16 +456,96 @@ export const RtExcelService = {
               endingBalance,
               note: note || `Rekap tahun ${yearVal}`,
             });
-            if (endingBalance > 0 && yearVal < 2026) {
+            if (endingBalance > 0 && yearVal < (detectedYear || 2026)) {
               detectedOpeningBalance = endingBalance;
-              detectedOpeningNote = `Saldo akhir ${yearVal} dipindahkan ke 2026`;
+              detectedOpeningNote = `Saldo akhir ${yearVal} dipindahkan`;
             }
           }
         }
         continue;
       }
 
-      // Warga directory detection
+      // 2. Pengurus / Struktur Organisasi sheet detection
+      if (idxJabatan >= 0 && idxNama >= 0) {
+        for (let r = headerRowIdx + 1; r < matrix.length; r++) {
+          const row = matrix[r];
+          const rawName = String(row[idxNama] || '').trim();
+          const rawRole = String(row[idxJabatan] || '').trim();
+          if (!rawName || !rawRole) continue;
+          detectedOfficers.push({
+            name: rawName,
+            role: rawRole,
+            division: idxDivisi >= 0 ? String(row[idxDivisi] || '').trim() || 'Pengurus Inti' : 'Pengurus Inti',
+            phone: idxHp >= 0 ? String(row[idxHp] || '').trim() || '-' : '-',
+            email: idxEmail >= 0 ? String(row[idxEmail] || '').trim().toLowerCase() : '',
+          });
+        }
+        continue;
+      }
+
+      // 3. Kas Transactions sheet detection (Pemasukan & Pengeluaran)
+      const looksLikeKasSheet =
+        sheetName.toLowerCase().includes('kas') ||
+        sheetName.toLowerCase().includes('keuangan') ||
+        sheetName.toLowerCase().includes('mutasi') ||
+        ((idxTgl >= 0 || idxKategori >= 0) && (idxNominal >= 0 || idxMasuk >= 0 || idxKeluar >= 0) && idxBlok < 0);
+
+      if (looksLikeKasSheet && (idxNote >= 0 || idxNama >= 0)) {
+        for (let r = headerRowIdx + 1; r < matrix.length; r++) {
+          const row = matrix[r];
+          const desc = String((idxNote >= 0 ? row[idxNote] : row[idxNama]) || '').trim();
+          if (!desc) continue;
+          const lower = desc.toLowerCase();
+          if (lower.startsWith('total') || lower.startsWith('jumlah') || lower === 'saldo akhir') continue;
+
+          const rawDate = idxTgl >= 0 ? String(row[idxTgl] || '').trim() : '';
+          const rawCat = idxKategori >= 0 ? String(row[idxKategori] || '').trim() : '';
+          const rawRec = idxPencatat >= 0 ? String(row[idxPencatat] || '').trim() : 'Impor Excel';
+
+          const valMasuk = idxMasuk >= 0 ? Math.max(0, parseNumber(row[idxMasuk])) : 0;
+          const valKeluar = idxKeluar >= 0 ? Math.max(0, parseNumber(row[idxKeluar])) : 0;
+          const valNominal = idxNominal >= 0 ? Math.max(0, parseNumber(row[idxNominal])) : 0;
+
+          let txType: 'masuk' | 'keluar' = 'masuk';
+          let amount = valNominal;
+
+          if (valMasuk > 0 && valKeluar === 0) {
+            txType = 'masuk';
+            amount = valMasuk;
+          } else if (valKeluar > 0 && valMasuk === 0) {
+            txType = 'keluar';
+            amount = valKeluar;
+          } else if (idxTipe >= 0) {
+            const tipeStr = String(row[idxTipe] || '').toLowerCase();
+            txType =
+              tipeStr.includes('keluar') || tipeStr.includes('biaya') || tipeStr.includes('beban') || tipeStr.includes('debit')
+                ? 'keluar'
+                : 'masuk';
+          } else if (
+            lower.includes('gaji') ||
+            lower.includes('bayar') ||
+            lower.includes('beli') ||
+            lower.includes('perbaikan') ||
+            lower.includes('listrik') ||
+            lower.includes('sampah')
+          ) {
+            txType = 'keluar';
+          }
+
+          if (amount <= 0) continue;
+          detectedTransactions.push({
+            date: rawDate || `2026`,
+            type: txType,
+            category: mapKasCategory(rawCat, desc, txType),
+            title: desc,
+            amount,
+            recordedBy: rawRec || 'Impor Excel',
+          });
+        }
+        continue;
+      }
+
+      // 4. Warga directory & Kartu Iuran detection
       if (idxNama >= 0) {
         for (let r = headerRowIdx + 1; r < matrix.length; r++) {
           const row = matrix[r];
@@ -299,7 +556,6 @@ export const RtExcelService = {
             continue;
           }
 
-          // Skip old transaction detail rows if the sheet mixes dates from 2020-2025 without block/phone
           const hasYearTag = /\b20(1[89]|2[0-5])\b/.test(row.map(String).join(' '));
           const blockVal = idxBlok >= 0 ? String(row[idxBlok] || '').trim() : '';
           const phoneVal = idxHp >= 0 ? String(row[idxHp] || '').trim() : '';
@@ -309,11 +565,26 @@ export const RtExcelService = {
           }
 
           const rawStatus = idxStatus >= 0 ? String(row[idxStatus] || '').toLowerCase() : '';
-          const residentType: 'Tetap' | 'Kontrak' = rawStatus.includes('kontrak') || rawStatus.includes('sewa')
-            ? 'Kontrak'
-            : 'Tetap';
+          const residentType: 'Tetap' | 'Kontrak' =
+            rawStatus.includes('kontrak') || rawStatus.includes('sewa') ? 'Kontrak' : 'Tetap';
 
-          const paidMonthsCount = idxPaidMonths >= 0 ? Math.min(12, Math.max(0, parseNumber(row[idxPaidMonths]))) : 0;
+          const paidMonths: number[] = [];
+          if (monthColumns.length > 0) {
+            monthColumns.forEach(mc => {
+              if (isCellPaidTruthy(row[mc.colIdx])) {
+                paidMonths.push(mc.monthNum);
+              }
+            });
+          }
+
+          const countFromCol =
+            idxPaidMonths >= 0 ? Math.min(12, Math.max(0, parseNumber(row[idxPaidMonths]))) : 0;
+          const paidMonthsCount = paidMonths.length > 0 ? paidMonths.length : countFromCol;
+          const resolvedPaidMonths =
+            paidMonths.length > 0
+              ? paidMonths
+              : Array.from({ length: paidMonthsCount }, (_, i) => i + 1);
+
           const priorArrears = idxTunggakan >= 0 ? Math.max(0, parseNumber(row[idxTunggakan])) : 0;
           const noteVal = idxNote >= 0 ? String(row[idxNote] || '').trim() : undefined;
 
@@ -323,12 +594,12 @@ export const RtExcelService = {
             phone: phoneVal || '-',
             residentType,
             paidMonthsCount,
+            paidMonths: resolvedPaidMonths,
             priorArrears,
             priorArrearsNote: noteVal,
           });
         }
       } else {
-        // Count non-empty rows in unrecognized historical sheets as skipped noisy rows
         ignoredHistoricalRowsCount += Math.max(0, matrix.length - 1);
       }
     }
@@ -337,10 +608,85 @@ export const RtExcelService = {
       fileName: file.name,
       sheetNames: workbook.SheetNames,
       detectedMembers,
+      detectedOfficers,
+      detectedTransactions,
       detectedOpeningBalance,
       detectedOpeningNote: detectedOpeningNote || 'Saldo Awal Pindahan (Excel)',
+      detectedOrgName,
+      detectedOrgType,
+      detectedAreaName,
+      detectedMonthlyDues,
+      detectedYear,
       detectedArchives,
       ignoredHistoricalRowsCount,
+    };
+  },
+
+  mergeExcelPreviewsIntoDraft(
+    previews: SmartExcelPreview[],
+    fallbackOrgType: OrgType = 'RT'
+  ): SmartCommunityImportDraft {
+    const first = previews[0];
+    const allMembers: SmartImportedWargaRow[] = [];
+    const seenMembers = new Set<string>();
+    const allOfficers: SmartImportedOfficerRow[] = [];
+    const seenOfficers = new Set<string>();
+    const allTransactions: SmartImportedKasRow[] = [];
+    const allArchives: SmartImportedArchiveRow[] = [];
+
+    let openingBalance = 0;
+    let openingBalanceNote = '';
+    let orgName = '';
+    let orgType: OrgType = fallbackOrgType;
+    let areaName = '';
+    let monthlyDuesAmount = 50000;
+    let year = new Date().getFullYear();
+
+    for (const p of previews) {
+      if (!orgName && p.detectedOrgName) orgName = p.detectedOrgName;
+      if (p.detectedOrgType) orgType = p.detectedOrgType;
+      if (!areaName && p.detectedAreaName) areaName = p.detectedAreaName;
+      if (p.detectedMonthlyDues) monthlyDuesAmount = p.detectedMonthlyDues;
+      if (p.detectedYear) year = p.detectedYear;
+      if (p.detectedOpeningBalance > openingBalance) {
+        openingBalance = p.detectedOpeningBalance;
+        openingBalanceNote = p.detectedOpeningNote;
+      }
+      for (const m of p.detectedMembers) {
+        const key = `${m.name.toLowerCase()}::${m.block.toLowerCase()}`;
+        if (!seenMembers.has(key)) {
+          seenMembers.add(key);
+          allMembers.push(m);
+        }
+      }
+      for (const o of p.detectedOfficers) {
+        const key = `${o.name.toLowerCase()}::${o.role.toLowerCase()}`;
+        if (!seenOfficers.has(key)) {
+          seenOfficers.add(key);
+          allOfficers.push(o);
+        }
+      }
+      allTransactions.push(...p.detectedTransactions);
+      allArchives.push(...p.detectedArchives);
+    }
+
+    return {
+      profile: {
+        orgType,
+        orgName: orgName || (orgType === 'Paguyuban' ? 'Paguyuban Warga Baru' : 'RT 01 / RW 01'),
+        areaName: areaName || 'Lingkungan Warga',
+        monthlyDuesAmount,
+        year,
+        openingBalance,
+        openingBalanceNote: openingBalanceNote || `Saldo Awal ${year}`,
+      },
+      officers: allOfficers,
+      members: allMembers,
+      transactions: allTransactions,
+      archives: allArchives,
+      summaryNotes: first
+        ? `Dibaca dari ${previews.length} file Excel (${allMembers.length} warga, ${allOfficers.length} pengurus, ${allTransactions.length} mutasi kas).`
+        : undefined,
     };
   },
 
@@ -348,6 +694,22 @@ export const RtExcelService = {
     return {
       fileName: `Rekap_Bendahara_2020_2025_${profile.orgName.replace(/\s+/g, '_')}.xlsx`,
       sheetNames: ['Daftar_Warga', 'Kas_2020_2025', 'Rekap_Tahunan'],
+      detectedOfficers: [
+        {
+          name: 'Bpk. H. Suryanto',
+          role: 'Ketua RT',
+          division: 'Pimpinan & Pengesahan',
+          phone: '0812-8800-1122',
+          email: '',
+        },
+        {
+          name: 'Ibu Ratna Dewi',
+          role: 'Bendahara',
+          division: 'Iuran & Transparansi Kas',
+          phone: '0813-9900-3344',
+          email: '',
+        },
+      ],
       detectedMembers: [
         {
           name: 'Bpk. Wahyu Hidayat',
@@ -355,6 +717,7 @@ export const RtExcelService = {
           phone: '0812-7700-1122',
           residentType: 'Tetap',
           paidMonthsCount: 10,
+          paidMonths: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
           priorArrears: 0,
           priorArrearsNote: 'Pindah data dari Excel Bendahara',
         },
@@ -364,6 +727,7 @@ export const RtExcelService = {
           phone: '0813-4455-8899',
           residentType: 'Kontrak',
           paidMonthsCount: 8,
+          paidMonths: [1, 2, 3, 4, 5, 6, 7, 8],
           priorArrears: 50000,
           priorArrearsNote: 'Sisa iuran Des 2025',
         },
@@ -373,7 +737,26 @@ export const RtExcelService = {
           phone: '0857-6611-9900',
           residentType: 'Tetap',
           paidMonthsCount: 10,
+          paidMonths: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
           priorArrears: 0,
+        },
+      ],
+      detectedTransactions: [
+        {
+          date: '05 Okt 2026',
+          type: 'masuk',
+          category: 'Iuran Warga',
+          title: 'Kolektif Iuran Warga Blok D',
+          amount: 1450000,
+          recordedBy: 'Bendahara',
+        },
+        {
+          date: '10 Okt 2026',
+          type: 'keluar',
+          category: 'Gaji Keamanan',
+          title: 'Honor Satpam Malam Bulan Oktober',
+          amount: 900000,
+          recordedBy: 'Bendahara',
         },
       ],
       detectedOpeningBalance: 12420000,

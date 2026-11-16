@@ -36,6 +36,9 @@ export interface RtOfficerAccount {
   phone: string;
   canVerifySiaga: boolean;
   appointedAt: string;
+  claimCode?: string;
+  claimStatus?: ClaimStatus;
+  claimedAt?: string;
 }
 
 export type RtTermHealthStatus =
@@ -499,6 +502,37 @@ function buildInitialPayments(paidThroughMonth: number, amount: number): Record<
   return map;
 }
 
+function buildPaymentsFromMonths(
+  paidMonths: number[] | undefined,
+  paidCountFallback: number,
+  amount: number,
+  year: number
+): Record<string, MonthlyPaymentRecord> {
+  const monthSet = new Set<number>(
+    Array.isArray(paidMonths) && paidMonths.length > 0
+      ? paidMonths.filter(n => n >= 1 && n <= 12)
+      : Array.from({ length: Math.max(0, Math.min(12, paidCountFallback || 0)) }, (_, i) => i + 1)
+  );
+  const map: Record<string, MonthlyPaymentRecord> = {};
+  MONTHS_12.forEach((m, idx) => {
+    const monthNum = idx + 1;
+    if (monthSet.has(monthNum)) {
+      map[m.key] = {
+        paid: true,
+        paidAt: `05 ${m.short} ${year}`,
+        method: 'Impor Dokumen',
+        amount,
+      };
+    } else {
+      map[m.key] = {
+        paid: false,
+        amount,
+      };
+    }
+  });
+  return map;
+}
+
 const DEFAULT_PROFILE: PaguyubanProfile = {
   id: 'comm-rt03-rw05',
   orgType: 'RT',
@@ -923,9 +957,21 @@ export interface DecodedRtInvitePayload {
   inviterName: string;
   profile: PaguyubanProfile;
   coordinators: CoordinatorMember[];
+  officers?: RtOfficerAccount[];
+  members?: WargaMember[];
+  transactions?: KasTransaction[];
+  archives?: HistoricalArchiveYear[];
   targetMember?: WargaMember;
   recentPosts?: ForumPost[];
   recentInvitations?: CommunityInvitation[];
+}
+
+function sanitizeMembersForInvite(members: WargaMember[] | undefined): WargaMember[] | undefined {
+  if (!Array.isArray(members) || members.length === 0) return undefined;
+  return members.slice(0, 180).map(m => ({
+    ...m,
+    isCurrentUser: false,
+  }));
 }
 
 export function encodeRtInviteToken(
@@ -937,7 +983,11 @@ export function encodeRtInviteToken(
     communityId: ws.id,
     inviterName: inviterName || 'Pengurus',
     profile: { ...ws.profile, id: ws.id },
-    coordinators: (ws.coordinators || []).slice(0, 8),
+    coordinators: (ws.coordinators || []).slice(0, 12),
+    officers: (ws.officers || []).slice(0, 12),
+    members: targetMember ? undefined : sanitizeMembersForInvite(ws.members),
+    transactions: targetMember ? undefined : (ws.transactions || []).slice(0, 120),
+    archives: targetMember ? undefined : (ws.archives || []).slice(0, 12),
     targetMember: targetMember
       ? {
           ...targetMember,
@@ -960,7 +1010,11 @@ export async function encodeRtInviteTokenCompact(
     communityId: ws.id,
     inviterName: inviterName || 'Pengurus',
     profile: { ...ws.profile, id: ws.id },
-    coordinators: (ws.coordinators || []).slice(0, 8),
+    coordinators: (ws.coordinators || []).slice(0, 12),
+    officers: (ws.officers || []).slice(0, 12),
+    members: targetMember ? undefined : sanitizeMembersForInvite(ws.members),
+    transactions: targetMember ? undefined : (ws.transactions || []).slice(0, 120),
+    archives: targetMember ? undefined : (ws.archives || []).slice(0, 12),
     targetMember: targetMember ? { ...targetMember, isCurrentUser: false } : undefined,
     recentPosts: (ws.forumPosts || []).slice(0, 3),
     recentInvitations: (ws.invitations || []).slice(0, 2),
@@ -1313,12 +1367,31 @@ export const RtSiagaStorage = {
             claimedAt: todayLabel,
           },
         ];
+      } else if (decoded.members && decoded.members.length > 0 && existing.members.length <= 1) {
+        const existingCur = existing.members.find(m => m.isCurrentUser);
+        const mergedList: WargaMember[] = decoded.members.map(m => ({ ...m, isCurrentUser: false }));
+        if (existingCur && !mergedList.some(m => m.id === existingCur.id)) {
+          mergedList.unshift({ ...existingCur, isCurrentUser: true });
+        } else if (mergedList.length > 0) {
+          mergedList[0] = { ...mergedList[0], isCurrentUser: true };
+        }
+        updatedMembers = mergedList;
       }
+
+      const txMap = new Map<string, KasTransaction>();
+      (decoded.transactions || []).forEach(t => txMap.set(t.id, t));
+      (existing.transactions || []).forEach(t => {
+        if (!txMap.has(t.id)) txMap.set(t.id, t);
+      });
+
       const merged: RtCommunityWorkspace = {
         ...existing,
         profile: { ...decoded.profile, id: decoded.communityId },
         coordinators: decoded.coordinators.length > 0 ? decoded.coordinators : existing.coordinators,
+        officers: decoded.officers && decoded.officers.length > 0 ? decoded.officers : existing.officers,
         members: updatedMembers,
+        transactions: Array.from(txMap.values()),
+        archives: decoded.archives && decoded.archives.length > 0 ? decoded.archives : existing.archives,
       };
       const nextList = list.map((w, i) => (i === existingIdx ? merged : w));
       saveScopedWorkspaces(nextList, merged.id);
@@ -1361,6 +1434,38 @@ export const RtSiagaStorage = {
           monthlyPayments: buildInitialPayments(0, decoded.profile.monthlyDuesAmount || 0),
         };
 
+    const syncedMembers: WargaMember[] = decoded.targetMember
+      ? [joinedMember]
+      : decoded.members && decoded.members.length > 0
+      ? (() => {
+          const emailMatchIdx = accountEmail
+            ? decoded.members.findIndex(m => (m.email || '').trim().toLowerCase() === accountEmail)
+            : -1;
+          if (emailMatchIdx >= 0) {
+            return decoded.members.map((m, i) =>
+              i === emailMatchIdx
+                ? {
+                    ...m,
+                    isCurrentUser: true,
+                    claimStatus: 'claimed' as const,
+                    claimedAt: m.claimedAt || todayLabel,
+                  }
+                : { ...m, isCurrentUser: false }
+            );
+          }
+          return [joinedMember, ...decoded.members.map(m => ({ ...m, isCurrentUser: false }))];
+        })()
+      : [joinedMember];
+
+    const syncedOfficers: RtOfficerAccount[] | undefined =
+      decoded.officers && decoded.officers.length > 0
+        ? decoded.officers.map(o =>
+            accountEmail && o.email.trim().toLowerCase() === accountEmail
+              ? { ...o, claimStatus: 'claimed' as const, claimedAt: o.claimedAt || todayLabel }
+              : o
+          )
+        : undefined;
+
     const newWorkspace: RtCommunityWorkspace = {
       id: decoded.communityId,
       joinedVia: 'invited',
@@ -1368,12 +1473,13 @@ export const RtSiagaStorage = {
       joinedAt: new Date().toISOString(),
       profile: { ...decoded.profile, id: decoded.communityId },
       coordinators: decoded.coordinators || [],
-      members: [joinedMember],
-      transactions: [],
+      officers: syncedOfficers,
+      members: syncedMembers,
+      transactions: decoded.transactions || [],
       auditLogs: [],
       forumPosts: decoded.recentPosts || [],
       guestReports: [],
-      archives: [],
+      archives: decoded.archives || [],
       invitations: decoded.recentInvitations || [],
     };
 
@@ -1994,6 +2100,443 @@ export const RtSiagaStorage = {
       message: `Selamat datang ${matchedMember.name} (${matchedMember.block})! Profil berhasil diklaim.`,
       member: claimedMember,
     };
+  },
+
+  claimOfficerAccount(
+    officerIdOrCode: string,
+    verifyInput: string
+  ): { ok: boolean; message: string; officer?: RtOfficerAccount } {
+    const active = this.getActiveCommunity();
+    if (!active) {
+      return { ok: false, message: 'Belum ada komunitas aktif.' };
+    }
+    const cleanTarget = officerIdOrCode.trim().toLowerCase();
+    const cleanVerify = verifyInput.trim();
+    const cleanVerifyDigits = cleanVerify.replace(/\D/g, '');
+    const officers = this.getOfficers(active);
+    const target = officers.find(
+      o =>
+        o.id.toLowerCase() === cleanTarget ||
+        (o.claimCode || '').toLowerCase() === cleanTarget
+    );
+    if (!target) {
+      return { ok: false, message: 'Nama / kode klaim pengurus tidak ditemukan.' };
+    }
+
+    const phoneDigits = (target.phone || '').replace(/\D/g, '');
+    const last4 = phoneDigits.length >= 4 ? phoneDigits.slice(-4) : '';
+    const pinOk = Boolean(active.profile.pengurusPin && cleanVerify === active.profile.pengurusPin);
+    const last4Ok = Boolean(last4 && cleanVerifyDigits === last4);
+    const { acc, email } = getCurrentAccountScope();
+    const emailOk = Boolean(
+      email && target.email && target.email.trim().toLowerCase() === email
+    );
+
+    if (!pinOk && !last4Ok && !emailOk && (last4 || active.profile.pengurusPin)) {
+      return {
+        ok: false,
+        message: last4
+          ? 'Verifikasi tidak cocok. Masukkan 4 digit terakhir No HP pengurus atau PIN komunitas.'
+          : 'PIN pengurus tidak cocok.',
+      };
+    }
+
+    const todayLabel = new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    const nextOfficers = officers.map(o => {
+      if (o.id !== target.id) return o;
+      return {
+        ...o,
+        email: email || o.email,
+        phone: acc?.phone?.trim() || o.phone,
+        claimStatus: 'claimed' as const,
+        claimedAt: todayLabel,
+      };
+    });
+    const nextCoordinators: CoordinatorMember[] = nextOfficers.map(o => ({
+      id: o.id,
+      role: o.role,
+      division: o.division,
+      name: o.name,
+      phone: o.phone,
+      canVerifySiaga: o.canVerifySiaga,
+    }));
+
+    updateActiveWorkspace(ws => ({
+      ...ws,
+      officers: nextOfficers,
+      coordinators: nextCoordinators,
+    }));
+
+    const claimed = nextOfficers.find(o => o.id === target.id);
+    return {
+      ok: true,
+      message: `Jabatan "${target.role}" (${target.name}) berhasil diklaim ke akun Anda!`,
+      officer: claimed,
+    };
+  },
+
+  // --- Full Smart Import (Create Community OR Populate Active Community) ---
+  applyFullSmartCommunityImport(params: {
+    targetMode: 'create_new' | 'merge_active' | 'replace_active';
+    creatorKind: 'pengurus' | 'warga_perintis';
+    creatorName: string;
+    creatorBlock: string;
+    creatorPhone: string;
+    creatorRole?: string;
+    pengurusPin?: string;
+    draft: {
+      profile: {
+        orgType: OrgType;
+        customBrandName?: string;
+        orgName: string;
+        areaName: string;
+        monthlyDuesAmount: number;
+        year: number;
+        openingBalance: number;
+        openingBalanceNote: string;
+      };
+      officers: Array<{
+        name: string;
+        role: string;
+        division: string;
+        phone: string;
+        email: string;
+      }>;
+      members: Array<{
+        name: string;
+        block: string;
+        phone: string;
+        residentType: 'Tetap' | 'Kontrak';
+        paidMonthsCount: number;
+        paidMonths?: number[];
+        priorArrears?: number;
+        priorArrearsNote?: string;
+      }>;
+      transactions: Array<{
+        date: string;
+        type: 'masuk' | 'keluar';
+        category: KasCategory;
+        title: string;
+        amount: number;
+        recordedBy: string;
+      }>;
+      archives?: Array<{
+        year: number;
+        totalIncome: number;
+        totalExpense: number;
+        endingBalance: number;
+        note: string;
+      }>;
+    };
+  }): RtCommunityWorkspace {
+    const { acc, email } = getCurrentAccountScope();
+    const d = params.draft;
+    const cleanOrg = d.profile.orgName.trim() || 'Komunitas Baru';
+    const year = d.profile.year || new Date().getFullYear();
+    const monthlyAmount = Math.max(0, Math.round(d.profile.monthlyDuesAmount || 0));
+    const breakdown = {
+      keamanan: Math.round(monthlyAmount * 0.5),
+      sampah: Math.round(monthlyAmount * 0.3),
+      kas: Math.max(0, monthlyAmount - Math.round(monthlyAmount * 0.5) - Math.round(monthlyAmount * 0.3)),
+    };
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const defaultEnd = new Date();
+    defaultEnd.setFullYear(defaultEnd.getFullYear() + 3);
+    const termEndIso = defaultEnd.toISOString().slice(0, 10);
+    const todayLabel = new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+    const prefixTag = cleanOrg.replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase() || 'WQ';
+    const creatorName =
+      params.creatorName.trim() || (acc ? AuthService.getDisplayName(acc) : 'Perintis Warga');
+    const creatorPhone = params.creatorPhone.trim() || acc?.phone || '-';
+    const creatorBlock = params.creatorBlock.trim() || 'Warga';
+
+    // Build Officers list (ready for claim!)
+    const stamp = Date.now();
+    const mappedOfficers: RtOfficerAccount[] = (d.officers || [])
+      .filter(o => o.name.trim())
+      .map((o, idx) => {
+        const cleanOfficerName = o.name.trim();
+        const isCreatorOfficer =
+          params.creatorKind === 'pengurus' &&
+          (cleanOfficerName.toLowerCase() === creatorName.toLowerCase() ||
+            (email && o.email.trim().toLowerCase() === email));
+        const phoneStr = o.phone?.trim() || (isCreatorOfficer ? creatorPhone : '-');
+        const phoneLast4 = phoneStr.replace(/\D/g, '').slice(-4) || String(1000 + idx);
+        return {
+          id: `off-imp-${stamp}-${idx + 1}`,
+          name: cleanOfficerName,
+          role: o.role.trim() || 'Pengurus',
+          division: o.division?.trim() || 'Pengurus Inti',
+          email: isCreatorOfficer ? email || o.email.trim().toLowerCase() : o.email.trim().toLowerCase(),
+          phone: phoneStr,
+          canVerifySiaga: true,
+          appointedAt: todayIso,
+          claimCode: `PGR-${prefixTag}-${String(idx + 1).padStart(2, '0')}-${phoneLast4}`,
+          claimStatus: isCreatorOfficer ? ('claimed' as const) : ('unclaimed' as const),
+          claimedAt: isCreatorOfficer ? todayLabel : undefined,
+        };
+      });
+
+    if (params.creatorKind === 'pengurus' && !mappedOfficers.some(o => email && o.email === email)) {
+      const roleLabel =
+        params.creatorRole?.trim() ||
+        (d.profile.orgType === 'Paguyuban'
+          ? 'Ketua Paguyuban'
+          : d.profile.orgType === 'Sosial'
+          ? 'Ketua Yayasan / DKM'
+          : d.profile.orgType === 'Organisasi'
+          ? 'Ketua Organisasi'
+          : 'Ketua RT');
+      const phoneLast4 = creatorPhone.replace(/\D/g, '').slice(-4) || '0001';
+      mappedOfficers.unshift({
+        id: `off-imp-${stamp}-creator`,
+        name: creatorName,
+        role: roleLabel,
+        division: 'Pimpinan & Pengesahan',
+        email: email || '',
+        phone: creatorPhone,
+        canVerifySiaga: true,
+        appointedAt: todayIso,
+        claimCode: `PGR-${prefixTag}-00-${phoneLast4}`,
+        claimStatus: 'claimed',
+        claimedAt: todayLabel,
+      });
+    }
+
+    const mappedCoordinators: CoordinatorMember[] = mappedOfficers.map(o => ({
+      id: o.id,
+      role: o.role,
+      division: o.division,
+      name: o.name,
+      phone: o.phone,
+      canVerifySiaga: o.canVerifySiaga,
+    }));
+
+    // Build Warga list + exact paid months
+    const importedMembersList: WargaMember[] = (d.members || [])
+      .filter(m => m.name.trim())
+      .map((row, idx) => {
+        const phoneClean = row.phone?.trim() || '-';
+        const blockClean = row.block?.trim() || `Unit ${idx + 1}`;
+        const isCreatorMatch =
+          row.name.trim().toLowerCase() === creatorName.toLowerCase();
+        return {
+          id: `warga-imp-${stamp}-${idx}`,
+          wargaId: `WQ-${year}-${String(idx + 1).padStart(3, '0')}`,
+          name: row.name.trim(),
+          block: blockClean,
+          email: isCreatorMatch ? acc?.email : undefined,
+          phone: isCreatorMatch && creatorPhone !== '-' ? creatorPhone : phoneClean,
+          deviceId: isCreatorMatch ? acc?.deviceId : undefined,
+          residentType: row.residentType === 'Kontrak' ? 'Kontrak' : 'Tetap',
+          isCurrentUser: isCreatorMatch,
+          claimStatus: isCreatorMatch ? ('claimed' as const) : ('unclaimed' as const),
+          claimCode: this.generateClaimCode(cleanOrg, blockClean, phoneClean),
+          claimedAt: isCreatorMatch ? todayLabel : undefined,
+          priorArrears: Math.max(0, row.priorArrears || 0),
+          priorArrearsNote: row.priorArrearsNote?.trim() || undefined,
+          siagaStatus: isCreatorMatch ? 'active' : 'pending',
+          siagaRequested: false,
+          falseAlarmCount: 0,
+          monthlyPayments: buildPaymentsFromMonths(
+            row.paidMonths,
+            row.paidMonthsCount,
+            monthlyAmount,
+            year
+          ),
+        };
+      });
+
+    if (!importedMembersList.some(m => m.isCurrentUser)) {
+      importedMembersList.unshift({
+        id: `warga-pioneer-${stamp}`,
+        wargaId: `WQ-${prefixTag}-001`,
+        name: creatorName,
+        block: creatorBlock,
+        email: acc?.email,
+        phone: creatorPhone,
+        deviceId: acc?.deviceId,
+        residentType: 'Tetap',
+        isCurrentUser: true,
+        claimStatus: 'claimed',
+        claimCode: this.generateClaimCode(cleanOrg, creatorBlock, creatorPhone),
+        claimedAt: todayLabel,
+        siagaStatus: 'active',
+        siagaVerifiedBy:
+          params.creatorKind === 'pengurus' ? 'Pengurus Pendiri' : 'Perintis Ruang Warga',
+        siagaVerifiedAt: todayLabel,
+        falseAlarmCount: 0,
+        monthlyPayments: buildInitialPayments(0, monthlyAmount),
+      });
+    }
+
+    // Build Transactions (Pemasukan & Pengeluaran + Saldo Awal)
+    const importedTxs: KasTransaction[] = (d.transactions || [])
+      .filter(t => t.title.trim() && t.amount > 0)
+      .map((t, idx) => ({
+        id: `kas-imp-${stamp}-${idx}`,
+        type: t.type === 'keluar' ? 'keluar' : 'masuk',
+        category: t.category || (t.type === 'keluar' ? 'Perbaikan Fasilitas' : 'Iuran Warga'),
+        title: t.title.trim(),
+        amount: Math.round(t.amount),
+        date: t.date?.trim() || todayLabel,
+        recordedBy: t.recordedBy?.trim() || 'Smart Import Dokumen',
+      }));
+
+    if (d.profile.openingBalance > 0) {
+      importedTxs.push({
+        id: `kas-open-${stamp}`,
+        type: 'masuk',
+        category: 'Donasi / Kas',
+        title: d.profile.openingBalanceNote?.trim() || `Saldo Awal Buku ${year}`,
+        amount: Math.round(d.profile.openingBalance),
+        date: `01 Jan ${year}`,
+        recordedBy: 'Saldo Awal (Smart Import)',
+      });
+    }
+
+    const importedArchives: HistoricalArchiveYear[] = (d.archives || []).map((a, idx) => ({
+      id: `arc-imp-${a.year}-${idx}`,
+      year: a.year,
+      totalIncome: Math.max(0, Math.round(a.totalIncome || 0)),
+      totalExpense: Math.max(0, Math.round(a.totalExpense || 0)),
+      endingBalance: Math.max(0, Math.round(a.endingBalance || 0)),
+      note: a.note?.trim() || `Rekap impor tahun ${a.year}`,
+      source: 'Impor Excel',
+    }));
+
+    if (params.targetMode !== 'create_new') {
+      const existing = this.getActiveCommunity();
+      if (existing) {
+        const isReplace = params.targetMode === 'replace_active';
+        const nextMembers = isReplace
+          ? importedMembersList
+          : (() => {
+              const keys = new Set(
+                existing.members.map(m => `${m.name.toLowerCase()}::${m.block.toLowerCase()}`)
+              );
+              const extras = importedMembersList.filter(
+                m => !m.isCurrentUser && !keys.has(`${m.name.toLowerCase()}::${m.block.toLowerCase()}`)
+              );
+              return [...existing.members, ...extras];
+            })();
+        const nextOfficers = isReplace
+          ? mappedOfficers
+          : (() => {
+              const cur = this.getOfficers(existing);
+              const keys = new Set(cur.map(o => `${o.name.toLowerCase()}::${o.role.toLowerCase()}`));
+              const extras = mappedOfficers.filter(
+                o => !keys.has(`${o.name.toLowerCase()}::${o.role.toLowerCase()}`)
+              );
+              return [...cur, ...extras];
+            })();
+        const nextCoords: CoordinatorMember[] = nextOfficers.map(o => ({
+          id: o.id,
+          role: o.role,
+          division: o.division,
+          name: o.name,
+          phone: o.phone,
+          canVerifySiaga: o.canVerifySiaga,
+        }));
+        const nextTxs = isReplace ? importedTxs : [...importedTxs, ...(existing.transactions || [])];
+        const nextArchives = isReplace
+          ? importedArchives
+          : (() => {
+              const map = new Map<number, HistoricalArchiveYear>();
+              (existing.archives || []).forEach(a => map.set(a.year, a));
+              importedArchives.forEach(a => map.set(a.year, a));
+              return Array.from(map.values());
+            })();
+
+        const updatedWs: RtCommunityWorkspace = {
+          ...existing,
+          profile: {
+            ...existing.profile,
+            orgType: d.profile.orgType || existing.profile.orgType,
+            customBrandName: d.profile.customBrandName?.trim() || existing.profile.customBrandName,
+            orgName: d.profile.orgName.trim() || existing.profile.orgName,
+            areaName: d.profile.areaName.trim() || existing.profile.areaName,
+            monthlyDuesAmount: monthlyAmount || existing.profile.monthlyDuesAmount,
+            year,
+          },
+          officers: nextOfficers,
+          coordinators: nextCoords,
+          members: nextMembers,
+          transactions: nextTxs,
+          archives: nextArchives,
+        };
+        const list = loadScopedWorkspaces();
+        saveScopedWorkspaces(
+          list.map(w => (w.id === existing.id ? updatedWs : w)),
+          updatedWs.id
+        );
+        return updatedWs;
+      }
+    }
+
+    // Create brand-new community from Smart Import
+    const commId = `comm_${stamp}_${Math.random().toString(36).slice(2, 6)}`;
+    const inviteCode = `WQR-${prefixTag}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const welcomePost: ForumPost = {
+      id: `post-smart-${stamp}`,
+      category: 'info',
+      title: `Data ${cleanOrg} Berhasil Diimpor (${importedMembersList.length} Warga & ${importedTxs.length} Kas)`,
+      content: `Ruang ${cleanOrg} (${d.profile.areaName.trim() || 'Lingkungan Warga'}) disiapkan oleh ${creatorName} (${params.creatorKind === 'pengurus' ? 'Pengurus' : 'Warga Perintis'}) via Smart Import. Pengurus & warga silakan buka menu Klaim Akun / Profil untuk menghubungkan nama masing-masing.`,
+      authorName: creatorName,
+      authorRole: params.creatorKind === 'pengurus' ? 'Pengurus Pendiri' : 'Warga Perintis',
+      createdAt: 'Baru saja',
+      upvoterIds: [],
+      comments: [],
+    };
+
+    const newWorkspace: RtCommunityWorkspace = {
+      id: commId,
+      joinedVia: 'created',
+      joinedAt: new Date().toISOString(),
+      profile: {
+        id: commId,
+        orgType: d.profile.orgType,
+        customBrandName: d.profile.customBrandName?.trim() || undefined,
+        orgName: cleanOrg,
+        areaName: d.profile.areaName.trim() || 'Lingkungan Warga',
+        monthlyDuesAmount: monthlyAmount,
+        duesBreakdown: breakdown,
+        year,
+        pengurusPin: params.pengurusPin?.trim() || '1234',
+        inviteCode,
+        creatorName,
+        createdAt: todayLabel,
+        termStartDate: todayIso,
+        termEndDate: termEndIso,
+        gracePeriodDays: 14,
+        skNumber: '',
+      },
+      coordinators: mappedCoordinators,
+      officers: mappedOfficers,
+      members: importedMembersList,
+      transactions: importedTxs,
+      auditLogs: [],
+      forumPosts: [welcomePost],
+      guestReports: [],
+      archives: importedArchives,
+      invitations: [],
+      handovers: [],
+      governanceActions: [],
+    };
+
+    const current = loadScopedWorkspaces();
+    saveScopedWorkspaces([newWorkspace, ...current], newWorkspace.id);
+    return newWorkspace;
   },
 
   // --- Smart Excel Import & Lembaran Baru ---
