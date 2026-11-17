@@ -56,6 +56,7 @@ import { ModularFeeSheet } from '../monetization/ModularFeeSheet';
 import {
   SMART_LAYOUT_PRESETS,
   SmartPresetId,
+  GuideOverlayMode,
   analyzeTrahForSmartLayout,
   computeOptimalCardScale,
   generateSmartLayoutFromTable,
@@ -141,6 +142,7 @@ export interface SavedGridDesign {
   photoFrameSize: PhotoFrameSize;
   cardScale?: number;
   showGenGuides?: boolean;
+  guideOverlayMode?: GuideOverlayMode;
   linesOnTop?: boolean;
   theme: CanvasTheme;
   bgStyle: CanvasBackground;
@@ -1455,6 +1457,8 @@ export const InteractiveGridCanvasView: React.FC<
     useState<PhotoFrameSize>('3x4');
   const [cardScale, setCardScale] = useState<number>(1);
   const [showGenGuides, setShowGenGuides] = useState<boolean>(true);
+  const [guideOverlayMode, setGuideOverlayMode] = useState<GuideOverlayMode>('gen_bands');
+  const [smartCategoryFilter, setSmartCategoryFilter] = useState<'all' | 'kotak9' | 'orbit' | 'klasik'>('all');
 
   // Tema & Background
   const [theme, setTheme] = useState<CanvasTheme>('dark');
@@ -1696,6 +1700,7 @@ export const InteractiveGridCanvasView: React.FC<
       setPhotoFrameSize(target.photoFrameSize || '3x4');
       setCardScale(target.cardScale ?? 1);
       setShowGenGuides(target.showGenGuides ?? true);
+      setGuideOverlayMode(target.guideOverlayMode || 'gen_bands');
       setLinesOnTop(target.linesOnTop ?? false);
       setTheme(target.theme || 'dark');
       setBgStyle(target.bgStyle || '');
@@ -1757,6 +1762,7 @@ export const InteractiveGridCanvasView: React.FC<
       photoFrameSize: '3x4',
       cardScale: initScale,
       showGenGuides: true,
+      guideOverlayMode: 'gen_bands',
       theme: 'dark',
       bgStyle: '',
       lineStyle: 'pcb90',
@@ -1769,6 +1775,7 @@ export const InteractiveGridCanvasView: React.FC<
     };
     setCardScale(initScale);
     setShowGenGuides(true);
+    setGuideOverlayMode('gen_bands');
     setSavedDesigns([initialDesign]);
     setActiveDesignId(initialDesign.id);
     setDesignNameInput(initialDesign.name);
@@ -1817,6 +1824,7 @@ export const InteractiveGridCanvasView: React.FC<
                 photoFrameSize,
                 cardScale: overrideCardScale ?? cardScale,
                 showGenGuides,
+                guideOverlayMode,
                 linesOnTop,
                 theme,
                 bgStyle,
@@ -1849,6 +1857,7 @@ export const InteractiveGridCanvasView: React.FC<
       photoFrameSize,
       cardScale,
       showGenGuides,
+      guideOverlayMode,
       linesOnTop,
       theme,
       bgStyle,
@@ -1874,6 +1883,7 @@ export const InteractiveGridCanvasView: React.FC<
     photoFrameSize,
     cardScale,
     showGenGuides,
+    guideOverlayMode,
     linesOnTop,
     theme,
     bgStyle,
@@ -2005,6 +2015,7 @@ export const InteractiveGridCanvasView: React.FC<
               photoFrameSize,
               cardScale,
               showGenGuides,
+              guideOverlayMode,
               theme,
               bgStyle,
               lineStyle,
@@ -2031,6 +2042,7 @@ export const InteractiveGridCanvasView: React.FC<
         photoFrameSize,
         cardScale,
         showGenGuides,
+        guideOverlayMode,
         theme,
         bgStyle,
         lineStyle,
@@ -2080,6 +2092,7 @@ export const InteractiveGridCanvasView: React.FC<
       photoFrameSize,
       cardScale,
       showGenGuides,
+      guideOverlayMode,
       theme,
       bgStyle,
       lineStyle,
@@ -2120,6 +2133,7 @@ export const InteractiveGridCanvasView: React.FC<
     setPhotoFrameSize(design.photoFrameSize || '3x4');
     setCardScale(design.cardScale ?? 1);
     setShowGenGuides(design.showGenGuides ?? true);
+    setGuideOverlayMode(design.guideOverlayMode || 'gen_bands');
     setLinesOnTop(design.linesOnTop ?? false);
     setTheme(design.theme || 'dark');
     setBgStyle(design.bgStyle || '');
@@ -2312,6 +2326,9 @@ export const InteractiveGridCanvasView: React.FC<
         setPhotoFrameSize(nextPhotoSize);
         setTheme(preset.recommendedTheme);
         setBgStyle(preset.recommendedBg);
+        if (preset.recommendedLineStyle) {
+          setLineStyle(preset.recommendedLineStyle);
+        }
       }
 
       const targetPaperObj = GRID_PAPER_MAP[nextPaper];
@@ -2327,7 +2344,8 @@ export const InteractiveGridCanvasView: React.FC<
             targetW,
             targetH,
             nextCardMode,
-            nextPhotoSize
+            nextPhotoSize,
+            presetId
           )
         : cardScale;
 
@@ -2347,10 +2365,22 @@ export const InteractiveGridCanvasView: React.FC<
         presetId,
         targetW,
         targetH,
-        sampleDim
+        sampleDim,
+        {
+          displayMode: nextCardMode,
+          photoSize: nextPhotoSize,
+          cardScale: nextScale,
+        }
       );
 
-      if (presetId === 'hierarchy_grid_fill') {
+      const nextGuideMode: GuideOverlayMode =
+        preset.recommendedGuideMode || 'gen_bands';
+      setGuideOverlayMode(nextGuideMode);
+      if (
+        presetId === 'hierarchy_grid_fill' ||
+        nextGuideMode === 'grid_9_rows' ||
+        nextGuideMode === 'orbit_rings'
+      ) {
         setShowGenGuides(true);
       }
 
@@ -2360,7 +2390,7 @@ export const InteractiveGridCanvasView: React.FC<
       setQuickText(refreshedText);
       setSelectedIds([]);
       setLayoutMode('manual');
-      persistCurrentDesign(result.nodes, result.edges, refreshedText);
+      persistCurrentDesign(result.nodes, result.edges, refreshedText, nextScale);
 
       showNotification(
         `Tata letak "${preset.title}" ditata pas di ${targetPaperObj.label} (Skala Foto ${Math.round(
@@ -4984,10 +5014,35 @@ export const InteractiveGridCanvasView: React.FC<
                   </div>
                 </div>
 
-                {/* Daftar 4 Pilihan Rekomendasi Tata Letak */}
+                {/* Filter Kategori Pilihan Tata Letak Smart */}
                 <div className="space-y-2">
-                  {SMART_LAYOUT_PRESETS.map((preset) => {
+                  <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-black/25 border border-slate-700/60">
+                    {[
+                      { id: 'all' as const, label: `Semua (${SMART_LAYOUT_PRESETS.length})` },
+                      { id: 'kotak9' as const, label: 'Kotak 9 Baris' },
+                      { id: 'orbit' as const, label: 'Orbit 1–5' },
+                      { id: 'klasik' as const, label: 'Klasik' },
+                    ].map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setSmartCategoryFilter(tab.id)}
+                        className={`py-1 px-1.5 rounded-lg text-[9.5px] font-extrabold whitespace-nowrap transition ${
+                          smartCategoryFilter === tab.id
+                            ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                            : 'text-slate-300 hover:bg-white/10'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {SMART_LAYOUT_PRESETS.filter(
+                    (p) => smartCategoryFilter === 'all' || p.category === smartCategoryFilter
+                  ).map((preset) => {
                     const isTop = preset.id === smartAnalysis.topPresetId;
+                    const isNewConcept = preset.category === 'kotak9' || preset.category === 'orbit';
                     return (
                       <div
                         key={preset.id}
@@ -4996,6 +5051,10 @@ export const InteractiveGridCanvasView: React.FC<
                             ? isDark
                               ? 'bg-emerald-950/35 border-emerald-500/70'
                               : 'bg-emerald-50 border-emerald-400'
+                            : isNewConcept
+                            ? isDark
+                              ? 'bg-slate-900/90 border-sky-500/45 hover:border-amber-400'
+                              : 'bg-sky-50/70 border-sky-300 hover:border-amber-500'
                             : isDark
                             ? 'bg-slate-900/70 border-slate-700 hover:border-amber-400'
                             : 'bg-stone-50 border-stone-200 hover:border-amber-500'
@@ -5014,7 +5073,11 @@ export const InteractiveGridCanvasView: React.FC<
                             className={`text-[9px] px-1.5 py-0.5 rounded font-black shrink-0 ${
                               isTop
                                 ? 'bg-amber-400 text-slate-950'
-                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : preset.category === 'orbit'
+                                ? 'bg-sky-500/20 text-sky-300 border border-sky-400/40'
+                                : preset.category === 'kotak9'
+                                ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-400/40'
+                                : 'bg-slate-700/60 text-slate-200 border border-slate-600'
                             }`}
                           >
                             {isTop ? '★ Saran Terbaik' : preset.badge}
@@ -5031,7 +5094,7 @@ export const InteractiveGridCanvasView: React.FC<
                           className="w-full py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] flex items-center justify-center gap-1 transition"
                         >
                           <Wand2 className="w-3 h-3" />
-                          <span>Terapkan & Bebas Edit</span>
+                          <span>Terapkan &amp; Bebas Edit</span>
                         </button>
                       </div>
                     );
@@ -5555,31 +5618,137 @@ export const InteractiveGridCanvasView: React.FC<
                 </span>
               </div>
 
-              {/* Pita & Garis Penunjuk Generasi (Jalur Hirarki agar ruang A3 penuh tetap mudah dibaca) */}
-              {generationGuideBands.map((band) => (
-                <div
-                  key={`gen-band-${band.gen}`}
-                  style={{
-                    top: `${band.top}px`,
-                    height: `${band.height}px`,
-                  }}
-                  className={`absolute left-0 right-0 pointer-events-none z-[1] border-t border-b border-dashed flex items-center ${
-                    isDark || bgStyle !== ''
-                      ? 'border-amber-400/20 bg-white/[0.02]'
-                      : 'border-amber-600/20 bg-amber-500/[0.03]'
-                  }`}
+              {/* Pita & Garis Penunjuk Generasi / 9 Baris Simetris / Orbit 1-5 */}
+              {showGenGuides && guideOverlayMode === 'grid_9_rows' && (
+                (() => {
+                  const rowLabels = [
+                    'BARIS 1 · G5 (Atas)',
+                    'BARIS 2 · G5 (Atas)',
+                    'BARIS 3 · G4 (Atas)',
+                    'BARIS 4 · G3 (1–4)',
+                    'BARIS 5 · G1–G2 (Pusat)',
+                    'BARIS 6 · G3 (5–8)',
+                    'BARIS 7 · G4 (Bawah)',
+                    'BARIS 8 · G5 (Bawah)',
+                    'BARIS 9 · G5 (Bawah)',
+                  ];
+                  const minY = 66;
+                  const bandH = Math.max(36, (boardHeight - minY - 26) / 9);
+                  return rowLabels.map((lbl, rIdx) => {
+                    const isCenterRow = rIdx === 4;
+                    return (
+                      <div
+                        key={`row9-band-${rIdx}`}
+                        style={{
+                          top: `${Math.round(minY + rIdx * bandH)}px`,
+                          height: `${Math.round(bandH)}px`,
+                        }}
+                        className={`absolute left-0 right-0 pointer-events-none z-[1] border-t border-dashed flex items-center ${
+                          isCenterRow
+                            ? isDark || bgStyle !== ''
+                              ? 'border-amber-400/45 bg-amber-500/[0.05]'
+                              : 'border-amber-600/40 bg-amber-500/[0.06]'
+                            : isDark || bgStyle !== ''
+                            ? 'border-emerald-400/20 bg-white/[0.015]'
+                            : 'border-emerald-600/15 bg-emerald-500/[0.02]'
+                        }`}
+                      >
+                        <span
+                          className={`ml-2 px-1.5 py-0.5 rounded text-[8.5px] font-black tracking-wide border ${
+                            isCenterRow
+                              ? isDark || bgStyle !== ''
+                                ? 'bg-amber-950/90 border-amber-400/60 text-amber-200'
+                                : 'bg-amber-100 border-amber-500 text-amber-900'
+                              : isDark || bgStyle !== ''
+                              ? 'bg-slate-900/80 border-slate-700 text-emerald-300'
+                              : 'bg-white/85 border-emerald-300 text-emerald-800'
+                          }`}
+                        >
+                          {lbl}
+                        </span>
+                      </div>
+                    );
+                  });
+                })()
+              )}
+
+              {showGenGuides && guideOverlayMode === 'orbit_rings' && (
+                <svg
+                  width={boardWidth}
+                  height={boardHeight}
+                  className="absolute inset-0 pointer-events-none z-[1]"
                 >
-                  <span
-                    className={`ml-2 px-1.5 py-0.5 rounded text-[9px] font-black tracking-wider border ${
+                  {(() => {
+                    const cx = boardWidth / 2;
+                    const cy = 72 + Math.max(240, boardHeight - 160) / 2;
+                    const maxRx = Math.max(180, boardWidth / 2 - 75);
+                    const maxRy = Math.max(140, (boardHeight - 160) / 2 - 42);
+                    const rings = [
+                      { num: 1, factor: 0.22, label: 'ORBIT 1 · G1–G2', accent: '#f59e0b' },
+                      { num: 2, factor: 0.44, label: 'ORBIT 2 · G3', accent: '#38bdf8' },
+                      { num: 3, factor: 0.63, label: 'ORBIT 3 · G4', accent: '#34d399' },
+                      { num: 4, factor: 0.81, label: 'ORBIT 4 · G4', accent: '#a78bfa' },
+                      { num: 5, factor: 0.98, label: 'ORBIT 5 · G5+', accent: '#fb7185' },
+                    ];
+                    return rings.map((rg) => {
+                      const rx = Math.round(maxRx * rg.factor);
+                      const ry = Math.round(maxRy * rg.factor);
+                      return (
+                        <g key={`orbit-ring-${rg.num}`}>
+                          <ellipse
+                            cx={cx}
+                            cy={cy}
+                            rx={rx}
+                            ry={ry}
+                            fill="none"
+                            stroke={rg.accent}
+                            strokeWidth={rg.num === 1 ? 1.8 : 1.2}
+                            strokeOpacity={isDark || bgStyle !== '' ? 0.34 : 0.42}
+                            strokeDasharray="6 5"
+                          />
+                          <text
+                            x={cx}
+                            y={Math.max(66, cy - ry + 13)}
+                            textAnchor="middle"
+                            fontSize="9.5"
+                            fontWeight="800"
+                            fill={rg.accent}
+                            fillOpacity={isDark || bgStyle !== '' ? 0.8 : 0.9}
+                          >
+                            {rg.label}
+                          </text>
+                        </g>
+                      );
+                    });
+                  })()}
+                </svg>
+              )}
+
+              {guideOverlayMode === 'gen_bands' &&
+                generationGuideBands.map((band) => (
+                  <div
+                    key={`gen-band-${band.gen}`}
+                    style={{
+                      top: `${band.top}px`,
+                      height: `${band.height}px`,
+                    }}
+                    className={`absolute left-0 right-0 pointer-events-none z-[1] border-t border-b border-dashed flex items-center ${
                       isDark || bgStyle !== ''
-                        ? 'bg-slate-900/80 border-amber-500/40 text-amber-300'
-                        : 'bg-amber-50/90 border-amber-400/50 text-amber-800'
+                        ? 'border-amber-400/20 bg-white/[0.02]'
+                        : 'border-amber-600/20 bg-amber-500/[0.03]'
                     }`}
                   >
-                    {band.label}
-                  </span>
-                </div>
-              ))}
+                    <span
+                      className={`ml-2 px-1.5 py-0.5 rounded text-[9px] font-black tracking-wider border ${
+                        isDark || bgStyle !== ''
+                          ? 'bg-slate-900/80 border-amber-500/40 text-amber-300'
+                          : 'bg-amber-50/90 border-amber-400/50 text-amber-800'
+                      }`}
+                    >
+                      {band.label}
+                    </span>
+                  </div>
+                ))}
 
               {/* Kotak Pembatas Group (Dashed Box) */}
               {groupBoxes.map((gb) => (
