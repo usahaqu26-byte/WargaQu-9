@@ -19,14 +19,6 @@ import {
   Check,
   X,
   Grid,
-  AlignLeft,
-  AlignCenterHorizontal,
-  AlignRight,
-  AlignStartVertical,
-  AlignCenterVertical,
-  AlignEndVertical,
-  AlignHorizontalSpaceAround,
-  AlignVerticalSpaceAround,
   Group,
   Ungroup,
   FolderPlus,
@@ -49,6 +41,13 @@ import {
   ChevronRight,
   Layers,
   Split,
+  Undo2,
+  Rows3,
+  CircleDot,
+  Disc,
+  GitBranch,
+  ArrowRightLeft,
+  Users,
 } from 'lucide-react';
 import { FamilyMember, TrahCategory } from './LeluhurQuView';
 import { MonetizationService } from '../../services/monetizationService';
@@ -364,7 +363,7 @@ function getMergedGridMetrics(
   };
 }
 
-// Hitung dimensi aktual kartu agar garis konektor & alat Sejajarkan presisi 100%
+// Hitung dimensi aktual kartu agar garis konektor & tata letak presisi 100%
 function getNodeSize(
   node: InteractiveNode,
   displayMode: CardDisplayMode,
@@ -987,146 +986,6 @@ function findNonOverlappingSlot(
   return { x: clampedPrefX, y: clampedPrefY };
 }
 
-function shiftNodesAwayFromRect(
-  fixedRect: { x: number; y: number; w: number; h: number },
-  movingNodes: InteractiveNode[],
-  getSize: (n: InteractiveNode) => { w: number; h: number },
-  boardW: number,
-  boardH: number
-): InteractiveNode[] {
-  const GAP_X = 22;
-  const GAP_Y = 24;
-  const MIN_X = 16;
-  const MIN_Y = 58;
-
-  const clampNode = (x: number, y: number, w: number, h: number) => ({
-    x: Math.max(MIN_X, Math.min(Math.max(MIN_X, boardW - w - 16), Math.round(x))),
-    y: Math.max(MIN_Y, Math.min(Math.max(MIN_Y, boardH - h - 24), Math.round(y))),
-  });
-
-  const items = movingNodes.map((n) => {
-    const sz = getSize(n);
-    return { node: { ...n }, w: sz.w, h: sz.h };
-  });
-
-  const fCx = fixedRect.x + fixedRect.w / 2;
-  const fCy = fixedRect.y + fixedRect.h / 2;
-
-  items.sort((a, b) => {
-    const da = Math.hypot(a.node.x + a.w / 2 - fCx, a.node.y + a.h / 2 - fCy);
-    const db = Math.hypot(b.node.x + b.w / 2 - fCx, b.node.y + b.h / 2 - fCy);
-    return da - db;
-  });
-
-  const pushOutFromBox = (
-    target: { node: InteractiveNode; w: number; h: number },
-    blocker: { x: number; y: number; w: number; h: number }
-  ): boolean => {
-    const overlapX =
-      Math.min(target.node.x + target.w + GAP_X, blocker.x + blocker.w) -
-      Math.max(target.node.x, blocker.x - GAP_X);
-    const overlapY =
-      Math.min(target.node.y + target.h + GAP_Y, blocker.y + blocker.h) -
-      Math.max(target.node.y, blocker.y - GAP_Y);
-
-    if (overlapX <= 0 || overlapY <= 0) return false;
-
-    const tCx = target.node.x + target.w / 2;
-    const tCy = target.node.y + target.h / 2;
-    const bCx = blocker.x + blocker.w / 2;
-    const bCy = blocker.y + blocker.h / 2;
-
-    const sameRowBand = Math.abs(tCy - bCy) < (target.h + blocker.h) * 0.45;
-    let nextX = target.node.x;
-    let nextY = target.node.y;
-
-    if (sameRowBand || overlapX < overlapY) {
-      if (tCx < bCx) {
-        const candidateLeft = blocker.x - GAP_X - target.w;
-        if (candidateLeft >= MIN_X) {
-          nextX = candidateLeft;
-        } else {
-          nextX = blocker.x + blocker.w + GAP_X;
-        }
-      } else {
-        const candidateRight = blocker.x + blocker.w + GAP_X;
-        if (candidateRight + target.w <= boardW - 16) {
-          nextX = candidateRight;
-        } else {
-          const candidateLeft = blocker.x - GAP_X - target.w;
-          if (candidateLeft >= MIN_X) {
-            nextX = candidateLeft;
-          } else {
-            nextY = blocker.y + blocker.h + GAP_Y;
-          }
-        }
-      }
-    } else {
-      if (tCy >= bCy) {
-        const candidateDown = blocker.y + blocker.h + GAP_Y;
-        if (candidateDown + target.h <= boardH - 24) {
-          nextY = candidateDown;
-        } else {
-          nextX =
-            tCx < bCx
-              ? blocker.x - GAP_X - target.w
-              : blocker.x + blocker.w + GAP_X;
-        }
-      } else {
-        const candidateUp = blocker.y - GAP_Y - target.h;
-        if (candidateUp >= MIN_Y) {
-          nextY = candidateUp;
-        } else {
-          nextY = blocker.y + blocker.h + GAP_Y;
-        }
-      }
-    }
-
-    const clamped = clampNode(nextX, nextY, target.w, target.h);
-    if (clamped.x === target.node.x && clamped.y === target.node.y) {
-      const downFallback = clampNode(
-        target.node.x,
-        blocker.y + blocker.h + GAP_Y,
-        target.w,
-        target.h
-      );
-      if (downFallback.x === target.node.x && downFallback.y === target.node.y) {
-        return false;
-      }
-      target.node.x = downFallback.x;
-      target.node.y = downFallback.y;
-      return true;
-    }
-    target.node.x = clamped.x;
-    target.node.y = clamped.y;
-    return true;
-  };
-
-  for (let pass = 0; pass < 14; pass++) {
-    let movedAny = false;
-    for (let i = 0; i < items.length; i++) {
-      if (pushOutFromBox(items[i], fixedRect)) {
-        movedAny = true;
-      }
-      for (let j = 0; j < i; j++) {
-        if (
-          pushOutFromBox(items[i], {
-            x: items[j].node.x,
-            y: items[j].node.y,
-            w: items[j].w,
-            h: items[j].h,
-          })
-        ) {
-          movedAny = true;
-        }
-      }
-    }
-    if (!movedAny) break;
-  }
-
-  return items.map((it) => it.node);
-}
-
 function reconcileCanvasWithMembers(
   currentNodes: InteractiveNode[],
   currentEdges: InteractiveEdge[],
@@ -1523,7 +1382,22 @@ export const InteractiveGridCanvasView: React.FC<
   const [isFocusMode, setIsFocusMode] = useState<boolean>(false);
   const [isPanMode, setIsPanMode] = useState<boolean>(false);
   const [autoScreenOrient, setAutoScreenOrient] = useState<boolean>(false);
-  const [showFloatingAlign, setShowFloatingAlign] = useState<boolean>(false);
+
+  // Undo History Stack (maksimal 35 langkah)
+  const MAX_UNDO_STEPS = 35;
+  const undoStackRef = useRef<
+    Array<{
+      nodes: InteractiveNode[];
+      edges: InteractiveEdge[];
+      quickText: string;
+      guideOverlayMode: GuideOverlayMode;
+      cardScale: number;
+      label: string;
+    }>
+  >([]);
+  const [undoCount, setUndoCount] = useState<number>(0);
+  const lastEditUndoTimeRef = useRef<number>(0);
+  const lastTouchTimeRef = useRef<number>(0);
 
   // Ref untuk Timer Hold 2 Detik, Repeat Panah, dan Geser Dot Jalur Garis
   const holdTimerRef = useRef<{
@@ -1543,6 +1417,7 @@ export const InteractiveGridCanvasView: React.FC<
     startPointerY: number;
     initOffsetX: number;
     initOffsetY: number;
+    preDragEdges?: InteractiveEdge[];
   }>({
     active: false,
     edgeIdx: -1,
@@ -1602,6 +1477,7 @@ export const InteractiveGridCanvasView: React.FC<
     startPointerX: number;
     startPointerY: number;
     initialPositions: Record<string, { x: number; y: number }>;
+    preDragNodes?: InteractiveNode[];
   }>({
     active: false,
     movingIds: [],
@@ -1716,6 +1592,8 @@ export const InteractiveGridCanvasView: React.FC<
       setSelectedIds([]);
       setMoveUnlockedIds([]);
       setMoveAnchorId(null);
+      undoStackRef.current = [];
+      setUndoCount(0);
       loadedTrahIdRef.current = activeTrah.id;
       lastMemberSigRef.current = getMemberSig(activeTrah.members);
       return;
@@ -1790,6 +1668,8 @@ export const InteractiveGridCanvasView: React.FC<
     setCardBorderColor('');
     setCaptionInfo(defaultCap);
     setSelectedIds([]);
+    undoStackRef.current = [];
+    setUndoCount(0);
     loadedTrahIdRef.current = activeTrah.id;
     lastMemberSigRef.current = getMemberSig(activeTrah.members);
     try {
@@ -1871,6 +1751,83 @@ export const InteractiveGridCanvasView: React.FC<
       designsStorageKey,
     ]
   );
+
+  // =========================================================================
+  // UNDO MULTI-LANGKAH (SIMPAN & KEMBALIKAN SNAPSHOT KANVAS)
+  // =========================================================================
+  const cloneNodesForHistory = useCallback((list: InteractiveNode[]): InteractiveNode[] => {
+    return list.map((n) => ({
+      ...n,
+      mergedMembers: n.mergedMembers
+        ? n.mergedMembers.map((m) => ({ ...m }))
+        : undefined,
+      mergedEdgesSnapshot: n.mergedEdgesSnapshot
+        ? n.mergedEdgesSnapshot.map((e) => ({ ...e }))
+        : undefined,
+    }));
+  }, []);
+
+  const latestUndoStateRef = useRef({
+    nodes,
+    edges,
+    quickText,
+    guideOverlayMode,
+    cardScale,
+  });
+  latestUndoStateRef.current = {
+    nodes,
+    edges,
+    quickText,
+    guideOverlayMode,
+    cardScale,
+  };
+
+  const pushUndoSnapshot = useCallback(
+    (
+      label = 'Perubahan',
+      overrideNodes?: InteractiveNode[],
+      overrideEdges?: InteractiveEdge[]
+    ) => {
+      const cur = latestUndoStateRef.current;
+      const snap = {
+        nodes: cloneNodesForHistory(overrideNodes ?? cur.nodes),
+        edges: (overrideEdges ?? cur.edges).map((e) => ({ ...e })),
+        quickText: cur.quickText,
+        guideOverlayMode: cur.guideOverlayMode,
+        cardScale: cur.cardScale,
+        label,
+      };
+      const nextStack = [...undoStackRef.current, snap].slice(-MAX_UNDO_STEPS);
+      undoStackRef.current = nextStack;
+      setUndoCount(nextStack.length);
+    },
+    [cloneNodesForHistory]
+  );
+
+  const handleUndo = useCallback(() => {
+    const stack = undoStackRef.current;
+    if (stack.length === 0) {
+      showNotification('Belum ada perubahan untuk di-Undo.');
+      return;
+    }
+    const prev = stack[stack.length - 1];
+    const nextStack = stack.slice(0, -1);
+    undoStackRef.current = nextStack;
+    setUndoCount(nextStack.length);
+
+    setNodes(prev.nodes);
+    setEdges(prev.edges);
+    setQuickText(prev.quickText);
+    setGuideOverlayMode(prev.guideOverlayMode);
+    setCardScale(prev.cardScale);
+    setSelectedIds((cur) =>
+      cur.filter((id) => prev.nodes.some((n) => n.id === id))
+    );
+    setMoveUnlockedIds([]);
+    setMoveAnchorId(null);
+    persistCurrentDesign(prev.nodes, prev.edges, prev.quickText, prev.cardScale);
+    showNotification(`Undo: ${prev.label}`);
+  }, [persistCurrentDesign, showNotification]);
 
   // Sinkronisasi preferensi kertas/card/garis/warna/keterangan ke desain aktif
   useEffect(() => {
@@ -1981,15 +1938,31 @@ export const InteractiveGridCanvasView: React.FC<
     };
   }, [autoScreenOrient]);
 
-  // Shortcut ESC keluar dari Mode Leluasa
+  // Shortcut Keyboard: Ctrl+Z / Cmd+Z (Undo) & ESC keluar dari Mode Leluasa
   useEffect(() => {
-    if (!isFocusMode) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsFocusMode(false);
+      if (e.key === 'Escape' && isFocusMode) {
+        setIsFocusMode(false);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        const activeEl = document.activeElement as HTMLElement | null;
+        const tag = activeEl?.tagName?.toLowerCase();
+        if (
+          tag === 'input' ||
+          tag === 'textarea' ||
+          tag === 'select' ||
+          activeEl?.isContentEditable
+        ) {
+          return;
+        }
+        e.preventDefault();
+        handleUndo();
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isFocusMode]);
+  }, [isFocusMode, handleUndo]);
 
   // =========================================================================
   // SIMPAN DESAIN, EDIT KEMBALI, & BUAT DESAIN BARU
@@ -2112,6 +2085,8 @@ export const InteractiveGridCanvasView: React.FC<
     setEdges(freshDesign.edges);
     setQuickText(freshDesign.quickText);
     setSelectedIds([]);
+    undoStackRef.current = [];
+    setUndoCount(0);
     try {
       localStorage.setItem(designsStorageKey, JSON.stringify(nextList));
       localStorage.setItem(activeDesignIdKey, newId);
@@ -2149,6 +2124,8 @@ export const InteractiveGridCanvasView: React.FC<
     setSelectedIds([]);
     setMoveUnlockedIds([]);
     setMoveAnchorId(null);
+    undoStackRef.current = [];
+    setUndoCount(0);
     try {
       localStorage.setItem(activeDesignIdKey, design.id);
     } catch (e) {
@@ -2182,6 +2159,7 @@ export const InteractiveGridCanvasView: React.FC<
     (sourceText?: string) => {
       const raw = (sourceText !== undefined ? sourceText : quickText).trim();
       if (!raw) return;
+      pushUndoSnapshot('Teks Auto-Grid');
 
       const prevByName = new Map<string, InteractiveNode>();
       nodes.forEach((n) => prevByName.set(n.name.trim().toLowerCase(), n));
@@ -2286,7 +2264,7 @@ export const InteractiveGridCanvasView: React.FC<
         `Auto-Grid menata ${nextNodes.length} kartu ke kertas ${paperDim.label}!`
       );
     },
-    [quickText, nodes, boardWidth, paperDim.label, persistCurrentDesign, showNotification]
+    [quickText, nodes, boardWidth, paperDim.label, persistCurrentDesign, pushUndoSnapshot, showNotification]
   );
 
   // =========================================================================
@@ -2301,6 +2279,7 @@ export const InteractiveGridCanvasView: React.FC<
     (presetId: SmartPresetId, overrideLockPaper?: boolean) => {
       const preset = SMART_LAYOUT_PRESETS.find((p) => p.id === presetId);
       if (!preset) return;
+      pushUndoSnapshot(`Smart: ${preset.title}`);
 
       const keepCurrentPaper =
         overrideLockPaper !== undefined ? overrideLockPaper : lockSelectedPaper;
@@ -2409,12 +2388,14 @@ export const InteractiveGridCanvasView: React.FC<
       cardScale,
       smartAnalysis.recommendedPaper,
       persistCurrentDesign,
+      pushUndoSnapshot,
       showNotification,
     ]
   );
 
   // Tombol cepat: sesuaikan skala kartu & foto otomatis agar kertas aktif terisi seimbang
   const handleAutoFitCardScale = useCallback(() => {
+    pushUndoSnapshot('Pas-kan Skala Kertas');
     const optimal = computeOptimalCardScale(
       activeTrah.members,
       boardWidth,
@@ -2452,143 +2433,9 @@ export const InteractiveGridCanvasView: React.FC<
     photoFrameSize,
     paperDim.label,
     persistCurrentDesign,
+    pushUndoSnapshot,
     showNotification,
   ]);
-
-  // =========================================================================
-  // FITUR RAPIKAN / SEJAJARKAN / LURUSKAN (ALIGN & DISTRIBUTE)
-  // =========================================================================
-  const handleAlign = (
-    type:
-      | 'left'
-      | 'centerH'
-      | 'right'
-      | 'top'
-      | 'centerV'
-      | 'bottom'
-      | 'distH'
-      | 'distV'
-      | 'snapGrid'
-  ) => {
-    const targets =
-      selectedIds.length >= 2
-        ? nodes.filter((n) => selectedIds.includes(n.id))
-        : selectedIds.length === 1 && nodes.find((n) => n.id === selectedIds[0])?.groupId
-        ? nodes.filter(
-            (n) =>
-              n.groupId === nodes.find((x) => x.id === selectedIds[0])?.groupId
-          )
-        : nodes;
-
-    if (targets.length < 2 && type !== 'snapGrid') {
-      showNotification(
-        'Pilih minimal 2 kartu (pakai "Pilih Banyak" / seret kotak seleksi) untuk menyejajarkan!'
-      );
-      return;
-    }
-
-    const targetIds = new Set(targets.map((t) => t.id));
-    const sizes = new Map<string, { w: number; h: number }>();
-    targets.forEach((t) =>
-      sizes.set(t.id, getNodeSize(t, cardDisplayMode, photoFrameSize, cardScale))
-    );
-
-    let nextNodes = [...nodes];
-
-    if (type === 'left') {
-      const minX = Math.min(...targets.map((t) => t.x));
-      nextNodes = nodes.map((n) =>
-        targetIds.has(n.id) ? { ...n, x: minX } : n
-      );
-      showNotification(`Rata Kiri (${targets.length} kartu)`);
-    } else if (type === 'right') {
-      const maxRight = Math.max(
-        ...targets.map((t) => t.x + (sizes.get(t.id)?.w || 145))
-      );
-      nextNodes = nodes.map((n) =>
-        targetIds.has(n.id)
-          ? { ...n, x: maxRight - (sizes.get(n.id)?.w || 145) }
-          : n
-      );
-      showNotification(`Rata Kanan (${targets.length} kartu)`);
-    } else if (type === 'centerH') {
-      const centers = targets.map(
-        (t) => t.x + (sizes.get(t.id)?.w || 145) / 2
-      );
-      const avgCx =
-        (Math.min(...centers) + Math.max(...centers)) / 2;
-      nextNodes = nodes.map((n) =>
-        targetIds.has(n.id)
-          ? { ...n, x: Math.round(avgCx - (sizes.get(n.id)?.w || 145) / 2) }
-          : n
-      );
-      showNotification(`Lurus Tengah Vertikal / Center X (${targets.length} kartu)`);
-    } else if (type === 'top') {
-      const minY = Math.min(...targets.map((t) => t.y));
-      nextNodes = nodes.map((n) =>
-        targetIds.has(n.id) ? { ...n, y: minY } : n
-      );
-      showNotification(`Rata Atas (${targets.length} kartu)`);
-    } else if (type === 'bottom') {
-      const maxBottom = Math.max(
-        ...targets.map((t) => t.y + (sizes.get(t.id)?.h || 98))
-      );
-      nextNodes = nodes.map((n) =>
-        targetIds.has(n.id)
-          ? { ...n, y: maxBottom - (sizes.get(n.id)?.h || 98) }
-          : n
-      );
-      showNotification(`Rata Bawah (${targets.length} kartu)`);
-    } else if (type === 'centerV') {
-      const middles = targets.map(
-        (t) => t.y + (sizes.get(t.id)?.h || 98) / 2
-      );
-      const avgCy =
-        (Math.min(...middles) + Math.max(...middles)) / 2;
-      nextNodes = nodes.map((n) =>
-        targetIds.has(n.id)
-          ? { ...n, y: Math.round(avgCy - (sizes.get(n.id)?.h || 98) / 2) }
-          : n
-      );
-      showNotification(`Lurus Sejajar Horizontal / Middle Y (${targets.length} kartu)`);
-    } else if (type === 'distH' && targets.length >= 3) {
-      const sorted = [...targets].sort((a, b) => a.x - b.x);
-      const minX = sorted[0].x;
-      const maxX = sorted[sorted.length - 1].x;
-      const step = (maxX - minX) / (sorted.length - 1);
-      const posMap = new Map<string, number>();
-      sorted.forEach((t, i) => posMap.set(t.id, Math.round(minX + i * step)));
-      nextNodes = nodes.map((n) =>
-        posMap.has(n.id) ? { ...n, x: posMap.get(n.id)! } : n
-      );
-      showNotification(`Jarak Horizontal diratakan (${targets.length} kartu)`);
-    } else if (type === 'distV' && targets.length >= 3) {
-      const sorted = [...targets].sort((a, b) => a.y - b.y);
-      const minY = sorted[0].y;
-      const maxY = sorted[sorted.length - 1].y;
-      const step = (maxY - minY) / (sorted.length - 1);
-      const posMap = new Map<string, number>();
-      sorted.forEach((t, i) => posMap.set(t.id, Math.round(minY + i * step)));
-      nextNodes = nodes.map((n) =>
-        posMap.has(n.id) ? { ...n, y: posMap.get(n.id)! } : n
-      );
-      showNotification(`Jarak Vertikal diratakan (${targets.length} kartu)`);
-    } else if (type === 'snapGrid') {
-      nextNodes = nodes.map((n) =>
-        targetIds.has(n.id)
-          ? {
-              ...n,
-              x: Math.round(n.x / SNAP_SIZE) * SNAP_SIZE,
-              y: Math.round(n.y / SNAP_SIZE) * SNAP_SIZE,
-            }
-          : n
-      );
-      showNotification(`Kartu dirapikan ke grid ${SNAP_SIZE}px!`);
-    }
-
-    setNodes(nextNodes);
-    persistCurrentDesign(nextNodes, edges);
-  };
 
   // =========================================================================
   // FITUR GROUP / UNGROUP (GABUNGKAN BEBERAPA KARTU)
@@ -2598,6 +2445,7 @@ export const InteractiveGridCanvasView: React.FC<
       showNotification('Pilih minimal 2 kartu untuk digabungkan ke dalam Group!');
       return;
     }
+    pushUndoSnapshot('Group Kartu');
     const newGroupId = `grp_${Date.now().toString().slice(-4)}`;
     const selSet = new Set(selectedIds);
     const nextNodes = nodes.map((n) =>
@@ -2610,6 +2458,7 @@ export const InteractiveGridCanvasView: React.FC<
 
   const handleUngroupSelected = () => {
     if (selectedIds.length === 0) return;
+    pushUndoSnapshot('Lepas Group');
     const selSet = new Set(selectedIds);
     const selectedGroups = new Set(
       nodes
@@ -2628,7 +2477,7 @@ export const InteractiveGridCanvasView: React.FC<
   };
 
   // =========================================================================
-  // GABUNG JADI 1 CARD BESAR (GARIS DIRINGKAS JADI 1 + KARTU LAIN BERGESER)
+  // GABUNG JADI 1 CARD BESAR (GARIS DIRINGKAS JADI 1 • KARTU LAIN TETAP DI POSISI)
   // =========================================================================
   const handleMergeSelectedIntoBigCard = () => {
     if (selectedIds.length < 2) {
@@ -2642,6 +2491,7 @@ export const InteractiveGridCanvasView: React.FC<
       .sort((a, b) => (Math.abs(a.y - b.y) > 40 ? a.y - b.y : a.x - b.x));
 
     if (selectedNodes.length < 2) return;
+    pushUndoSnapshot('Gabung Card Besar');
 
     const minX = Math.min(...selectedNodes.map((n) => n.x));
     const minY = Math.min(...selectedNodes.map((n) => n.y));
@@ -2724,53 +2574,19 @@ export const InteractiveGridCanvasView: React.FC<
       cardScale
     );
 
-    // Jika kartu terpilih punya Induk (Parent) di luar pilihan, tarik Card Besar mendekati induknya agar garis pendek & rapi!
-    const externalParentEdge = edges.find(
-      (ed) => ed.type === 'child' && selSet.has(ed.to) && !selSet.has(ed.from)
+    // Tetap tempatkan Card Besar di posisi area kartu terpilih (kartu lain tidak ikut digeser)
+    const selCenterX = (minX + maxX) / 2;
+    const targetX = Math.max(
+      16,
+      Math.min(
+        Math.max(16, boardWidth - mergedSize.w - 16),
+        Math.round(selCenterX - mergedSize.w / 2)
+      )
     );
-    const externalParentNode = externalParentEdge
-      ? nodes.find((n) => n.id === externalParentEdge.from)
-      : undefined;
-
-    let targetX: number;
-    let targetY: number;
-
-    if (externalParentNode) {
-      const pSz = getNodeSize(
-        externalParentNode,
-        cardDisplayMode,
-        photoFrameSize,
-        cardScale
-      );
-      const pCenterX = externalParentNode.x + pSz.w / 2;
-      targetX = Math.max(
-        16,
-        Math.min(
-          Math.max(16, boardWidth - mergedSize.w - 16),
-          Math.round(pCenterX - mergedSize.w / 2)
-        )
-      );
-      targetY = Math.max(
-        58,
-        Math.min(
-          Math.max(58, boardHeight - mergedSize.h - 24),
-          Math.round(externalParentNode.y + pSz.h + 44)
-        )
-      );
-    } else {
-      const selCenterX = (minX + maxX) / 2;
-      targetX = Math.max(
-        16,
-        Math.min(
-          Math.max(16, boardWidth - mergedSize.w - 16),
-          Math.round(selCenterX - mergedSize.w / 2)
-        )
-      );
-      targetY = Math.max(
-        58,
-        Math.min(Math.max(58, boardHeight - mergedSize.h - 24), Math.round(minY))
-      );
-    }
+    const targetY = Math.max(
+      58,
+      Math.min(Math.max(58, boardHeight - mergedSize.h - 24), Math.round(minY))
+    );
 
     const mergedNode: InteractiveNode = {
       ...draftMergedNode,
@@ -2811,17 +2627,9 @@ export const InteractiveGridCanvasView: React.FC<
       (e) => e.from === mergedId || e.to === mergedId
     ).length;
 
-    // Geser otomatis kartu lain di sekitar agar tidak bertabrakan/tertutup Card Besar
+    // Pertahankan posisi semua kartu lain tetap diam di tempatnya
     const otherNodes = nodes.filter((n) => !selSet.has(n.id));
-    const shiftedOthers = shiftNodesAwayFromRect(
-      { x: mergedNode.x, y: mergedNode.y, w: mergedSize.w, h: mergedSize.h },
-      otherNodes,
-      (n) => getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale),
-      boardWidth,
-      boardHeight
-    );
-
-    const nextNodes = [...shiftedOthers, mergedNode];
+    const nextNodes = [...otherNodes, mergedNode];
     setNodes(nextNodes);
     setEdges(consolidatedEdges);
     setSelectedIds([mergedId]);
@@ -2831,9 +2639,7 @@ export const InteractiveGridCanvasView: React.FC<
     persistCurrentDesign(nextNodes, consolidatedEdges);
 
     showNotification(
-      externalParentNode
-        ? `${flatMembers.length} kartu digabung & ditarik mendekati induk (${externalParentNode.name})! Garis jadi ${mergedExternalEdgesCount} & kartu lain bergeser.`
-        : `${flatMembers.length} kartu digabung jadi 1 Card Besar! Garis diringkas (${touchedBeforeCount} → ${mergedExternalEdgesCount} garis) & kartu lain otomatis bergeser.`
+      `${flatMembers.length} kartu digabung jadi 1 Card Besar (${touchedBeforeCount} → ${mergedExternalEdgesCount} garis)! Kartu lain tetap di posisinya.`
     );
   };
 
@@ -2844,6 +2650,7 @@ export const InteractiveGridCanvasView: React.FC<
 
     const mergedNode = nodes.find((n) => n.id === targetId);
     if (!mergedNode?.mergedMembers || mergedNode.mergedMembers.length < 2) return;
+    pushUndoSnapshot('Pisah Card Besar');
 
     const remainingNodes = nodes.filter((n) => n.id !== targetId);
     const mergedSize = getNodeSize(
@@ -2867,7 +2674,6 @@ export const InteractiveGridCanvasView: React.FC<
     );
     const cols = gm.cols;
 
-    // Bangun dulu kartu satuan untuk mengukur ukuran aktual tiap baris di posisi terbaru Card Besar
     const rawRestored = mergedNode.mergedMembers.map((mm, idx) => {
       let nodeId = mm.originalNodeId || `n_unmerged_${Date.now()}_${idx}`;
       if (usedIds.has(nodeId)) {
@@ -2893,13 +2699,8 @@ export const InteractiveGridCanvasView: React.FC<
       return { candidate, sz };
     });
 
-    // Tata kartu pecahan tetap rapat di posisi terbaru Card Besar saat ini (terpusat di mergedCenterX, mergedNode.y)
     const rowsCount = Math.ceil(rawRestored.length / cols);
     let curRowY = Math.max(58, mergedNode.y);
-    let blockMinX = Infinity;
-    let blockMinY = Infinity;
-    let blockMaxX = -Infinity;
-    let blockMaxY = -Infinity;
 
     for (let r = 0; r < rowsCount; r++) {
       const rowItems = rawRestored.slice(r * cols, (r + 1) * cols);
@@ -2922,10 +2723,6 @@ export const InteractiveGridCanvasView: React.FC<
       rowItems.forEach(({ candidate, sz }) => {
         candidate.x = Math.round(curX);
         candidate.y = clampedRowY;
-        blockMinX = Math.min(blockMinX, candidate.x);
-        blockMinY = Math.min(blockMinY, candidate.y);
-        blockMaxX = Math.max(blockMaxX, candidate.x + sz.w);
-        blockMaxY = Math.max(blockMaxY, candidate.y + sz.h);
         restoredNodes.push(candidate);
         curX += sz.w + gapX;
       });
@@ -2933,25 +2730,8 @@ export const InteractiveGridCanvasView: React.FC<
       curRowY = clampedRowY + rowMaxH + gapY;
     }
 
-    // Geser kartu tetangga di luar blok pecahan agar memberi ruang, sehingga kartu yg baru dipisah TETAP di posisi terbaru!
-    const shiftedNeighbors =
-      blockMinX < Infinity
-        ? shiftNodesAwayFromRect(
-            {
-              x: blockMinX,
-              y: blockMinY,
-              w: Math.max(40, blockMaxX - blockMinX),
-              h: Math.max(40, blockMaxY - blockMinY),
-            },
-            remainingNodes,
-            (n) => getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale),
-            boardWidth,
-            boardHeight
-          )
-        : remainingNodes;
-
     const allValidIds = new Set([
-      ...shiftedNeighbors.map((n) => n.id),
+      ...remainingNodes.map((n) => n.id),
       ...restoredNodes.map((n) => n.id),
     ]);
 
@@ -2964,17 +2744,14 @@ export const InteractiveGridCanvasView: React.FC<
       if (!nextEdgeMap.has(key)) nextEdgeMap.set(key, { ...ed });
     };
 
-    // Pertahankan garis lain di luar kartu gabungan
     edges.forEach((ed) => {
       if (ed.from !== targetId && ed.to !== targetId) {
         addUniqueEdge(ed);
       }
     });
 
-    // Pulihkan garis asli sebelum digabung
     (mergedNode.mergedEdgesSnapshot || []).forEach(addUniqueEdge);
 
-    // Jika ada garis baru yang dibuat setelah penggabungan, pindahkan ke kartu pertama
     if (restoredNodes[0]) {
       edges.forEach((ed) => {
         if (ed.from === targetId || ed.to === targetId) {
@@ -2993,20 +2770,22 @@ export const InteractiveGridCanvasView: React.FC<
       });
     }
 
-    const nextNodes = [...shiftedNeighbors, ...restoredNodes];
+    // Kartu lain tetap di posisinya tanpa digeser
+    const nextNodes = [...remainingNodes, ...restoredNodes];
     const nextEdges = Array.from(nextEdgeMap.values());
     setNodes(nextNodes);
     setEdges(nextEdges);
     setSelectedIds(restoredNodes.map((n) => n.id));
     persistCurrentDesign(nextNodes, nextEdges);
     showNotification(
-      `Card Besar dipisah menjadi ${restoredNodes.length} kartu tetap di posisi terbaru (kartu sekitar otomatis bergeser)!`
+      `Card Besar dipisah menjadi ${restoredNodes.length} kartu di posisi saat ini (kartu lain tetap di posisinya)!`
     );
   };
 
   const handleUpdateMergedCols = (nodeId: string, colsValue?: number) => {
     const target = nodes.find((n) => n.id === nodeId);
     if (!target?.mergedMembers || target.mergedMembers.length < 2) return;
+    pushUndoSnapshot('Ubah Kolom Gabungan');
 
     const updatedTarget: InteractiveNode = {
       ...target,
@@ -3030,15 +2809,7 @@ export const InteractiveGridCanvasView: React.FC<
     updatedTarget.y = clampedY;
 
     const others = nodes.filter((n) => n.id !== nodeId);
-    const shiftedOthers = shiftNodesAwayFromRect(
-      { x: updatedTarget.x, y: updatedTarget.y, w: nextSize.w, h: nextSize.h },
-      others,
-      (n) => getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale),
-      boardWidth,
-      boardHeight
-    );
-
-    const nextNodes = [...shiftedOthers, updatedTarget];
+    const nextNodes = [...others, updatedTarget];
     setNodes(nextNodes);
     persistCurrentDesign(nextNodes, edges);
   };
@@ -3169,6 +2940,7 @@ export const InteractiveGridCanvasView: React.FC<
 
   const startNudgeRepeat = (targetIds: string[], dx: number, dy: number) => {
     stopNudgeRepeat();
+    pushUndoSnapshot('Geser Kartu');
     nudgeNodesBy(targetIds, dx, dy);
     nudgeIntervalRef.current = window.setInterval(() => {
       nudgeNodesBy(targetIds, dx, dy);
@@ -3207,10 +2979,12 @@ export const InteractiveGridCanvasView: React.FC<
       startPointerY,
       initOffsetX: ed.offsetX ?? 0,
       initOffsetY: ed.offsetY ?? 0,
+      preDragEdges: edges.map((item) => ({ ...item })),
     };
   };
 
   const resetEdgeOffset = (edgeIdx: number) => {
+    pushUndoSnapshot('Reset Jalur Garis');
     const nextEdges = edges.map((ed, i) =>
       i === edgeIdx ? { ...ed, offsetX: undefined, offsetY: undefined } : ed
     );
@@ -3220,6 +2994,7 @@ export const InteractiveGridCanvasView: React.FC<
   };
 
   const resetAllEdgeOffsets = () => {
+    pushUndoSnapshot('Reset Semua Garis');
     const nextEdges = edges.map((ed) => ({
       ...ed,
       offsetX: undefined,
@@ -3235,11 +3010,18 @@ export const InteractiveGridCanvasView: React.FC<
     e: React.MouseEvent | React.TouchEvent,
     id: string
   ) => {
-    if ('touches' in e && e.touches.length >= 2) {
-      dragStateRef.current.active = false;
-      cancelHoldTimer();
+    if ('touches' in e) {
+      lastTouchTimeRef.current = Date.now();
+      if (e.touches.length >= 2) {
+        dragStateRef.current.active = false;
+        cancelHoldTimer();
+        return;
+      }
+    } else if (Date.now() - lastTouchTimeRef.current < 500) {
+      // Abaikan mousedown sintetis setelah touchstart pada layar sentuh
       return;
     }
+
     if (isPanMode) {
       return;
     }
@@ -3254,6 +3036,7 @@ export const InteractiveGridCanvasView: React.FC<
             (ed.from === id && ed.to === connectFromId)
         );
         if (!exists) {
+          pushUndoSnapshot('Sambung Garis');
           const updatedEdges: InteractiveEdge[] = [
             ...edges,
             { from: connectFromId, to: id, type: connectType },
@@ -3273,14 +3056,18 @@ export const InteractiveGridCanvasView: React.FC<
     const isModifierPressed =
       ('shiftKey' in e && e.shiftKey) || ('ctrlKey' in e && e.ctrlKey) || ('metaKey' in e && e.metaKey);
 
-    let activeSelection = selectedIds;
-
+    // 2. Mode Checklist Pilih Banyak: langsung pilih/batal pilih tanpa menekan lama (tanpa hold 2 detik)!
     if (isMultiSelectMode || isModifierPressed) {
-      activeSelection = selectedIds.includes(id)
+      cancelHoldTimer();
+      const nextSelection = selectedIds.includes(id)
         ? selectedIds.filter((x) => x !== id)
         : [...selectedIds, id];
-      setSelectedIds(activeSelection);
-    } else if (!selectedIds.includes(id)) {
+      setSelectedIds(nextSelection);
+      return;
+    }
+
+    let activeSelection = selectedIds;
+    if (!selectedIds.includes(id)) {
       if (clickedNode.groupId) {
         activeSelection = nodes
           .filter((n) => n.groupId === clickedNode.groupId)
@@ -3331,6 +3118,7 @@ export const InteractiveGridCanvasView: React.FC<
         startPointerX: startX,
         startPointerY: startY,
         initialPositions,
+        preDragNodes: cloneNodesForHistory(nodes),
       };
       return;
     }
@@ -3365,6 +3153,7 @@ export const InteractiveGridCanvasView: React.FC<
           startPointerX: startX,
           startPointerY: startY,
           initialPositions,
+          preDragNodes: cloneNodesForHistory(latestUndoStateRef.current.nodes),
         };
         showNotification(
           'Kartu terbuka! Gunakan panah ▲▼◀▶ atau seret kartu untuk memindahkan.'
@@ -3631,7 +3420,17 @@ export const InteractiveGridCanvasView: React.FC<
 
       if (edgeDragRef.current.active) {
         edgeDragRef.current.active = false;
+        const { edgeIdx, initOffsetX, initOffsetY, preDragEdges } = edgeDragRef.current;
         setEdges((currentEdges) => {
+          const movedEdge = currentEdges[edgeIdx];
+          if (
+            movedEdge &&
+            preDragEdges &&
+            ((movedEdge.offsetX ?? 0) !== initOffsetX ||
+              (movedEdge.offsetY ?? 0) !== initOffsetY)
+          ) {
+            pushUndoSnapshot('Geser Jalur Garis', undefined, preDragEdges);
+          }
           persistCurrentDesign(nodes, currentEdges);
           return currentEdges;
         });
@@ -3639,7 +3438,15 @@ export const InteractiveGridCanvasView: React.FC<
 
       if (dragStateRef.current.active) {
         dragStateRef.current.active = false;
+        const { initialPositions, preDragNodes } = dragStateRef.current;
         setNodes((currentNodes) => {
+          const movedAny = currentNodes.some((n) => {
+            const initPos = initialPositions[n.id];
+            return initPos && (initPos.x !== n.x || initPos.y !== n.y);
+          });
+          if (movedAny && preDragNodes) {
+            pushUndoSnapshot('Geser Kartu', preDragNodes);
+          }
           persistCurrentDesign(currentNodes, edges);
           return currentNodes;
         });
@@ -3698,10 +3505,12 @@ export const InteractiveGridCanvasView: React.FC<
     cancelHoldTimer,
     stopNudgeRepeat,
     persistCurrentDesign,
+    pushUndoSnapshot,
   ]);
 
   // Tambah kartu baru
   const addNewNode = () => {
+    pushUndoSnapshot('Tambah Kartu');
     const id = 'n_' + Date.now();
     const newNode: InteractiveNode = {
       id,
@@ -3745,6 +3554,11 @@ export const InteractiveGridCanvasView: React.FC<
 
   const updateSelectedField = (patch: Partial<InteractiveNode>) => {
     if (selectedIds.length === 0) return;
+    const now = Date.now();
+    if (now - lastEditUndoTimeRef.current > 800) {
+      pushUndoSnapshot('Edit Kartu');
+      lastEditUndoTimeRef.current = now;
+    }
     const selSet = new Set(selectedIds);
     const syncedMemberIds: string[] = [];
     const nextNodes = nodes.map((n) => {
@@ -3817,6 +3631,7 @@ export const InteractiveGridCanvasView: React.FC<
 
   const removeConnectionsOfSelected = () => {
     if (selectedIds.length === 0) return;
+    pushUndoSnapshot('Putus Garis');
     const selSet = new Set(selectedIds);
     const nextEdges = edges.filter(
       (e) => !selSet.has(e.from) && !selSet.has(e.to)
@@ -3828,6 +3643,7 @@ export const InteractiveGridCanvasView: React.FC<
 
   const deleteSelectedNodes = () => {
     if (selectedIds.length === 0) return;
+    pushUndoSnapshot('Hapus Kartu');
     const selSet = new Set(selectedIds);
     const nextNodes = nodes.filter((n) => !selSet.has(n.id));
     const nextEdges = edges.filter(
@@ -3921,6 +3737,7 @@ export const InteractiveGridCanvasView: React.FC<
               onClick={() => {
                 setLayoutMode('auto');
                 if (activeTrah.members.length > 0) {
+                  pushUndoSnapshot('Tata Letak Auto');
                   const optScale = computeOptimalCardScale(
                     activeTrah.members,
                     boardWidth,
@@ -3974,7 +3791,7 @@ export const InteractiveGridCanvasView: React.FC<
               type="button"
               onClick={() => {
                 setLayoutMode('manual');
-                showNotification('Mode Manual: Geser bebas, Sejajarkan & Group!');
+                showNotification('Mode Manual: Geser bebas, Gabung Card & Group!');
               }}
               className={`px-2 py-1 rounded-lg text-[11px] font-extrabold flex items-center gap-1 transition ${
                 layoutMode === 'manual'
@@ -3992,15 +3809,22 @@ export const InteractiveGridCanvasView: React.FC<
 
           <button
             type="button"
-            onClick={() => setIsMultiSelectMode((v) => !v)}
-            className={`px-2 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1 transition ${
+            onClick={() => {
+              const next = !isMultiSelectMode;
+              setIsMultiSelectMode(next);
+              if (next) {
+                cancelHoldTimer();
+                showNotification('Mode Pilih Checklist aktif: ketuk langsung kartu untuk memilih banyak!');
+              }
+            }}
+            className={`px-2 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1 whitespace-nowrap transition ${
               isMultiSelectMode
                 ? 'bg-sky-500 text-slate-950 border-sky-400 shadow-xs'
                 : isDark
                 ? 'bg-slate-800 border-slate-700 text-slate-200 hover:border-sky-400'
                 : 'bg-stone-100 border-stone-300 text-stone-700'
             }`}
-            title="Aktifkan untuk memilih beberapa kartu (lalu muncul tombol Sejajarkan & Group)"
+            title="Ketuk untuk memilih beberapa kartu langsung tanpa menekan lama"
           >
             <CheckSquare className="w-3.5 h-3.5" />
             <span>Pilih {selectedIds.length > 0 ? `(${selectedIds.length})` : ''}</span>
@@ -4008,8 +3832,27 @@ export const InteractiveGridCanvasView: React.FC<
 
           <button
             type="button"
+            onClick={handleUndo}
+            disabled={undoCount === 0}
+            className={`px-2 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1 whitespace-nowrap transition ${
+              undoCount === 0
+                ? isDark
+                  ? 'bg-slate-900/50 border-slate-800 text-slate-600 cursor-not-allowed'
+                  : 'bg-stone-100 border-stone-200 text-stone-400 cursor-not-allowed'
+                : isDark
+                ? 'bg-slate-800 border-amber-500/40 text-amber-300 hover:border-amber-400'
+                : 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
+            }`}
+            title="Batalkan perubahan terakhir (Ctrl+Z)"
+          >
+            <Undo2 className="w-3.5 h-3.5" />
+            <span>Undo{undoCount > 0 ? ` (${undoCount})` : ''}</span>
+          </button>
+
+          <button
+            type="button"
             onClick={addNewNode}
-            className={`px-2 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1 ${
+            className={`px-2 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1 whitespace-nowrap ${
               isDark
                 ? 'bg-slate-800 border-slate-700 text-emerald-300 hover:border-emerald-400'
                 : 'bg-emerald-50 border-emerald-300 text-emerald-800'
@@ -4023,7 +3866,7 @@ export const InteractiveGridCanvasView: React.FC<
           <button
             type="button"
             onClick={startConnectMode}
-            className={`px-2 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1 ${
+            className={`px-2 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1 whitespace-nowrap ${
               connectFromId
                 ? 'bg-amber-500 text-slate-950 border-amber-400 animate-pulse'
                 : isDark
@@ -5038,71 +4881,86 @@ export const InteractiveGridCanvasView: React.FC<
                     ))}
                   </div>
 
-                  {SMART_LAYOUT_PRESETS.filter(
-                    (p) => smartCategoryFilter === 'all' || p.category === smartCategoryFilter
-                  ).map((preset) => {
-                    const isTop = preset.id === smartAnalysis.topPresetId;
-                    const isNewConcept = preset.category === 'kotak9' || preset.category === 'orbit';
-                    return (
-                      <div
-                        key={preset.id}
-                        className={`p-2.5 rounded-xl border transition space-y-1.5 ${
-                          isTop
-                            ? isDark
-                              ? 'bg-emerald-950/35 border-emerald-500/70'
-                              : 'bg-emerald-50 border-emerald-400'
-                            : isNewConcept
-                            ? isDark
-                              ? 'bg-slate-900/90 border-sky-500/45 hover:border-amber-400'
-                              : 'bg-sky-50/70 border-sky-300 hover:border-amber-500'
-                            : isDark
-                            ? 'bg-slate-900/70 border-slate-700 hover:border-amber-400'
-                            : 'bg-stone-50 border-stone-200 hover:border-amber-500'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-1.5">
-                          <div>
-                            <div className="font-extrabold text-[11.5px] leading-tight">
-                              {preset.title}
+                  <div className="space-y-1.5">
+                    {SMART_LAYOUT_PRESETS.filter(
+                      (p) => smartCategoryFilter === 'all' || p.category === smartCategoryFilter
+                    ).map((preset) => {
+                      const isTop = preset.id === smartAnalysis.topPresetId;
+                      const PresetIcon =
+                        preset.id === 'kotak_9_baris'
+                          ? Rows3
+                          : preset.id === 'kotak_9_baris_g45_gabung'
+                          ? Layers
+                          : preset.id === 'orbit_elips_1_5'
+                          ? CircleDot
+                          : preset.id === 'orbit_elips_gabung'
+                          ? Disc
+                          : preset.id === 'hierarchy_grid_fill'
+                          ? LayoutGrid
+                          : preset.id === 'subtree_vertical'
+                          ? GitBranch
+                          : preset.id === 'subtree_horizontal'
+                          ? ArrowRightLeft
+                          : preset.id === 'family_cluster'
+                          ? Users
+                          : Sparkles;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => handleApplySmartPreset(preset.id)}
+                          className={`w-full text-left p-2 rounded-xl border transition flex items-center gap-2.5 group ${
+                            isTop
+                              ? isDark
+                                ? 'bg-emerald-950/45 border-emerald-500/70 hover:border-amber-400'
+                                : 'bg-emerald-50 border-emerald-400 hover:border-amber-500'
+                              : isDark
+                              ? 'bg-slate-900/75 border-slate-700/80 hover:border-amber-400 hover:bg-slate-800/90'
+                              : 'bg-stone-50 border-stone-200 hover:border-amber-500 hover:bg-amber-50/40'
+                          }`}
+                        >
+                          <div
+                            className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
+                              preset.category === 'orbit'
+                                ? 'bg-sky-500/15 border-sky-400/40 text-sky-400'
+                                : preset.category === 'kotak9'
+                                ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-400'
+                                : 'bg-amber-500/15 border-amber-400/40 text-amber-400'
+                            }`}
+                          >
+                            <PresetIcon className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-extrabold text-[11px] leading-tight truncate">
+                                {preset.title}
+                              </span>
+                              <span
+                                className={`text-[8.5px] px-1.5 py-0.5 rounded font-black shrink-0 ${
+                                  isTop
+                                    ? 'bg-amber-400 text-slate-950'
+                                    : preset.category === 'orbit'
+                                    ? 'bg-sky-500/20 text-sky-300'
+                                    : preset.category === 'kotak9'
+                                    ? 'bg-emerald-500/20 text-emerald-300'
+                                    : 'bg-slate-700/60 text-slate-300'
+                                }`}
+                              >
+                                {isTop ? '★' : preset.badge}
+                              </span>
                             </div>
-                            <div className="text-[9.5px] opacity-75 mt-0.5">
+                            <div className="text-[9.5px] opacity-75 truncate mt-0.5">
                               {preset.subtitle}
                             </div>
                           </div>
-                          <span
-                            className={`text-[9px] px-1.5 py-0.5 rounded font-black shrink-0 ${
-                              isTop
-                                ? 'bg-amber-400 text-slate-950'
-                                : preset.category === 'orbit'
-                                ? 'bg-sky-500/20 text-sky-300 border border-sky-400/40'
-                                : preset.category === 'kotak9'
-                                ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-400/40'
-                                : 'bg-slate-700/60 text-slate-200 border border-slate-600'
-                            }`}
-                          >
-                            {isTop ? '★ Saran Terbaik' : preset.badge}
-                          </span>
-                        </div>
-
-                        <p className="text-[10px] opacity-80 leading-relaxed">
-                          {preset.description}
-                        </p>
-
-                        <button
-                          type="button"
-                          onClick={() => handleApplySmartPreset(preset.id)}
-                          className="w-full py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] flex items-center justify-center gap-1 transition"
-                        >
-                          <Wand2 className="w-3 h-3" />
-                          <span>Terapkan &amp; Bebas Edit</span>
                         </button>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <p className="text-[10px] opacity-70 leading-relaxed border-t pt-2 border-slate-700/40">
-                  💡 Setelah memilih tata letak pintar di atas, kanvas otomatis berada di mode <b>Manual</b>. Anda tetap bebas menggeser kartu yang dirasa kurang pas, menyejajarkan, atau mengelompokkannya ke dalam Group.
+                <p className="text-[9.5px] opacity-65 leading-snug border-t pt-2 border-slate-700/40">
+                  Ketuk salah satu tata letak di atas untuk langsung menata &amp; bebas geser manual (gunakan <b>Undo</b> jika ingin kembali).
                 </p>
 
                 {/* Opsi Lanjutan: Teks Manual Cepat */}
@@ -5263,7 +5121,7 @@ export const InteractiveGridCanvasView: React.FC<
                       Ketuk <b>1 kartu</b> di kanvas untuk mengubah nama, keterangan, foto, atau menandai wafat.
                     </p>
                     <p>
-                      Ketuk tombol <b>Pilih</b> (atau seret kotak di area kosong) untuk memilih <b>beberapa kartu</b> sekaligus, lalu sejajarkan atau gabung ke dalam <b>Group</b>.
+                      Ketuk tombol <b>Pilih</b> (atau seret kotak di area kosong) untuk memilih <b>beberapa kartu</b> sekaligus, lalu gabungkan ke <b>1 Card Besar</b> atau <b>Group</b>.
                     </p>
                   </div>
                 ) : selectedIds.length > 1 ? (
@@ -5280,7 +5138,7 @@ export const InteractiveGridCanvasView: React.FC<
                       <span>Gabung Jadi 1 Card Besar (1 Garis)</span>
                     </button>
                     <p className="text-[10px] opacity-75 leading-snug">
-                      Foto/kartu bergabung jadi 1 frame besar, garis penghubung diringkas jadi 1, dan kartu lain otomatis bergeser agar tidak tertutup.
+                      Foto/kartu bergabung jadi 1 frame besar, garis penghubung diringkas jadi 1, dan kartu lain tetap di posisinya.
                     </p>
                     <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-slate-700/40">
                       <button
@@ -6160,6 +6018,21 @@ export const InteractiveGridCanvasView: React.FC<
                       </>
                     )}
 
+                    {/* Badge Checklist Mode Pilih Banyak (ketuk langsung pilih/batal pilih) */}
+                    {isMultiSelectMode && (
+                      <span
+                        className={`absolute -top-2 -right-2 w-5 h-5 rounded-full border-2 flex items-center justify-center shadow z-30 pointer-events-none print:hidden ${
+                          isSelected
+                            ? 'bg-sky-500 border-white text-slate-950'
+                            : isDark
+                            ? 'bg-slate-900/90 border-sky-400/70 text-transparent'
+                            : 'bg-white/95 border-sky-500/70 text-transparent'
+                        }`}
+                      >
+                        <Check className="w-3 h-3 stroke-[3]" />
+                      </span>
+                    )}
+
                     {/* Badge Mikro Generasi di sudut kiri-atas kartu saat Jalur Generasi aktif */}
                     {showGenGuides && node.genLevel !== undefined && (
                       <span
@@ -6596,6 +6469,39 @@ export const InteractiveGridCanvasView: React.FC<
           <div className="fixed top-2.5 right-2.5 z-40 flex flex-wrap items-center justify-end gap-1 print:hidden max-w-[55vw]">
             <button
               type="button"
+              onClick={() => {
+                const next = !isMultiSelectMode;
+                setIsMultiSelectMode(next);
+                if (next) cancelHoldTimer();
+              }}
+              className={`px-2 py-1.5 rounded-xl border backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg ${
+                isMultiSelectMode
+                  ? 'bg-sky-500 text-stone-950 border-sky-400'
+                  : 'bg-stone-900/85 text-sky-300 border-stone-700 hover:bg-stone-800'
+              }`}
+              title="Pilih Banyak Kartu Langsung"
+            >
+              <CheckSquare className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Pilih</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleUndo}
+              disabled={undoCount === 0}
+              className={`px-2 py-1.5 rounded-xl border backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg ${
+                undoCount === 0
+                  ? 'bg-stone-900/50 text-stone-600 border-stone-800 cursor-not-allowed'
+                  : 'bg-stone-900/90 text-amber-300 border-amber-500/40 hover:bg-stone-800'
+              }`}
+              title="Undo Perubahan Terakhir (Ctrl+Z)"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Undo</span>
+            </button>
+
+            <button
+              type="button"
               onClick={addNewNode}
               className="px-2 py-1.5 rounded-xl bg-emerald-700/90 hover:bg-emerald-600 text-white border border-emerald-500/50 backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg"
               title="Tambah Kartu Baru"
@@ -6762,21 +6668,6 @@ export const InteractiveGridCanvasView: React.FC<
               isFocusMode ? 'fixed bottom-3 left-3' : 'absolute bottom-2.5 left-2.5'
             } z-40 flex flex-col gap-1.5 print:hidden max-w-[68vw]`}
           >
-            {showFloatingAlign && selectedIds.length >= 2 && (
-              <div className="flex flex-wrap items-center gap-1 rounded-2xl bg-stone-900/95 border border-stone-700 p-1.5 backdrop-blur-md shadow-xl text-white">
-                <button type="button" onClick={() => handleAlign('left')} className="p-1.5 rounded-lg hover:bg-stone-800" title="Rata Kiri"><AlignLeft className="w-3.5 h-3.5 text-sky-400" /></button>
-                <button type="button" onClick={() => handleAlign('centerH')} className="p-1.5 rounded-lg hover:bg-stone-800" title="Tengah Vertikal"><AlignCenterHorizontal className="w-3.5 h-3.5 text-sky-400" /></button>
-                <button type="button" onClick={() => handleAlign('right')} className="p-1.5 rounded-lg hover:bg-stone-800" title="Rata Kanan"><AlignRight className="w-3.5 h-3.5 text-sky-400" /></button>
-                <button type="button" onClick={() => handleAlign('top')} className="p-1.5 rounded-lg hover:bg-stone-800" title="Rata Atas"><AlignStartVertical className="w-3.5 h-3.5 text-emerald-400" /></button>
-                <button type="button" onClick={() => handleAlign('centerV')} className="p-1.5 rounded-lg hover:bg-stone-800" title="Sejajar Tengah"><AlignCenterVertical className="w-3.5 h-3.5 text-emerald-400" /></button>
-                <button type="button" onClick={() => handleAlign('bottom')} className="p-1.5 rounded-lg hover:bg-stone-800" title="Rata Bawah"><AlignEndVertical className="w-3.5 h-3.5 text-emerald-400" /></button>
-                <span className="w-px h-4 bg-stone-700 mx-0.5" />
-                <button type="button" onClick={() => handleAlign('distH')} className="p-1.5 rounded-lg hover:bg-stone-800" title="Ratakan Jarak Horizontal (Min 3 Kartu)"><AlignHorizontalSpaceAround className="w-3.5 h-3.5 text-amber-400" /></button>
-                <button type="button" onClick={() => handleAlign('distV')} className="p-1.5 rounded-lg hover:bg-stone-800" title="Ratakan Jarak Vertikal (Min 3 Kartu)"><AlignVerticalSpaceAround className="w-3.5 h-3.5 text-amber-400" /></button>
-                <button type="button" onClick={() => handleAlign('snapGrid')} className="px-2 py-1 rounded-lg hover:bg-stone-800 text-[10px] font-bold text-emerald-300" title="Rapikan ke titik grid 20px">Grid</button>
-              </div>
-            )}
-
             <div className="flex flex-wrap items-center gap-1 rounded-2xl bg-stone-900/92 border border-amber-500/40 text-white p-1.5 backdrop-blur-md shadow-xl">
               <span className="text-[10px] font-black text-amber-300 px-1.5">
                 {selectedIds.length} dipilih
@@ -6839,7 +6730,7 @@ export const InteractiveGridCanvasView: React.FC<
                           handleUnmergeSelectedCard(primarySelectedNode.id)
                         }
                         className="px-2 py-1 rounded-xl bg-sky-500 text-stone-950 text-[10px] font-black flex items-center gap-1"
-                        title="Pisahkan kembali menjadi kartu satuan"
+                        title="Pisahkan kembali menjadi kartu satuan di posisi saat ini"
                       >
                         <Split className="w-3 h-3" />
                         <span>Pisah Card</span>
@@ -6861,19 +6752,10 @@ export const InteractiveGridCanvasView: React.FC<
                     type="button"
                     onClick={handleMergeSelectedIntoBigCard}
                     className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-500 to-emerald-500 text-stone-950 text-[10px] font-black flex items-center gap-1 shadow-xs"
-                    title="Gabung kartu/foto terpilih jadi 1 Card Besar dengan 1 garis saja & geser kartu lain"
+                    title="Gabung kartu/foto terpilih jadi 1 Card Besar dengan 1 garis (kartu lain tetap di posisinya)"
                   >
                     <Layers className="w-3 h-3" />
                     <span>Gabung 1 Card Besar</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowFloatingAlign((v) => !v)}
-                    className={`px-2 py-1 rounded-xl text-[10px] font-bold ${
-                      showFloatingAlign ? 'bg-sky-500 text-stone-950' : 'bg-stone-800 text-sky-300'
-                    }`}
-                  >
-                    Sejajarkan
                   </button>
                   <button
                     type="button"
@@ -6936,7 +6818,7 @@ export const InteractiveGridCanvasView: React.FC<
             {paperOrientation === 'landscape' ? 'Lanskap' : 'Potret'}
           </span>
           <span className="hidden sm:inline opacity-75">
-            • Tahan kartu 2 dtk untuk panah ▲▼◀▶ • Seret dot di garis untuk geser jalur
+            • Ketuk &quot;Pilih&quot; untuk checklist langsung • Tahan kartu 2 dtk untuk panah ▲▼◀▶ • Ctrl+Z Undo
           </span>
         </span>
         <span className="font-mono shrink-0">
