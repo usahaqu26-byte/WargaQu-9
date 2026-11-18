@@ -16,6 +16,11 @@ export const PAIRED_HOST_STORAGE_KEY = 'wargaqu_paired_host_v1';
 export const PENDING_PAIR_TOKEN_KEY = 'wargaqu_pending_pair_token_v1';
 export const DEVICE_PAIRING_SYNC_EVENT = 'wargaqu-device-pairing-sync';
 
+export interface PairingSyncEventDetail {
+  remoteApplied?: boolean;
+  changedKeys?: string[];
+}
+
 export interface PairingSessionInfo {
   sessionId: string;
   secretHex: string;
@@ -35,6 +40,7 @@ export interface LinkedDesktopDevice {
   syncChannel: string;
   linkedAt: string;
   lastSyncAt: string;
+  lastSeq?: number;
 }
 
 export interface PairedHostSession {
@@ -46,6 +52,7 @@ export interface PairedHostSession {
   syncChannel: string;
   linkedAt: string;
   lastSyncAt: string;
+  lastSeq?: number;
 }
 
 interface EncryptedFrame {
@@ -59,6 +66,7 @@ interface PairingTransferPayload {
   hostLabel: string;
   accountEmail: string;
   includeDompetQu: boolean;
+  liveSecretHex?: string;
   sentAt: string;
   entries: Record<string, string>;
 }
@@ -72,19 +80,23 @@ const EXCLUDED_DEVICE_LOCAL_KEYS = new Set<string>([
   PENDING_PAIR_TOKEN_KEY,
 ]);
 
+const sessionEcdhKeys = new Map<string, CryptoKey>();
+
 let liveSyncStarted = false;
 let isApplyingRemoteSync = false;
+let remoteSyncResetTimer: number | null = null;
 let lastPushedSignature = '';
 let syncDebounceTimer: number | null = null;
 let periodicCheckTimer: number | null = null;
+let periodicPullTimer: number | null = null;
 
-function emitPairingSync() {
+function emitPairingSync(detail: PairingSyncEventDetail = {}) {
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(DEVICE_PAIRING_SYNC_EVENT));
+    window.dispatchEvent(new CustomEvent<PairingSyncEventDetail>(DEVICE_PAIRING_SYNC_EVENT, { detail }));
   }
 }
 
-function emitAllModuleSyncEvents() {
+function emitAllModuleSyncEvents(changedKeys: string[] = []) {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new CustomEvent(AUTH_SYNC_EVENT));
   window.dispatchEvent(new CustomEvent(RT_SYNC_EVENT));
@@ -93,7 +105,7 @@ function emitAllModuleSyncEvents() {
   window.dispatchEvent(new CustomEvent(MONETIZATION_SYNC_EVENT));
   window.dispatchEvent(new CustomEvent(ACCOUNT_GOV_SYNC_EVENT));
   window.dispatchEvent(new CustomEvent(DOMPETQU_SYNC_EVENT));
-  window.dispatchEvent(new CustomEvent(DEVICE_PAIRING_SYNC_EVENT));
+  emitPairingSync({ remoteApplied: true, changedKeys });
 }
 
 function bytesToHex(bytes: Uint8Array): string {
@@ -126,6 +138,22 @@ async function importSecretAesKey(secretHex: string): Promise<CryptoKey> {
     'encrypt',
     'decrypt',
   ]);
+}
+
+async function deriveEcdhSecretHex(privateKey: CryptoKey, peerPubJwk: JsonWebKey): Promise<string> {
+  const peerPublicKey = await crypto.subtle.importKey(
+    'jwk',
+    peerPubJwk,
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false,
+    []
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'ECDH', public: peerPublicKey },
+    privateKey,
+    256
+  );
+  return bytesToHex(new Uint8Array(bits));
 }
 
 async function encryptWithSecret(secretHex: string, data: unknown): Promise<EncryptedFrame> {
@@ -164,7 +192,8 @@ function shouldSyncKey(key: string, includeDompetQu: boolean): boolean {
     key.startsWith('wargaqu_') ||
     key.startsWith('leluhurqu_grid_') ||
     key.startsWith('uq_') ||
-    key.startsWith('baksoqu_')
+    key.startsWith('baksoqu_') ||
+    key.startsWith('siagaqu_')
   );
 }
 
@@ -181,10 +210,19 @@ function collectTransferSnapshot(includeDompetQu: boolean): Record<string, strin
   return snapshot;
 }
 
+function hashStringFnv1a(str: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < str.length; i += 1) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
 function buildSnapshotSignature(entries: Record<string, string>): string {
   return Object.keys(entries)
     .sort()
-    .map(k => `${k}:${entries[k].length}:${entries[k].slice(0, 32)}`)
+    .map(k => `${k}:${entries[k].length}:${hashStringFnv1a(entries[k])}`)
     .join('|');
 }
 
@@ -273,42 +311,78 @@ function savePairedHost(host: PairedHostSession | null) {
 function applySyncedSnapshot(
   entries: Record<string, string>,
   includeDompetQu: boolean,
-  auditLabel: string
+  auditLabel: string,
+  forceNotify = false
 ): number {
   isApplyingRemoteSync = true;
-  let count = 0;
+  if (remoteSyncResetTimer !== null) {
+    window.clearTimeout(remoteSyncResetTimer);
+  }
+  let writtenCount = 0;
+  const changedKeys: string[] = [];
   try {
     Object.entries(entries).forEach(([k, v]) => {
       if (!shouldSyncKey(k, includeDompetQu) || typeof v !== 'string') return;
       try {
-        localStorage.setItem(k, v);
-        count += 1;
+        const existing = localStorage.getItem(k);
+        if (existing !== v) {
+          localStorage.setItem(k, v);
+          changedKeys.push(k);
+        }
+        writtenCount += 1;
       } catch {
         // ignore quota errors
       }
     });
-    const acc = AuthService.getAccount();
-    if (acc) {
-      ZeroTrustService.registerOrTouchCurrentDevice(
-        acc.email,
-        acc.phone,
-        getBrowserDeviceLabel()
-      );
-      ZeroTrustService.appendAudit(
-        acc.email,
-        auditLabel,
-        `${count} data disinkronkan ke ${getBrowserDeviceLabel()}`,
-        'info'
-      );
+
+    if (changedKeys.length > 0 || forceNotify) {
+      const acc = AuthService.getAccount();
+      if (acc) {
+        ZeroTrustService.registerOrTouchCurrentDevice(
+          acc.email,
+          acc.phone,
+          getBrowserDeviceLabel()
+        );
+        ZeroTrustService.appendAudit(
+          acc.email,
+          auditLabel,
+          `${writtenCount} data disinkronkan ke ${getBrowserDeviceLabel()}`,
+          'info'
+        );
+      }
     }
+
     lastPushedSignature = buildSnapshotSignature(collectTransferSnapshot(includeDompetQu));
-    emitAllModuleSyncEvents();
+    if (changedKeys.length > 0 || forceNotify) {
+      emitAllModuleSyncEvents(changedKeys);
+    }
   } finally {
-    window.setTimeout(() => {
+    remoteSyncResetTimer = window.setTimeout(() => {
       isApplyingRemoteSync = false;
-    }, 300);
+      remoteSyncResetTimer = null;
+    }, 1500);
   }
-  return count;
+  return writtenCount;
+}
+
+async function registerSessionEcdh(sessionId: string): Promise<void> {
+  try {
+    if (!crypto?.subtle) return;
+    const kp = await crypto.subtle.generateKey(
+      { name: 'ECDH', namedCurve: 'P-256' },
+      false,
+      ['deriveBits']
+    );
+    const pubJwk = await crypto.subtle.exportKey('jwk', kp.publicKey);
+    sessionEcdhKeys.set(sessionId, kp.privateKey);
+    await fetch('/api/pair-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, pubJwk }),
+    });
+  } catch {
+    // Non-fatal: QR & full token still work offline/WS
+  }
 }
 
 export const DevicePairingService = {
@@ -367,6 +441,7 @@ export const DevicePairingService = {
     const channel = `pair:${sessionId}`;
 
     registerRelayChannels([channel]);
+    void registerSessionEcdh(sessionId);
 
     return {
       sessionId,
@@ -416,11 +491,21 @@ export const DevicePairingService = {
       };
     }
 
+    // 4. 6-character Session Code typed directly by user (uses ephemeral ECDH key exchange)
+    const codeOnly = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (/^[A-Z0-9]{6}$/.test(codeOnly)) {
+      return {
+        sessionId: codeOnly,
+        secretHex: '',
+      };
+    }
+
     return null;
   },
 
   /**
-   * Dipanggil oleh Laptop/PC untuk menunggu data masuk dari HP setelah QR di-scan.
+   * Dipanggil oleh Laptop/PC untuk menunggu data masuk dari HP setelah QR di-scan atau Kode Sesi diketik.
+   * Menggunakan Dual-Transport: WebSocket + HTTP RAM Relay Polling agar tidak pernah gagal putus koneksi.
    */
   listenForPairingOnLaptop(
     session: PairingSessionInfo,
@@ -433,70 +518,128 @@ export const DevicePairingService = {
     onError: (msg: string) => void
   ): () => void {
     registerRelayChannels([session.channel]);
+    let disposed = false;
+    let settledLinkId = '';
 
-    const handler = async (ev: Event) => {
-      const detail = (ev as CustomEvent<RelayIncomingEvent>).detail;
-      if (!detail || detail.channel !== session.channel) return;
-
-      if (detail.eventName === 'pair:payload' && detail.payload && typeof detail.payload === 'object') {
-        try {
-          const frame = detail.payload as EncryptedFrame;
-          const decoded = await decryptWithSecret<PairingTransferPayload>(
-            session.secretHex,
-            frame
-          );
-          if (decoded.kind !== 'wargaqu_pair_v1' || !decoded.entries) {
-            onError('Format tautan perangkat tidak cocok.');
+    const processEncryptedFrame = async (
+      frame: EncryptedFrame,
+      senderPubJwk?: JsonWebKey
+    ) => {
+      if (disposed || settledLinkId) return;
+      try {
+        let decryptSecret = session.secretHex;
+        if (senderPubJwk) {
+          const priv = sessionEcdhKeys.get(session.sessionId);
+          if (!priv) {
+            onError('Sesi QR telah kedaluwarsa. Tekan Muat Ulang QR untuk buat kode baru.');
             return;
           }
+          decryptSecret = await deriveEcdhSecretHex(priv, senderPubJwk);
+        }
 
-          const restoredKeys = applySyncedSnapshot(
-            decoded.entries,
-            decoded.includeDompetQu,
-            'Tautkan Laptop via Barcode QR'
-          );
+        const decoded = await decryptWithSecret<PairingTransferPayload>(decryptSecret, frame);
+        if (decoded.kind !== 'wargaqu_pair_v1' || !decoded.entries) {
+          onError('Format tautan perangkat tidak cocok.');
+          return;
+        }
+        if (settledLinkId) return;
+        settledLinkId = decoded.linkId;
 
-          const syncChannel = `pair-live:${decoded.linkId}`;
-          const hostSession: PairedHostSession = {
-            linkId: decoded.linkId,
-            hostLabel: decoded.hostLabel || 'HP WargaQu',
-            accountEmail: decoded.accountEmail || AuthService.getAccount()?.email || 'WargaQu',
-            includeDompetQu: decoded.includeDompetQu,
-            secretHex: session.secretHex,
-            syncChannel,
-            linkedAt: new Date().toISOString(),
-            lastSyncAt: new Date().toISOString(),
-          };
-          savePairedHost(hostSession);
-          registerRelayChannels([syncChannel]);
+        const restoredKeys = applySyncedSnapshot(
+          decoded.entries,
+          decoded.includeDompetQu,
+          'Tautkan Laptop via Barcode QR',
+          true
+        );
 
-          publishRelay(session.channel, 'pair:ack', {
-            linkId: decoded.linkId,
-            deviceName: getBrowserDeviceLabel(),
-            browserInfo: navigator.userAgent.slice(0, 80),
-            restoredKeys,
-          });
+        const sharedLiveSecret = decoded.liveSecretHex || session.secretHex;
+        const syncChannel = `pair-live:${decoded.linkId}`;
+        const hostSession: PairedHostSession = {
+          linkId: decoded.linkId,
+          hostLabel: decoded.hostLabel || 'HP WargaQu',
+          accountEmail: decoded.accountEmail || AuthService.getAccount()?.email || 'Tamu Tertaut',
+          includeDompetQu: decoded.includeDompetQu,
+          secretHex: sharedLiveSecret,
+          syncChannel,
+          linkedAt: new Date().toISOString(),
+          lastSyncAt: new Date().toISOString(),
+          lastSeq: 0,
+        };
+        savePairedHost(hostSession);
+        registerRelayChannels([syncChannel]);
 
-          onLinked({
-            hostLabel: hostSession.hostLabel,
-            accountEmail: hostSession.accountEmail,
-            restoredKeys,
-            includeDompetQu: decoded.includeDompetQu,
-          });
-        } catch {
-          onError('Gagal mendekripsi paket tautan QR. Coba buat QR baru.');
+        const ackBody = {
+          linkId: decoded.linkId,
+          deviceName: getBrowserDeviceLabel(),
+          browserInfo: navigator.userAgent.slice(0, 80),
+          restoredKeys,
+        };
+        publishRelay(session.channel, 'pair:ack', ackBody);
+        void fetch(`/api/pair-relay/${encodeURIComponent(session.sessionId)}/ack`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(ackBody),
+        }).catch(() => {});
+
+        onLinked({
+          hostLabel: hostSession.hostLabel,
+          accountEmail: hostSession.accountEmail,
+          restoredKeys,
+          includeDompetQu: decoded.includeDompetQu,
+        });
+      } catch {
+        onError('Gagal mendekripsi paket tautan QR. Tekan Muat Ulang QR lalu coba lagi.');
+      }
+    };
+
+    const handler = (ev: Event) => {
+      const detail = (ev as CustomEvent<RelayIncomingEvent>).detail;
+      if (!detail || detail.channel !== session.channel) return;
+      if (detail.eventName === 'pair:payload' && detail.payload && typeof detail.payload === 'object') {
+        const raw = detail.payload as { encrypted?: EncryptedFrame; senderPubJwk?: JsonWebKey } & Partial<EncryptedFrame>;
+        if (raw.encrypted && raw.encrypted.iv && raw.encrypted.ct) {
+          void processEncryptedFrame(raw.encrypted, raw.senderPubJwk);
+        } else if (raw.iv && raw.ct) {
+          void processEncryptedFrame({ iv: raw.iv, ct: raw.ct });
         }
       }
     };
 
     window.addEventListener(REALTIME_RELAY_EVENT, handler);
+
+    // HTTP RAM polling fallback every 1.4s in case WebSocket missed the frame
+    const pollHttp = async () => {
+      if (disposed || settledLinkId) return;
+      try {
+        const res = await fetch(`/api/pair-relay/${encodeURIComponent(session.sessionId)}`);
+        if (!res.ok || disposed || settledLinkId) return;
+        const data = (await res.json()) as {
+          found?: boolean;
+          encrypted?: EncryptedFrame;
+          senderPubJwk?: JsonWebKey;
+        };
+        if (data.found && data.encrypted?.iv && data.encrypted?.ct) {
+          await processEncryptedFrame(data.encrypted, data.senderPubJwk);
+        }
+      } catch {
+        // silent retry
+      }
+    };
+
+    void pollHttp();
+    const pollTimer = window.setInterval(() => {
+      void pollHttp();
+    }, 1400);
+
     return () => {
+      disposed = true;
       window.removeEventListener(REALTIME_RELAY_EVENT, handler);
+      window.clearInterval(pollTimer);
     };
   },
 
   /**
-   * Dipanggil oleh HP setelah scan QR Laptop dan user mengonfirmasi transfer data.
+   * Dipanggil oleh HP setelah scan QR Laptop atau mengetik 6 huruf Kode Sesi.
    */
   async sendPairingFromPhone(
     parsedToken: { sessionId: string; secretHex: string },
@@ -515,6 +658,38 @@ export const DevicePairingService = {
     const syncChannel = `pair-live:${linkId}`;
     registerRelayChannels([channel, syncChannel]);
 
+    let transportSecretHex = parsedToken.secretHex;
+    let senderPubJwk: JsonWebKey | undefined;
+    let liveSecretHex = parsedToken.secretHex;
+
+    // Jika user mengetik 6-huruf Kode Sesi secara langsung (tanpa QR/secretHex), lakukan ECDH P-256
+    if (!transportSecretHex) {
+      const sessRes = await fetch(`/api/pair-session/${encodeURIComponent(parsedToken.sessionId)}`);
+      if (!sessRes.ok) {
+        const errBody = (await sessRes.json().catch(() => ({}))) as { error?: string };
+        throw new Error(
+          errBody.error ||
+            'Kode sesi tidak ditemukan atau sudah kedaluwarsa. Klik Muat Ulang QR di Laptop.'
+        );
+      }
+      const sessData = (await sessRes.json()) as { pubJwk?: JsonWebKey };
+      if (!sessData.pubJwk) {
+        throw new Error('Kunci sesi Laptop tidak tersedia. Muat ulang QR di Laptop.');
+      }
+
+      const phoneKp = await crypto.subtle.generateKey(
+        { name: 'ECDH', namedCurve: 'P-256' },
+        false,
+        ['deriveBits']
+      );
+      senderPubJwk = await crypto.subtle.exportKey('jwk', phoneKp.publicKey);
+      transportSecretHex = await deriveEcdhSecretHex(phoneKp.privateKey, sessData.pubJwk);
+
+      const liveBytes = new Uint8Array(16);
+      crypto.getRandomValues(liveBytes);
+      liveSecretHex = bytesToHex(liveBytes);
+    }
+
     const acc = AuthService.getAccount();
     const hostLabel = acc
       ? `${AuthService.getDisplayName(acc)} (${getBrowserDeviceLabel()})`
@@ -527,42 +702,83 @@ export const DevicePairingService = {
       kind: 'wargaqu_pair_v1',
       linkId,
       hostLabel,
-      accountEmail: acc?.email || 'Tamu WargaQu',
+      accountEmail: acc?.email || 'Tamu WargaQu (Tertaut)',
       includeDompetQu: options.includeDompetQu,
+      liveSecretHex,
       sentAt: new Date().toISOString(),
       entries,
     };
 
-    const encrypted = await encryptWithSecret(parsedToken.secretHex, payload);
+    const encrypted = await encryptWithSecret(transportSecretHex, payload);
 
     const ackPromise = new Promise<{ deviceName: string; acknowledged: boolean }>(resolve => {
       let settled = false;
-      const timer = window.setTimeout(() => {
+      let httpPollTimer: number | null = null;
+
+      const finish = (deviceName: string, acknowledged: boolean) => {
         if (settled) return;
         settled = true;
+        window.clearTimeout(timeoutTimer);
+        if (httpPollTimer !== null) window.clearInterval(httpPollTimer);
         window.removeEventListener(REALTIME_RELAY_EVENT, onAck);
-        resolve({ deviceName: 'Laptop / PC Browser', acknowledged: false });
-      }, 6500);
+        resolve({ deviceName, acknowledged });
+      };
+
+      const timeoutTimer = window.setTimeout(() => {
+        finish('Laptop / PC Browser', false);
+      }, 8500);
 
       const onAck = (ev: Event) => {
         const d = (ev as CustomEvent<RelayIncomingEvent>).detail;
         if (!d || d.channel !== channel || d.eventName !== 'pair:ack') return;
         const ackBody = (d.payload || {}) as { linkId?: string; deviceName?: string };
         if (ackBody.linkId && ackBody.linkId !== linkId) return;
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timer);
-        window.removeEventListener(REALTIME_RELAY_EVENT, onAck);
-        resolve({
-          deviceName: ackBody.deviceName || 'Laptop / PC Browser',
-          acknowledged: true,
-        });
+        finish(ackBody.deviceName || 'Laptop / PC Browser', true);
       };
 
       window.addEventListener(REALTIME_RELAY_EVENT, onAck);
+
+      httpPollTimer = window.setInterval(async () => {
+        try {
+          const res = await fetch(
+            `/api/pair-relay/${encodeURIComponent(parsedToken.sessionId)}/ack`
+          );
+          if (!res.ok) return;
+          const data = (await res.json()) as {
+            acked?: boolean;
+            linkId?: string;
+            deviceName?: string;
+          };
+          if (data.acked && (!data.linkId || data.linkId === linkId)) {
+            finish(data.deviceName || 'Laptop / PC Browser', true);
+          }
+        } catch {
+          // ignore
+        }
+      }, 900);
     });
 
-    publishRelay(channel, 'pair:payload', encrypted);
+    // Dual-transport send: HTTP RAM Relay + WebSocket Relay simultaneously
+    const httpPostPromise = fetch(
+      `/api/pair-relay/${encodeURIComponent(parsedToken.sessionId)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          linkId,
+          encrypted,
+          senderPubJwk,
+        }),
+      }
+    ).catch(() => null);
+
+    publishRelay(
+      channel,
+      'pair:payload',
+      senderPubJwk ? { encrypted, senderPubJwk } : encrypted
+    );
+
+    await httpPostPromise;
     const ack = await ackPromise;
 
     const nowIso = new Date().toISOString();
@@ -573,10 +789,11 @@ export const DevicePairingService = {
         deviceName: ack.deviceName,
         browserInfo: ack.acknowledged ? 'Terhubung Real-Time' : 'Terkirim via Relay',
         includeDompetQu: options.includeDompetQu,
-        secretHex: parsedToken.secretHex,
+        secretHex: liveSecretHex,
         syncChannel,
         linkedAt: nowIso,
         lastSyncAt: nowIso,
+        lastSeq: 0,
       },
       ...existing.slice(0, 9),
     ];
@@ -608,6 +825,7 @@ export const DevicePairingService = {
     const linkedDevices = loadLinkedDevices();
     if (!pairedHost && linkedDevices.length === 0) return 0;
 
+    const myDeviceId = AuthService.getHiddenDeviceId();
     let sentCount = 0;
 
     // 1. Jika ini HP yang menautkan ke >= 1 Laptop
@@ -629,7 +847,7 @@ export const DevicePairingService = {
             kind: 'wargaqu_pair_v1',
             linkId: dev.linkId,
             hostLabel: getBrowserDeviceLabel(),
-            accountEmail: acc?.email || 'WargaQu',
+            accountEmail: acc?.email || 'Tamu WargaQu (Tertaut)',
             includeDompetQu: dev.includeDompetQu,
             sentAt: nowIso,
             entries,
@@ -637,7 +855,23 @@ export const DevicePairingService = {
           const encrypted = await encryptWithSecret(dev.secretHex, payload);
           registerRelayChannels([dev.syncChannel]);
           publishRelay(dev.syncChannel, 'pair:live_sync', encrypted);
-          updatedList[i] = { ...dev, lastSyncAt: nowIso };
+
+          let nextSeq = dev.lastSeq ?? 0;
+          try {
+            const res = await fetch(`/api/pair-live/${encodeURIComponent(dev.linkId)}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ senderDeviceId: myDeviceId, encrypted }),
+            });
+            if (res.ok) {
+              const r = (await res.json()) as { seq?: number };
+              if (typeof r.seq === 'number') nextSeq = r.seq;
+            }
+          } catch {
+            // WS still handles live push
+          }
+
+          updatedList[i] = { ...dev, lastSyncAt: nowIso, lastSeq: nextSeq };
           sentCount += 1;
         }
         saveLinkedDevices(updatedList);
@@ -663,12 +897,114 @@ export const DevicePairingService = {
         const encrypted = await encryptWithSecret(pairedHost.secretHex, payload);
         registerRelayChannels([pairedHost.syncChannel]);
         publishRelay(pairedHost.syncChannel, 'pair:live_sync', encrypted);
-        savePairedHost({ ...pairedHost, lastSyncAt: nowIso });
+
+        let nextSeq = pairedHost.lastSeq ?? 0;
+        try {
+          const res = await fetch(`/api/pair-live/${encodeURIComponent(pairedHost.linkId)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ senderDeviceId: myDeviceId, encrypted }),
+          });
+          if (res.ok) {
+            const r = (await res.json()) as { seq?: number };
+            if (typeof r.seq === 'number') nextSeq = r.seq;
+          }
+        } catch {
+          // ignore
+        }
+
+        savePairedHost({ ...pairedHost, lastSyncAt: nowIso, lastSeq: nextSeq });
         sentCount += 1;
       }
     }
 
     return sentCount;
+  },
+
+  async pullLiveUpdatesFromServer(): Promise<number> {
+    if (isApplyingRemoteSync || !this.isSupported()) return 0;
+    const host = loadPairedHost();
+    const linked = loadLinkedDevices();
+    if (!host && linked.length === 0) return 0;
+
+    const myDeviceId = AuthService.getHiddenDeviceId();
+    let appliedTotal = 0;
+
+    const targets: Array<{
+      linkId: string;
+      secretHex: string;
+      includeDompetQu: boolean;
+      lastSeq: number;
+      isHost: boolean;
+    }> = [];
+
+    if (host) {
+      targets.push({
+        linkId: host.linkId,
+        secretHex: host.secretHex,
+        includeDompetQu: host.includeDompetQu,
+        lastSeq: host.lastSeq ?? 0,
+        isHost: true,
+      });
+    } else {
+      linked.forEach(dev => {
+        targets.push({
+          linkId: dev.linkId,
+          secretHex: dev.secretHex,
+          includeDompetQu: dev.includeDompetQu,
+          lastSeq: dev.lastSeq ?? 0,
+          isHost: false,
+        });
+      });
+    }
+
+    for (const t of targets) {
+      try {
+        const res = await fetch(
+          `/api/pair-live/${encodeURIComponent(t.linkId)}?sinceSeq=${t.lastSeq}&deviceId=${encodeURIComponent(myDeviceId)}`
+        );
+        if (!res.ok) continue;
+        const data = (await res.json()) as {
+          hasUpdate?: boolean;
+          seq?: number;
+          encrypted?: EncryptedFrame;
+        };
+        if (!data.hasUpdate || !data.encrypted?.iv || !data.encrypted?.ct) continue;
+
+        const decoded = await decryptWithSecret<PairingTransferPayload>(
+          t.secretHex,
+          data.encrypted
+        );
+        if (decoded.kind !== 'wargaqu_pair_v1' || !decoded.entries) continue;
+
+        const applied = applySyncedSnapshot(
+          decoded.entries,
+          t.includeDompetQu && decoded.includeDompetQu,
+          'Sinkronisasi Live Antar-Perangkat'
+        );
+        appliedTotal += applied;
+
+        const nextSeq = typeof data.seq === 'number' ? data.seq : t.lastSeq + 1;
+        const nowIso = new Date().toISOString();
+        if (t.isHost) {
+          const latestHost = loadPairedHost();
+          if (latestHost && latestHost.linkId === t.linkId) {
+            savePairedHost({ ...latestHost, lastSyncAt: nowIso, lastSeq: nextSeq });
+          }
+        } else {
+          const latestList = loadLinkedDevices();
+          saveLinkedDevices(
+            latestList.map(d =>
+              d.linkId === t.linkId ? { ...d, lastSyncAt: nowIso, lastSeq: nextSeq } : d
+            )
+          );
+        }
+      } catch {
+        // ignore transient errors
+      }
+    }
+
+    return appliedTotal;
   },
 
   unlinkLaptopFromPhone(linkId: string): void {
@@ -704,14 +1040,15 @@ export const DevicePairingService = {
           k.startsWith('wargaqu_') ||
           k.startsWith('leluhurqu_grid_') ||
           k.startsWith('uq_') ||
-          k.startsWith('baksoqu_')
+          k.startsWith('baksoqu_') ||
+          k.startsWith('siagaqu_')
         ) {
           toRemove.push(k);
         }
       }
       toRemove.forEach(k => localStorage.removeItem(k));
       AuthService.logout();
-      emitAllModuleSyncEvents();
+      emitAllModuleSyncEvents(toRemove);
     }
   },
 
@@ -804,7 +1141,7 @@ export const DevicePairingService = {
       }
       syncDebounceTimer = window.setTimeout(() => {
         void this.pushLiveUpdateIfChanged(false);
-      }, 2500);
+      }, 1600);
     };
 
     window.addEventListener(REALTIME_RELAY_EVENT, handleRelayEvent);
@@ -820,12 +1157,33 @@ export const DevicePairingService = {
       'storage',
     ].forEach(evName => window.addEventListener(evName, scheduleOutboundSync));
 
-    // Periodic diff check (for modules like LeluhurQu / UsahaQu that write directly to localStorage)
+    // When user switches back to HP or Laptop tab, immediately pull remote edits & push local edits
+    const handleWakeSync = () => {
+      if (document.visibilityState === 'visible') {
+        void this.pullLiveUpdatesFromServer().then(() => this.pushLiveUpdateIfChanged(false));
+      }
+    };
+    window.addEventListener('focus', handleWakeSync);
+    document.addEventListener('visibilitychange', handleWakeSync);
+
+    // Pull latest state immediately on startup if paired
+    void this.pullLiveUpdatesFromServer();
+
+    // Periodic diff check (for modules like LeluhurQu / UsahaQu / ChatQu that write directly to localStorage)
     periodicCheckTimer = window.setInterval(() => {
       if (!isApplyingRemoteSync) {
         void this.pushLiveUpdateIfChanged(false);
       }
-    }, 8000);
+    }, 3000);
+
+    // Periodic HTTP live-sync pull fallback every 4.5s
+    periodicPullTimer = window.setInterval(() => {
+      if (!isApplyingRemoteSync) {
+        void this.pullLiveUpdatesFromServer();
+      }
+    }, 4500);
+
     void periodicCheckTimer;
+    void periodicPullTimer;
   },
 };

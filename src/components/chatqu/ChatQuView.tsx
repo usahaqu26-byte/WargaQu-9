@@ -29,6 +29,10 @@ import {
 } from 'lucide-react';
 import { ModuleOnboardingService } from '../../services/moduleOnboardingService';
 import { AuthService } from '../../services/authService';
+import {
+  DEVICE_PAIRING_SYNC_EVENT,
+  PairingSyncEventDetail,
+} from '../../services/devicePairingService';
 import { RtSiagaStorage } from '../../services/rtSiagaStorage';
 import {
   REALTIME_RELAY_EVENT,
@@ -121,6 +125,22 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
       localStorage.setItem('wargaqu_chat_rooms_v1', JSON.stringify(chats));
     } catch {}
   }, [chats]);
+
+  useEffect(() => {
+    const onRemoteSync = (ev: Event) => {
+      const detail = (ev as CustomEvent<PairingSyncEventDetail>).detail;
+      if (!detail?.remoteApplied) return;
+      try {
+        const saved = localStorage.getItem('wargaqu_chat_rooms_v1');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) setChats(parsed as ChatRoomData[]);
+        }
+      } catch {}
+    };
+    window.addEventListener(DEVICE_PAIRING_SYNC_EVENT, onRemoteSync);
+    return () => window.removeEventListener(DEVICE_PAIRING_SYNC_EVENT, onRemoteSync);
+  }, []);
 
   const activeCommunity = RtSiagaStorage.getActiveCommunity();
 

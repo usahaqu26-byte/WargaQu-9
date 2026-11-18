@@ -37,6 +37,10 @@ import {
   ModularProfile
 } from '../../types';
 import { AUTH_SYNC_EVENT, AuthService } from '../../services/authService';
+import {
+  DEVICE_PAIRING_SYNC_EVENT,
+  PairingSyncEventDetail,
+} from '../../services/devicePairingService';
 import { MonetizationService } from '../../services/monetizationService';
 
 interface ModularQuViewProps {
@@ -263,9 +267,27 @@ export const ModularQuView: React.FC<ModularQuViewProps> = ({
         phone: acc.phone,
       }));
     };
+    const syncRemotePairing = (ev: Event) => {
+      const detail = (ev as CustomEvent<PairingSyncEventDetail>).detail;
+      if (!detail?.remoteApplied) return;
+      try {
+        const sp = localStorage.getItem('uq_profile');
+        if (sp) setProfile(JSON.parse(sp));
+        const spr = localStorage.getItem('uq_products');
+        if (spr) setProducts(JSON.parse(spr));
+        const se = localStorage.getItem('uq_expenses');
+        if (se) setExpenses(JSON.parse(se));
+        const st = localStorage.getItem('uq_transactions');
+        if (st) setTransactions(JSON.parse(st));
+      } catch {}
+    };
     syncFromAuth();
     window.addEventListener(AUTH_SYNC_EVENT, syncFromAuth);
-    return () => window.removeEventListener(AUTH_SYNC_EVENT, syncFromAuth);
+    window.addEventListener(DEVICE_PAIRING_SYNC_EVENT, syncRemotePairing);
+    return () => {
+      window.removeEventListener(AUTH_SYNC_EVENT, syncFromAuth);
+      window.removeEventListener(DEVICE_PAIRING_SYNC_EVENT, syncRemotePairing);
+    };
   }, []);
 
   useEffect(() => {

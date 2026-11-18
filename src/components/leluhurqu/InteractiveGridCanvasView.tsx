@@ -51,6 +51,10 @@ import {
 } from 'lucide-react';
 import { FamilyMember, TrahCategory } from './LeluhurQuView';
 import { MonetizationService } from '../../services/monetizationService';
+import {
+  DEVICE_PAIRING_SYNC_EVENT,
+  PairingSyncEventDetail,
+} from '../../services/devicePairingService';
 import { ModularFeeSheet } from '../monetization/ModularFeeSheet';
 import {
   SMART_LAYOUT_PRESETS,
@@ -59,6 +63,9 @@ import {
   analyzeTrahForSmartLayout,
   computeOptimalCardScale,
   computeMergedCardMetrics,
+  computeModularContainerPlan,
+  getUniformSubCardSize,
+  ModularNuclearGroup,
   formatMemberLifeSubtitle,
   generateSmartLayoutFromTable,
 } from './smartGridLayouts';
@@ -77,7 +84,7 @@ export type GenGradientPaletteId =
   | 'ocean_blue'
   | 'amber_earth'
   | 'violet_dusk';
-export type ConnectorLineStyle = 'pcb90' | 'pcb45' | 'straight' | 'curved';
+export type ConnectorLineStyle = 'pcb90' | 'pcb45' | 'straight' | 'curved' | 'none';
 export type EdgePortSide = 'auto' | 'top' | 'bottom' | 'left' | 'right';
 export type CaptionPosition =
   | 'bottom-bar'
@@ -436,15 +443,24 @@ function getInitials(name: string): string {
     .toUpperCase();
 }
 
+function hexWithAlpha(hex: string, alpha: number): string {
+  const clean = hex.replace('#', '');
+  if (clean.length !== 6) return hex;
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function getScaledPhotoDim(
   photoSize: PhotoFrameSize,
   cardScale = 1
 ): { w: number; h: number } {
   const base = PHOTO_DIMENSIONS[photoSize] || PHOTO_DIMENSIONS['3x4'];
-  return {
-    w: Math.max(28, Math.round(base.w * cardScale)),
-    h: Math.max(28, Math.round(base.h * cardScale)),
-  };
+  const aspect = base.h / Math.max(1, base.w);
+  const w = Math.max(18, Math.round(base.w * cardScale));
+  const h = Math.max(18, Math.round(w * aspect));
+  return { w, h };
 }
 
 // Hitung dimensi aktual kartu agar garis konektor & tata letak presisi 100%
@@ -469,6 +485,15 @@ function getNodeSize(
     return { w: m.w, h: m.h };
   }
 
+  if (
+    node.modularSubLayout === 'I' ||
+    node.modularSubLayout === 'L' ||
+    (node.scaleMultiplier ?? 1) > 1.05
+  ) {
+    const u = getUniformSubCardSize(displayMode, photoSize, effScale);
+    return { w: u.w, h: u.h };
+  }
+
   const pDim = PHOTO_DIMENSIONS[photoSize] || PHOTO_DIMENSIONS['3x4'];
 
   if (displayMode === 'photo_only') {
@@ -479,10 +504,8 @@ function getNodeSize(
   }
 
   if (displayMode === 'photo_name') {
-    return {
-      w: Math.round(Math.max(106, pDim.w + 16) * effScale),
-      h: Math.round((pDim.h + 30) * effScale),
-    };
+    const u = getUniformSubCardSize(displayMode, photoSize, effScale);
+    return { w: u.w, h: u.h };
   }
 
   if (displayMode === 'name_only') {
@@ -1481,8 +1504,8 @@ export const InteractiveGridCanvasView: React.FC<
     useState<PhotoFrameSize>('3x4');
   const [photoShape, setPhotoShape] = useState<GridPhotoShape>(defaultPhotoShape);
   const [cardScale, setCardScale] = useState<number>(1);
-  const [cardGapMm, setCardGapMm] = useState<number>(2.5);
-  const [modularG12Position, setModularG12Position] = useState<'top' | 'center'>('top');
+  const [cardGapMm, setCardGapMm] = useState<number>(3.5);
+  const [modularG12Position, setModularG12Position] = useState<'top' | 'center'>('center');
   const [showGenGuides, setShowGenGuides] = useState<boolean>(true);
   const [guideOverlayMode, setGuideOverlayMode] = useState<GuideOverlayMode>('gen_bands');
   const [smartCategoryFilter, setSmartCategoryFilter] = useState<
@@ -1710,7 +1733,21 @@ export const InteractiveGridCanvasView: React.FC<
       modPos = modularG12Position
     ) => {
       const sampleDim = getNodeSize(
-        { id: 'tmp', name: 'Nama Anggota', sub: '', x: 0, y: 0, photo: '', wafat: false },
+        {
+          id: 'tmp',
+          name: 'Nama Anggota',
+          sub: '',
+          x: 0,
+          y: 0,
+          photo: '',
+          wafat: false,
+          modularSubLayout:
+            presetId === 'modular_g3_L'
+              ? 'L'
+              : presetId === 'modular_g3_I'
+              ? 'I'
+              : undefined,
+        },
         cMode,
         phSize,
         cScale
@@ -1857,8 +1894,8 @@ export const InteractiveGridCanvasView: React.FC<
             cMode,
             phSize,
             target.cardScale ?? optScale,
-            target.cardGapMm ?? 2.5,
-            target.modularG12Position ?? 'top'
+            target.cardGapMm ?? 3.5,
+            target.modularG12Position ?? 'center'
           );
           target = {
             ...target,
@@ -1922,8 +1959,8 @@ export const InteractiveGridCanvasView: React.FC<
       setPhotoFrameSize(target.photoFrameSize || '3x4');
       setPhotoShape(target.photoShape || defaultPhotoShape);
       setCardScale(target.cardScale ?? 1);
-      setCardGapMm(target.cardGapMm ?? 2.5);
-      setModularG12Position(target.modularG12Position ?? 'top');
+      setCardGapMm(target.cardGapMm ?? 3.5);
+      setModularG12Position(target.modularG12Position ?? 'center');
       setFocalRootMemberId(target.focalRootMemberId || 'all');
       setMaxVisibleDepth(target.maxVisibleDepth ?? 0);
       setShowGenGuides(target.showGenGuides ?? true);
@@ -1997,8 +2034,8 @@ export const InteractiveGridCanvasView: React.FC<
       photoFrameSize: '3x4',
       photoShape: defaultPhotoShape,
       cardScale: initScale,
-      cardGapMm: 2.5,
-      modularG12Position: 'top',
+      cardGapMm: 3.5,
+      modularG12Position: 'center',
       focalRootMemberId: 'all',
       maxVisibleDepth: 0,
       showGenGuides: true,
@@ -2020,8 +2057,8 @@ export const InteractiveGridCanvasView: React.FC<
     };
     setPhotoShape(defaultPhotoShape);
     setCardScale(initScale);
-    setCardGapMm(2.5);
-    setModularG12Position('top');
+    setCardGapMm(3.5);
+    setModularG12Position('center');
     setFocalRootMemberId('all');
     setMaxVisibleDepth(0);
     setShowLineDots(true);
@@ -2056,6 +2093,56 @@ export const InteractiveGridCanvasView: React.FC<
       console.warn(e);
     }
   }, [activeTrah.id, activeTrah.name, designsStorageKey, activeDesignIdKey]);
+
+  // Reload kanvas otomatis jika ada perubahan desain dari HP/Laptop tertaut
+  useEffect(() => {
+    const onRemoteGridSync = (ev: Event) => {
+      const detail = (ev as CustomEvent<PairingSyncEventDetail>).detail;
+      if (!detail?.remoteApplied) return;
+      if (
+        detail.changedKeys &&
+        detail.changedKeys.length > 0 &&
+        !detail.changedKeys.some(
+          (k) => k === designsStorageKey || k === activeDesignIdKey
+        )
+      ) {
+        return;
+      }
+      try {
+        const raw = localStorage.getItem(designsStorageKey);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed) || parsed.length === 0) return;
+        const storedId = localStorage.getItem(activeDesignIdKey) || '';
+        const target =
+          (parsed as SavedGridDesign[]).find((d) => d.id === storedId) ||
+          (parsed as SavedGridDesign[])[0];
+        if (!target) return;
+        setSavedDesigns(parsed as SavedGridDesign[]);
+        setActiveDesignId(target.id);
+        setDesignNameInput(target.name);
+        setNodes(target.nodes || []);
+        setEdges(target.edges || []);
+        if (target.quickText) setQuickText(target.quickText);
+        if (target.paperSize) setPaperSize(target.paperSize);
+        if (target.paperOrientation) setPaperOrientation(target.paperOrientation);
+        if (target.cardDisplayMode) setCardDisplayMode(target.cardDisplayMode);
+        if (target.photoFrameSize) setPhotoFrameSize(target.photoFrameSize);
+        if (target.photoShape) setPhotoShape(target.photoShape);
+        if (typeof target.cardScale === 'number') setCardScale(target.cardScale);
+        if (typeof target.cardGapMm === 'number') setCardGapMm(target.cardGapMm);
+        if (target.modularG12Position) setModularG12Position(target.modularG12Position);
+        if (target.focalRootMemberId) setFocalRootMemberId(target.focalRootMemberId);
+        if (typeof target.maxVisibleDepth === 'number')
+          setMaxVisibleDepth(target.maxVisibleDepth);
+        if (target.genGradientPalette) setGenGradientPalette(target.genGradientPalette);
+      } catch {
+        // ignore parse errors
+      }
+    };
+    window.addEventListener(DEVICE_PAIRING_SYNC_EVENT, onRemoteGridSync);
+    return () => window.removeEventListener(DEVICE_PAIRING_SYNC_EVENT, onRemoteGridSync);
+  }, [designsStorageKey, activeDesignIdKey]);
 
   // Persist perubahan pada desain aktif secara otomatis
   const persistCurrentDesign = useCallback(
@@ -2586,8 +2673,8 @@ export const InteractiveGridCanvasView: React.FC<
     setPhotoFrameSize(design.photoFrameSize || '3x4');
     setPhotoShape(design.photoShape || defaultPhotoShape);
     setCardScale(design.cardScale ?? 1);
-    setCardGapMm(design.cardGapMm ?? 2.5);
-    setModularG12Position(design.modularG12Position ?? 'top');
+    setCardGapMm(design.cardGapMm ?? 3.5);
+    setModularG12Position(design.modularG12Position ?? 'center');
     setFocalRootMemberId(design.focalRootMemberId || 'all');
     setMaxVisibleDepth(design.maxVisibleDepth ?? 0);
     setShowGenGuides(design.showGenGuides ?? true);
@@ -2817,8 +2904,15 @@ export const InteractiveGridCanvasView: React.FC<
       pushUndoSnapshot(`Smart: ${preset.title}`);
 
       const sourceMembers = overrideMembers ?? windowedMembers;
-      const effGapMm = overrideGapMm ?? cardGapMm;
-      const effModPos = overrideModPos ?? modularG12Position;
+      const isModularPreset =
+        presetId === 'modular_g3_I' || presetId === 'modular_g3_L';
+      let effGapMm = overrideGapMm ?? cardGapMm;
+      const effModPos = overrideModPos ?? (isModularPreset ? modularG12Position : 'center');
+
+      if (isModularPreset && overrideGapMm === undefined) {
+        effGapMm = Math.max(3, Math.min(5, cardGapMm < 3 ? 3.5 : cardGapMm));
+        setCardGapMm(effGapMm);
+      }
 
       const keepCurrentPaper =
         overrideLockPaper !== undefined ? overrideLockPaper : lockSelectedPaper;
@@ -2829,7 +2923,9 @@ export const InteractiveGridCanvasView: React.FC<
       let nextPhotoSize = photoFrameSize;
 
       if (!keepCurrentPaper) {
-        nextPaper = analyzeTrahForSmartLayout(sourceMembers).recommendedPaper;
+        nextPaper = isModularPreset
+          ? 'a3'
+          : analyzeTrahForSmartLayout(sourceMembers).recommendedPaper;
         setPaperSize(nextPaper);
       }
 
@@ -2875,7 +2971,20 @@ export const InteractiveGridCanvasView: React.FC<
       }
 
       const sampleDim = getNodeSize(
-        { id: 's', name: 'Nama Anggota', sub: '', x: 0, y: 0, photo: '', wafat: false },
+        {
+          id: 's',
+          name: 'Nama Anggota',
+          sub: '',
+          x: 0,
+          y: 0,
+          photo: '',
+          wafat: false,
+          modularSubLayout: isModularPreset
+            ? presetId === 'modular_g3_L'
+              ? 'L'
+              : 'I'
+            : undefined,
+        },
         nextCardMode,
         nextPhotoSize,
         nextScale
@@ -2902,7 +3011,8 @@ export const InteractiveGridCanvasView: React.FC<
       if (
         presetId === 'hierarchy_grid_fill' ||
         nextGuideMode === 'grid_9_rows' ||
-        nextGuideMode === 'orbit_rings'
+        nextGuideMode === 'orbit_rings' ||
+        nextGuideMode === 'modular_center'
       ) {
         setShowGenGuides(true);
       }
@@ -4801,7 +4911,7 @@ export const InteractiveGridCanvasView: React.FC<
                         }`}
                       >
                         <option value="full">Lengkap (1mm Foto+Thn+Kota)</option>
-                        <option value="photo_name">Foto + Nama</option>
+                        <option value="photo_name">Foto 2×3 + Badge Ringkas</option>
                         <option value="name_only">Nama Lengkap Saja</option>
                         <option value="photo_only">Foto Saja</option>
                       </select>
@@ -5092,6 +5202,11 @@ export const InteractiveGridCanvasView: React.FC<
                           label: 'Lengkung',
                           path: 'M 4 4 C 4 14, 24 10, 24 20',
                         },
+                        {
+                          id: 'none',
+                          label: 'Tanpa Garis (Line Connector Off)',
+                          path: '',
+                        },
                       ] as const
                     ).map((opt) => {
                       const active = lineStyle === opt.id;
@@ -5101,24 +5216,36 @@ export const InteractiveGridCanvasView: React.FC<
                           type="button"
                           onClick={() => setLineStyle(opt.id)}
                           className={`p-2 rounded-xl border text-left flex items-center gap-2 transition ${
+                            opt.id === 'none' ? 'col-span-2' : ''
+                          } ${
                             active
-                              ? 'bg-sky-500/20 border-sky-400 text-sky-300 shadow-xs'
+                              ? opt.id === 'none'
+                                ? 'bg-amber-500/20 border-amber-400 text-amber-300 shadow-xs'
+                                : 'bg-sky-500/20 border-sky-400 text-sky-300 shadow-xs'
                               : isDark
                               ? 'bg-slate-900/70 border-slate-700 hover:border-sky-400'
                               : 'bg-stone-50 border-stone-200 hover:border-sky-500'
                           }`}
                         >
-                          <svg width="28" height="24" className="shrink-0">
-                            <path
-                              d={opt.path}
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2.2"
-                              strokeLinecap="round"
-                            />
-                            <circle cx="4" cy="4" r="2.2" fill="currentColor" />
-                            <circle cx="24" cy="20" r="2.2" fill="currentColor" />
-                          </svg>
+                          {opt.id === 'none' ? (
+                            <svg width="28" height="24" className="shrink-0">
+                              <line x1="4" y1="20" x2="24" y2="4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray="3 3" />
+                              <circle cx="6" cy="6" r="2.5" fill="currentColor" opacity="0.55" />
+                              <circle cx="22" cy="18" r="2.5" fill="currentColor" opacity="0.55" />
+                            </svg>
+                          ) : (
+                            <svg width="28" height="24" className="shrink-0">
+                              <path
+                                d={opt.path}
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.2"
+                                strokeLinecap="round"
+                              />
+                              <circle cx="4" cy="4" r="2.2" fill="currentColor" />
+                              <circle cx="24" cy="20" r="2.2" fill="currentColor" />
+                            </svg>
+                          )}
                           <span className="text-[10.5px] font-bold leading-tight">
                             {opt.label}
                           </span>
@@ -5127,90 +5254,100 @@ export const InteractiveGridCanvasView: React.FC<
                     })}
                   </div>
 
-                  {/* Ketebalan Garis */}
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] opacity-75">Tebal Garis:</span>
-                    {[1.8, 2.5, 3.5].map((w) => (
-                      <button
-                        key={w}
-                        type="button"
-                        onClick={() => setLineThickness(w)}
-                        className={`px-2 py-0.5 rounded-md border text-[10px] font-bold ${
-                          lineThickness === w
-                            ? 'bg-sky-500 text-slate-950 border-sky-400'
-                            : 'border-slate-600 opacity-75'
-                        }`}
-                      >
-                        {w === 1.8 ? 'Tipis' : w === 2.5 ? 'Standar' : 'Tebal'}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Anti-Tertutup Kartu & Titik Dot Geser Garis */}
-                  <div className="p-2 rounded-xl border border-sky-500/30 bg-sky-500/10 space-y-1.5">
-                    <label className="flex items-center gap-2 cursor-pointer text-[10.5px]">
-                      <input
-                        type="checkbox"
-                        checked={linesOnTop}
-                        onChange={(e) => setLinesOnTop(e.target.checked)}
-                        className="accent-sky-400"
-                      />
-                      <span className="font-bold text-sky-300">
-                        Tampilkan garis di atas kartu (anti-tertutup)
-                      </span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer text-[10.5px]">
-                      <input
-                        type="checkbox"
-                        checked={showLineDots}
-                        onChange={(e) => {
-                          const v = e.target.checked;
-                          setShowLineDots(v);
-                          if (v) {
-                            setEdges((prev) => prev.map((ed) => ({ ...ed, hideDot: false })));
-                          }
-                        }}
-                        className="accent-amber-400"
-                      />
-                      <span>
-                        Tampilkan dot tengah (geser posisi &amp; jalur 4 arah)
-                      </span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer text-[10.5px]">
-                      <input
-                        type="checkbox"
-                        checked={showEndpointDots}
-                        onChange={(e) => setShowEndpointDots(e.target.checked)}
-                        className="accent-emerald-400"
-                      />
-                      <span>
-                        Tampilkan dot ujung sambungan di tepi card
-                      </span>
-                    </label>
-                    <div className="flex items-center justify-between gap-1.5 pt-0.5 flex-wrap">
-                      <span className="text-[9px] opacity-75">
-                        Ketuk garis / dot untuk pindah posisi dot atau hapus dot
-                      </span>
-                      <div className="flex items-center gap-1 ml-auto">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleToggleAllEdgeDots(!(showLineDots || showEndpointDots))
-                          }
-                          className="px-2 py-0.5 rounded bg-rose-950/70 hover:bg-rose-900 border border-rose-500/40 text-[9.5px] font-bold text-rose-200 shrink-0"
-                        >
-                          {showLineDots || showEndpointDots ? 'Hapus Semua Dot' : 'Munculkan Dot'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={resetAllEdgeOffsets}
-                          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[9.5px] font-bold text-sky-300 shrink-0"
-                        >
-                          Reset Garis
-                        </button>
-                      </div>
+                  {lineStyle === 'none' && (
+                    <div className="p-2 rounded-xl border border-amber-500/35 bg-amber-500/10 text-[10px] leading-snug text-amber-200">
+                      <b>Tanpa Garis (Off):</b> Garis penghubung &amp; panah disembunyikan. Hierarki dibaca lewat gradasi warna (tua ➔ muda) &amp; kedekatan posisi kelompok keluarga inti.
                     </div>
-                  </div>
+                  )}
+
+                  {/* Ketebalan Garis */}
+                  {lineStyle !== 'none' && (
+                    <>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] opacity-75">Tebal Garis:</span>
+                        {[1.8, 2.5, 3.5].map((w) => (
+                          <button
+                            key={w}
+                            type="button"
+                            onClick={() => setLineThickness(w)}
+                            className={`px-2 py-0.5 rounded-md border text-[10px] font-bold ${
+                              lineThickness === w
+                                ? 'bg-sky-500 text-slate-950 border-sky-400'
+                                : 'border-slate-600 opacity-75'
+                            }`}
+                          >
+                            {w === 1.8 ? 'Tipis' : w === 2.5 ? 'Standar' : 'Tebal'}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Anti-Tertutup Kartu & Titik Dot Geser Garis */}
+                      <div className="p-2 rounded-xl border border-sky-500/30 bg-sky-500/10 space-y-1.5">
+                        <label className="flex items-center gap-2 cursor-pointer text-[10.5px]">
+                          <input
+                            type="checkbox"
+                            checked={linesOnTop}
+                            onChange={(e) => setLinesOnTop(e.target.checked)}
+                            className="accent-sky-400"
+                          />
+                          <span className="font-bold text-sky-300">
+                            Tampilkan garis di atas kartu (anti-tertutup)
+                          </span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer text-[10.5px]">
+                          <input
+                            type="checkbox"
+                            checked={showLineDots}
+                            onChange={(e) => {
+                              const v = e.target.checked;
+                              setShowLineDots(v);
+                              if (v) {
+                                setEdges((prev) => prev.map((ed) => ({ ...ed, hideDot: false })));
+                              }
+                            }}
+                            className="accent-amber-400"
+                          />
+                          <span>
+                            Tampilkan dot tengah (geser posisi &amp; jalur 4 arah)
+                          </span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer text-[10.5px]">
+                          <input
+                            type="checkbox"
+                            checked={showEndpointDots}
+                            onChange={(e) => setShowEndpointDots(e.target.checked)}
+                            className="accent-emerald-400"
+                          />
+                          <span>
+                            Tampilkan dot ujung sambungan di tepi card
+                          </span>
+                        </label>
+                        <div className="flex items-center justify-between gap-1.5 pt-0.5 flex-wrap">
+                          <span className="text-[9px] opacity-75">
+                            Ketuk garis / dot untuk pindah posisi dot atau hapus dot
+                          </span>
+                          <div className="flex items-center gap-1 ml-auto">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleToggleAllEdgeDots(!(showLineDots || showEndpointDots))
+                              }
+                              className="px-2 py-0.5 rounded bg-rose-950/70 hover:bg-rose-900 border border-rose-500/40 text-[9.5px] font-bold text-rose-200 shrink-0"
+                            >
+                              {showLineDots || showEndpointDots ? 'Hapus Semua Dot' : 'Munculkan Dot'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={resetAllEdgeOffsets}
+                              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[9.5px] font-bold text-sky-300 shrink-0"
+                            >
+                              Reset Garis
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {/* 2. Pilihan Warna Garis */}
@@ -6677,6 +6814,25 @@ export const InteractiveGridCanvasView: React.FC<
                   </div>
                 ))}
 
+              {showGenGuides && guideOverlayMode === 'modular_center' && (
+                <div className="absolute inset-x-4 top-1/2 -translate-y-1/2 pointer-events-none z-[1] flex items-center justify-center print:hidden">
+                  <div
+                    className={`w-full border-t border-dashed ${
+                      isDark || bgStyle !== '' ? 'border-emerald-400/20' : 'border-emerald-600/20'
+                    }`}
+                  />
+                  <span
+                    className={`absolute px-2.5 py-0.5 rounded-full text-[8.5px] font-black tracking-wider border ${
+                      isDark || bgStyle !== ''
+                        ? 'bg-slate-950/80 border-emerald-500/35 text-emerald-300'
+                        : 'bg-white/85 border-emerald-400/50 text-emerald-800'
+                    }`}
+                  >
+                    POROS PUSAT G1–G2 • GRADASI TUA ➔ MUDA
+                  </span>
+                </div>
+              )}
+
               {/* Kotak Pembatas Group (Dashed Box) */}
               {groupBoxes.map((gb) => (
                 <div
@@ -6708,8 +6864,8 @@ export const InteractiveGridCanvasView: React.FC<
                 />
               )}
 
-              {/* SVG Garis Konektor Real-Time (Auto-Hindar Kartu + Gradasi Generasi + Kontrol Dot) */}
-              {(() => {
+              {/* SVG Garis Konektor Real-Time (Hilang penuh saat mode Tanpa Garis / lineStyle === 'none') */}
+              {lineStyle !== 'none' && (() => {
                 const obstacleBoxes: NodeObstacleBox[] = nodes.map((n) => {
                   const sz = getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale);
                   return { id: n.id, x: n.x, y: n.y, w: sz.w, h: sz.h };
@@ -7033,9 +7189,26 @@ export const InteractiveGridCanvasView: React.FC<
 
                 const effScale = cardScale * (node.scaleMultiplier ?? 1);
                 const size = getNodeSize(node, cardDisplayMode, photoFrameSize, cardScale);
-                const pDim = getScaledPhotoDim(photoFrameSize, effScale);
-                const scaledNamePx = Math.max(8, Math.round(12 * effScale));
-                const scaledSubPx = Math.max(7, Math.round(9.5 * effScale));
+                const isModularContainer = Boolean(
+                  node.mergedMembers && node.mergedMembers.length >= 2
+                );
+                const isModularUnitNode = Boolean(
+                  !isModularContainer &&
+                    (node.modularSubLayout === 'I' ||
+                      node.modularSubLayout === 'L' ||
+                      (node.scaleMultiplier ?? 1) > 1.05)
+                );
+                const uniformUnit = getUniformSubCardSize(
+                  cardDisplayMode,
+                  photoFrameSize,
+                  effScale
+                );
+                const pDim =
+                  isModularUnitNode && cardDisplayMode === 'photo_name'
+                    ? { w: uniformUnit.photoW, h: uniformUnit.photoH }
+                    : getScaledPhotoDim(photoFrameSize, effScale);
+                const scaledNamePx = Math.max(7.5, Math.round(11.5 * effScale));
+                const scaledSubPx = Math.max(6.5, Math.round(9 * effScale));
 
                 const genStyle = getGenGradientStyle(
                   genGradientPalette,
@@ -7045,8 +7218,14 @@ export const InteractiveGridCanvasView: React.FC<
                   node.customBgColor || cardBgColor || genStyle?.bg || '';
                 const effectiveBorder =
                   node.customBorderColor || cardBorderColor || genStyle?.border || '';
-                const isCardLight = effectiveBg
-                  ? isLightHexColor(effectiveBg)
+                const containerBg =
+                  isModularContainer && effectiveBg
+                    ? hexWithAlpha(effectiveBg, isDark ? 0.24 : 0.16)
+                    : effectiveBg;
+                const isCardLight = containerBg
+                  ? effectiveBg && isModularContainer
+                    ? !isDark
+                    : isLightHexColor(effectiveBg)
                   : !isDark;
 
                 const resolvedShape: GridPhotoShape =
@@ -7082,7 +7261,7 @@ export const InteractiveGridCanvasView: React.FC<
                       >
                         <div
                           style={{ clipPath: HEXAGON_CLIP_PATH }}
-                          className={`w-full h-full overflow-hidden flex items-center justify-center font-extrabold text-xs ${innerBgClass}`}
+                          className={`w-full h-full overflow-hidden flex items-center justify-center font-extrabold text-[10px] ${innerBgClass}`}
                         >
                           {photoUrl ? (
                             <img
@@ -7105,8 +7284,8 @@ export const InteractiveGridCanvasView: React.FC<
                         height: `${h}px`,
                         borderColor: frameBorderCol,
                       }}
-                      className={`overflow-hidden flex items-center justify-center font-extrabold text-xs border-2 shrink-0 ${innerBgClass} ${
-                        resolvedShape === 'bulat' ? 'rounded-full' : 'rounded-md'
+                      className={`overflow-hidden flex items-center justify-center font-extrabold text-[10px] border shrink-0 ${innerBgClass} ${
+                        resolvedShape === 'bulat' ? 'rounded-full' : 'rounded-[5px]'
                       } ${extraMarginClass}`}
                     >
                       {photoUrl ? (
@@ -7126,8 +7305,8 @@ export const InteractiveGridCanvasView: React.FC<
                   left: `${node.x}px`,
                   top: `${node.y}px`,
                   width: `${size.w}px`,
-                  minHeight: `${size.h}px`,
-                  ...(effectiveBg ? { backgroundColor: effectiveBg } : {}),
+                  ...(isModularUnitNode ? { height: `${size.h}px` } : { minHeight: `${size.h}px` }),
+                  ...(containerBg ? { backgroundColor: containerBg } : {}),
                   ...(effectiveBorder && !isSelected && !isConnectSource && !isUnlocked
                     ? { borderColor: effectiveBorder }
                     : {}),
@@ -7141,7 +7320,11 @@ export const InteractiveGridCanvasView: React.FC<
                     onClick={(e) => e.stopPropagation()}
                     style={cardCustomStyle}
                     className={`group absolute rounded-xl border-2 flex flex-col items-center justify-center text-center shadow-lg transition-shadow select-none ${
-                      cardDisplayMode === 'name_only' ? 'px-2 py-1' : 'p-[4px]'
+                      cardDisplayMode === 'name_only'
+                        ? 'px-2 py-1'
+                        : isModularContainer
+                        ? 'p-1'
+                        : 'p-[3px]'
                     } ${
                       layoutMode === 'manual'
                         ? isUnlocked || !safeHoldMove
@@ -7339,7 +7522,7 @@ export const InteractiveGridCanvasView: React.FC<
                       (() => {
                         const mList = node.mergedMembers;
                         const modLayout = node.modularSubLayout || 'grid';
-                        const gm = computeMergedCardMetrics(
+                        const plan = computeModularContainerPlan(
                           mList.length,
                           cardDisplayMode,
                           photoFrameSize,
@@ -7348,15 +7531,16 @@ export const InteractiveGridCanvasView: React.FC<
                           modLayout,
                           mList
                         );
-                        const cellNamePx = Math.max(7.5, Math.round(10 * effScale));
-                        const cellSubPx = Math.max(6.5, Math.round(8 * effScale));
-                        const subPhotoW = Math.max(24, Math.round(pDim.w * 0.88));
-                        const subPhotoH = Math.max(24, Math.round(pDim.h * 0.88));
+                        const cellNamePx = Math.max(7, Math.round(9.5 * effScale));
+                        const cellSubPx = Math.max(6, Math.round(7.5 * effScale));
+                        const subPhotoW = plan.photoW;
+                        const subPhotoH = plan.photoH;
 
                         const renderSubCard = (
                           mm: MergedCardMember,
                           mIdx: number,
-                          widthPx?: number
+                          widthPx = plan.cellW,
+                          heightPx = plan.cellH
                         ) => {
                           const subGen = getGenGradientStyle(
                             genGradientPalette,
@@ -7374,19 +7558,21 @@ export const InteractiveGridCanvasView: React.FC<
                             <div
                               key={`${mm.originalNodeId}_${mIdx}`}
                               style={{
-                                ...(widthPx ? { width: `${widthPx}px` } : {}),
+                                width: `${widthPx}px`,
+                                height: `${heightPx}px`,
                                 ...(subBg ? { backgroundColor: subBg } : {}),
                                 ...(subBorder ? { borderColor: subBorder } : {}),
                               }}
-                              className={`flex flex-col items-center justify-start rounded-lg border ${
+                              title={mm.sub ? `${mm.name} (${mm.sub})` : mm.name}
+                              className={`flex flex-col items-center justify-between rounded-lg border overflow-hidden shrink-0 ${
                                 cardDisplayMode === 'photo_only'
-                                  ? 'p-[3px]'
-                                  : 'p-[4px]'
+                                  ? 'p-[2px]'
+                                  : 'p-[2px]'
                               } ${
                                 !subBg
                                   ? isCardLight
-                                    ? 'bg-stone-100/85 border-stone-300/80'
-                                    : 'bg-slate-900/65 border-slate-700/80'
+                                    ? 'bg-stone-100/90 border-stone-300/80'
+                                    : 'bg-slate-900/75 border-slate-700/80'
                                   : ''
                               } ${subIsLight ? 'text-slate-900' : 'text-slate-100'} ${
                                 mm.wafat ? 'border-dashed opacity-90' : ''
@@ -7398,26 +7584,39 @@ export const InteractiveGridCanvasView: React.FC<
                                   mm.name,
                                   subPhotoW,
                                   subPhotoH,
-                                  subBorder,
-                                  cardDisplayMode === 'full' ||
-                                    cardDisplayMode === 'photo_name'
-                                    ? 'mb-0.5'
-                                    : ''
+                                  subBorder
                                 )}
 
-                              {cardDisplayMode !== 'photo_only' && (
+                              {cardDisplayMode === 'photo_name' && (
                                 <div
-                                  style={{ fontSize: `${cellNamePx}px` }}
-                                  className="font-bold leading-tight text-center break-words whitespace-normal w-full"
+                                  style={{
+                                    height: `${plan.badgeH}px`,
+                                    fontSize: `${cellNamePx}px`,
+                                  }}
+                                  className={`w-full rounded px-1 flex items-center justify-center font-extrabold leading-none truncate ${
+                                    subIsLight
+                                      ? 'bg-black/[0.07] text-slate-900'
+                                      : 'bg-black/30 text-white'
+                                  }`}
                                 >
-                                  {mm.gender && (
-                                    <span className="mr-0.5">
-                                      {mm.gender === 'P' ? '👩' : '👨'}
-                                    </span>
-                                  )}
-                                  {mm.name}
+                                  <span className="truncate">{mm.name}</span>
                                 </div>
                               )}
+
+                              {cardDisplayMode !== 'photo_only' &&
+                                cardDisplayMode !== 'photo_name' && (
+                                  <div
+                                    style={{ fontSize: `${cellNamePx}px` }}
+                                    className="font-bold leading-tight text-center break-words whitespace-normal w-full"
+                                  >
+                                    {mm.gender && (
+                                      <span className="mr-0.5">
+                                        {mm.gender === 'P' ? '👩' : '👨'}
+                                      </span>
+                                    )}
+                                    {mm.name}
+                                  </div>
+                                )}
 
                               {cardDisplayMode === 'full' && mm.sub && (
                                 <div
@@ -7433,31 +7632,40 @@ export const InteractiveGridCanvasView: React.FC<
                           );
                         };
 
-                        // Kelompokkan pasangan menempel (0mm) saat mode modular I / L
-                        const pairGroupItems = (items: MergedCardMember[]) => {
-                          const used = new Set<number>();
-                          const units: MergedCardMember[][] = [];
-                          items.forEach((item, i) => {
-                            if (used.has(i)) return;
-                            used.add(i);
-                            const mates: MergedCardMember[] = [item];
-                            items.forEach((other, j) => {
-                              if (used.has(j)) return;
-                              if (
-                                (item.memberId && other.isSpouseOf === item.memberId) ||
-                                (other.memberId && item.isSpouseOf === other.memberId)
-                              ) {
-                                used.add(j);
-                                mates.push(other);
-                              }
-                            });
-                            units.push(mates);
-                          });
-                          return units;
-                        };
+                        const renderNuclearGroupBox = (
+                          grp: ModularNuclearGroup,
+                          keyPrefix: string
+                        ) => (
+                          <div
+                            key={`${keyPrefix}-${grp.id}`}
+                            style={{ gap: `${plan.tightGap}px` }}
+                            className={`flex flex-col items-center rounded-lg p-[2px] border ${
+                              isCardLight
+                                ? 'bg-black/[0.03] border-stone-400/35'
+                                : 'bg-white/[0.03] border-white/10'
+                            }`}
+                          >
+                            {/* Pasangan Suami-Istri Menempel Rapat (0mm) */}
+                            <div className="flex items-stretch justify-center gap-0">
+                              {grp.couple.map((cm, cIdx) =>
+                                renderSubCard(cm, cIdx)
+                              )}
+                            </div>
+                            {/* Anak dalam 1 Keluarga Inti (1–2mm rapat) */}
+                            {grp.childrenRows.map((row, rIdx) => (
+                              <div
+                                key={`${keyPrefix}-${grp.id}-r-${rIdx}`}
+                                style={{ gap: `${plan.tightGap}px` }}
+                                className="flex items-stretch justify-center"
+                              >
+                                {row.map((ch, kIdx) => renderSubCard(ch, kIdx))}
+                              </div>
+                            ))}
+                          </div>
+                        );
 
                         return (
-                          <div className="w-full h-full flex flex-col items-center justify-center">
+                          <div className="w-full h-full flex flex-col items-center justify-start">
                             {isSelected && (
                               <button
                                 type="button"
@@ -7478,145 +7686,137 @@ export const InteractiveGridCanvasView: React.FC<
                             {cardDisplayMode !== 'photo_only' && (
                               <div
                                 style={{
-                                  height: `${gm.headerH}px`,
-                                  fontSize: `${Math.max(8, Math.round(10 * effScale))}px`,
+                                  height: `${plan.headerH}px`,
+                                  fontSize: `${Math.max(8, Math.round(9.5 * Math.max(0.7, effScale)))}px`,
                                 }}
-                                className="w-full flex items-center justify-between gap-1 px-1 mb-1 border-b border-amber-500/30 font-extrabold truncate"
+                                className="w-full flex items-center justify-between gap-1 px-1 mb-1 border-b border-current/20 font-extrabold truncate"
                               >
-                                <span className="truncate text-amber-400">
+                                <span className="truncate">
                                   {node.name}
                                 </span>
-                                <span className="shrink-0 px-1 rounded bg-amber-500/20 text-amber-300 text-[8.5px] font-black">
+                                <span className="shrink-0 px-1 rounded bg-black/25 text-[8px] font-black">
                                   {modLayout === 'I'
-                                    ? 'Pola I'
+                                    ? `I • ${mList.length}`
                                     : modLayout === 'L'
-                                    ? 'Pola L'
+                                    ? `L • ${mList.length}`
                                     : `${mList.length} Foto`}
                                 </span>
                               </div>
                             )}
 
-                            {modLayout === 'I' ? (
+                            {plan.layout === 'I' ? (
                               (() => {
-                                const byDepth = new Map<number, MergedCardMember[]>();
-                                mList.forEach((mm) => {
-                                  const d = mm.depthInModule ?? 0;
-                                  if (!byDepth.has(d)) byDepth.set(d, []);
-                                  byDepth.get(d)!.push(mm);
-                                });
-                                const sortedDepths = Array.from(byDepth.keys()).sort(
-                                  (a, b) => a - b
-                                );
+                                const headGroup = plan.groups[0];
+                                const childGroups = plan.groups.slice(1);
+                                const childRows: ModularNuclearGroup[][] = [];
+                                for (let i = 0; i < childGroups.length; i += plan.iSubCols) {
+                                  childRows.push(childGroups.slice(i, i + plan.iSubCols));
+                                }
                                 return (
-                                  <div className="w-full flex flex-col items-center">
-                                    {sortedDepths.map((dKey, rowIdx) => {
-                                      const units = pairGroupItems(byDepth.get(dKey) || []);
-                                      return (
-                                        <React.Fragment key={`modI-row-${dKey}`}>
-                                          {rowIdx > 0 && (
-                                            <div
-                                              style={{
-                                                backgroundColor:
-                                                  genStyle?.line || '#38bdf8',
-                                              }}
-                                              className="w-0.5 h-2 opacity-75"
-                                            />
-                                          )}
-                                          <div
-                                            style={{ gap: `${gm.gap}px` }}
-                                            className="w-full flex flex-wrap items-stretch justify-center"
-                                          >
-                                            {units.map((u, uIdx) =>
-                                              u.length > 1 ? (
-                                                <div
-                                                  key={`unit-${dKey}-${uIdx}`}
-                                                  className="flex items-stretch gap-0 rounded-lg ring-1 ring-amber-400/40"
-                                                >
-                                                  {u.map((subM, sIdx) =>
-                                                    renderSubCard(
-                                                      subM,
-                                                      sIdx,
-                                                      gm.cellW
-                                                    )
-                                                  )}
-                                                </div>
-                                              ) : (
-                                                renderSubCard(
-                                                  u[0],
-                                                  uIdx,
-                                                  gm.cellW
-                                                )
-                                              )
-                                            )}
-                                          </div>
-                                        </React.Fragment>
-                                      );
-                                    })}
+                                  <div
+                                    style={{ gap: `${plan.looseGap}px` }}
+                                    className="w-full flex flex-col items-center"
+                                  >
+                                    {headGroup && renderNuclearGroupBox(headGroup, 'modI-head')}
+                                    {childRows.map((rowGrps, rIdx) => (
+                                      <div
+                                        key={`modI-row-${rIdx}`}
+                                        style={{ gap: `${plan.looseGap}px` }}
+                                        className="flex items-start justify-center"
+                                      >
+                                        {rowGrps.map((cg) =>
+                                          renderNuclearGroupBox(cg, `modI-sub-${rIdx}`)
+                                        )}
+                                      </div>
+                                    ))}
                                   </div>
                                 );
                               })()
-                            ) : modLayout === 'L' ? (
+                            ) : plan.layout === 'L' ? (
                               (() => {
-                                const headItems = mList.filter(
-                                  (mm) => (mm.depthInModule ?? 0) === 0
-                                );
-                                const restItems = mList.filter(
-                                  (mm) => (mm.depthInModule ?? 0) > 0
-                                );
-                                const rightArmCount = Math.min(
-                                  2,
-                                  Math.ceil(restItems.length / 2)
-                                );
-                                const rightArm = restItems.slice(0, rightArmCount);
-                                const downArm = restItems.slice(rightArmCount);
+                                const headGroup = plan.groups[0];
+                                const restGroups = plan.groups.slice(1);
+                                // Kasus khusus 1 keluarga inti di dalam modul: bentuk siku L dari pasangan + anak
+                                if (restGroups.length === 0 && headGroup) {
+                                  const flatKids = headGroup.childrenRows.flat();
+                                  if (flatKids.length >= 2) {
+                                    const rightKidCount = Math.min(2, Math.ceil(flatKids.length / 2));
+                                    const rightKids = flatKids.slice(0, rightKidCount);
+                                    const downKids = flatKids.slice(rightKidCount);
+                                    const downCols = Math.min(2, Math.max(1, downKids.length));
+                                    const downKidRows: MergedCardMember[][] = [];
+                                    for (let i = 0; i < downKids.length; i += downCols) {
+                                      downKidRows.push(downKids.slice(i, i + downCols));
+                                    }
+                                    return (
+                                      <div
+                                        style={{ gap: `${plan.tightGap}px` }}
+                                        className="w-full flex flex-col items-start rounded-lg p-[2px]"
+                                      >
+                                        <div
+                                          style={{ gap: `${plan.tightGap}px` }}
+                                          className="flex items-stretch justify-start"
+                                        >
+                                          <div className="flex items-stretch gap-0">
+                                            {headGroup.couple.map((cm, cIdx) =>
+                                              renderSubCard(cm, cIdx)
+                                            )}
+                                          </div>
+                                          {rightKids.map((rk, rIdx) =>
+                                            renderSubCard(rk, rIdx)
+                                          )}
+                                        </div>
+                                        {downKidRows.map((dr, drIdx) => (
+                                          <div
+                                            key={`l-single-down-${drIdx}`}
+                                            style={{ gap: `${plan.tightGap}px` }}
+                                            className="flex items-stretch justify-start"
+                                          >
+                                            {dr.map((dk, dkIdx) =>
+                                              renderSubCard(dk, dkIdx)
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    );
+                                  }
+                                }
+
+                                const downRows: ModularNuclearGroup[][] = [];
+                                for (let i = 0; i < plan.lDownGroups.length; i += plan.iSubCols) {
+                                  downRows.push(
+                                    plan.lDownGroups.slice(i, i + plan.iSubCols)
+                                  );
+                                }
+
                                 return (
                                   <div
-                                    style={{ gap: `${gm.gap}px` }}
+                                    style={{ gap: `${plan.looseGap}px` }}
                                     className="w-full flex flex-col items-start"
                                   >
-                                    {/* Lengan Atas L: Kepala G3 (+Pasangan menempel) di kiri + cabang awal di kanan */}
+                                    {/* Lengan Atas L: Keluarga Inti G3 di kiri + lengan kanan */}
                                     <div
-                                      style={{ gap: `${gm.gap}px` }}
-                                      className="w-full flex flex-wrap items-stretch justify-start"
+                                      style={{ gap: `${plan.looseGap}px` }}
+                                      className="flex items-start justify-start"
                                     >
-                                      <div className="flex items-stretch gap-0 rounded-lg ring-1 ring-amber-400/50">
-                                        {(headItems.length > 0
-                                          ? headItems
-                                          : mList.slice(0, 1)
-                                        ).map((hm, hIdx) =>
-                                          renderSubCard(hm, hIdx, gm.cellW)
-                                        )}
-                                      </div>
-                                      {rightArm.map((rm, rIdx) =>
-                                        renderSubCard(rm, rIdx, gm.cellW)
+                                      {headGroup &&
+                                        renderNuclearGroupBox(headGroup, 'modL-head')}
+                                      {plan.lRightGroups.map((rg) =>
+                                        renderNuclearGroupBox(rg, 'modL-right')
                                       )}
                                     </div>
-                                    {/* Lengan Turun L: Cucu/Cicit berbaris sejajar sisi kiri */}
-                                    {downArm.length > 0 && (
+                                    {/* Lengan Turun L: Kelompok Keluarga Inti G4–G5 berjarak 3–5mm */}
+                                    {downRows.map((dr, drIdx) => (
                                       <div
-                                        style={{
-                                          gap: `${gm.gap}px`,
-                                          borderColor:
-                                            genStyle?.line || 'rgba(56,189,248,0.55)',
-                                        }}
-                                        className="w-full pl-2 ml-2 border-l-2 flex flex-wrap items-stretch justify-start"
+                                        key={`modL-down-${drIdx}`}
+                                        style={{ gap: `${plan.looseGap}px` }}
+                                        className="flex items-start justify-start"
                                       >
-                                        {pairGroupItems(downArm).map((u, uIdx) =>
-                                          u.length > 1 ? (
-                                            <div
-                                              key={`l-unit-${uIdx}`}
-                                              className="flex items-stretch gap-0 rounded-lg ring-1 ring-amber-400/35"
-                                            >
-                                              {u.map((subM, sIdx) =>
-                                                renderSubCard(subM, sIdx, gm.cellW)
-                                              )}
-                                            </div>
-                                          ) : (
-                                            renderSubCard(u[0], uIdx, gm.cellW)
-                                          )
+                                        {dr.map((dg) =>
+                                          renderNuclearGroupBox(dg, `modL-d-${drIdx}`)
                                         )}
                                       </div>
-                                    )}
+                                    ))}
                                   </div>
                                 );
                               })()
@@ -7624,8 +7824,8 @@ export const InteractiveGridCanvasView: React.FC<
                               <div
                                 style={{
                                   display: 'grid',
-                                  gridTemplateColumns: `repeat(${gm.cols}, minmax(0, 1fr))`,
-                                  gap: `${gm.gap}px`,
+                                  gridTemplateColumns: `repeat(${plan.cols}, minmax(0, 1fr))`,
+                                  gap: `${plan.tightGap}px`,
                                   width: '100%',
                                 }}
                                 className="items-stretch justify-items-center"
@@ -7640,6 +7840,13 @@ export const InteractiveGridCanvasView: React.FC<
                       })()
                     ) : (
                       <>
+                        {/* Kartu Poros Utama G1–G2 Lebih Besar (badge tingkat halus) */}
+                        {(node.genLevel ?? 0) <= 1 && (node.scaleMultiplier ?? 1) > 1.05 && (
+                          <span className="absolute -top-2 left-1.5 px-1 rounded bg-amber-500 text-slate-950 text-[7.5px] font-black leading-tight shadow print:hidden">
+                            G{(node.genLevel ?? 0) + 1}
+                          </span>
+                        )}
+
                         {/* Mode Card: Foto Saja (Kotak / Bulat / Segi-6, jarak 1mm) */}
                         {cardDisplayMode === 'photo_only' &&
                           renderPhotoFrame(
@@ -7649,29 +7856,29 @@ export const InteractiveGridCanvasView: React.FC<
                             pDim.h
                           )}
 
-                        {/* Mode Card: Foto + Nama Lengkap */}
+                        {/* Mode Card: Foto 2x3 + Badge Nama Ringkas (Seragam G3+ & Poros G1-G2) */}
                         {cardDisplayMode === 'photo_name' && (
-                          <>
+                          <div className="w-full h-full flex flex-col items-center justify-between overflow-hidden">
                             {renderPhotoFrame(
                               node.photo,
                               node.name,
                               pDim.w,
-                              pDim.h,
-                              undefined,
-                              'mb-0.5'
+                              pDim.h
                             )}
                             <div
-                              style={{ fontSize: `${scaledNamePx}px` }}
-                              className="font-bold leading-tight break-words whitespace-normal w-full"
+                              style={{
+                                height: `${uniformUnit.badgeH}px`,
+                                fontSize: `${Math.max(7, Math.round(9.5 * effScale))}px`,
+                              }}
+                              className={`w-full rounded px-1 flex items-center justify-center font-extrabold leading-none truncate ${
+                                isCardLight
+                                  ? 'bg-black/[0.07] text-slate-900'
+                                  : 'bg-black/30 text-white'
+                              }`}
                             >
-                              {node.gender && (
-                                <span className="mr-0.5">
-                                  {node.gender === 'P' ? '👩' : '👨'}
-                                </span>
-                              )}
-                              {node.name}
+                              <span className="truncate">{node.name}</span>
                             </div>
-                          </>
+                          </div>
                         )}
 
                         {/* Mode Card: Nama Lengkap Saja */}
@@ -7782,24 +7989,41 @@ export const InteractiveGridCanvasView: React.FC<
 
                   {captionInfo.showLineLegend && (
                     <div className="flex items-center gap-3.5 text-[10.5px] font-bold flex-wrap">
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className="inline-block w-6 h-0.5 rounded-full"
-                          style={{
-                            backgroundColor:
-                              childLineColor ||
-                              (isDark || bgStyle !== '' ? '#38bdf8' : '#0284c7'),
-                          }}
-                        />
-                        <span>Keturunan</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className="inline-block w-6 border-t-2 border-dashed"
-                          style={{ borderColor: coupleLineColor || '#f59e0b' }}
-                        />
-                        <span>Pasangan</span>
-                      </div>
+                      {lineStyle === 'none' ? (
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className="inline-block w-14 h-2.5 rounded-full border border-white/25"
+                            style={{
+                              background:
+                                genGradientPalette !== 'none'
+                                  ? `linear-gradient(90deg, ${GEN_GRADIENT_PALETTES[genGradientPalette].stops[0].bg}, ${GEN_GRADIENT_PALETTES[genGradientPalette].stops[2].bg}, ${GEN_GRADIENT_PALETTES[genGradientPalette].stops[4].bg})`
+                                  : 'linear-gradient(90deg, #064e3b, #10b981, #a7f3d0)',
+                            }}
+                          />
+                          <span>Tua (Leluhur) ➔ Cerah (Cucu)</span>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className="inline-block w-6 h-0.5 rounded-full"
+                              style={{
+                                backgroundColor:
+                                  childLineColor ||
+                                  (isDark || bgStyle !== '' ? '#38bdf8' : '#0284c7'),
+                              }}
+                            />
+                            <span>Keturunan</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className="inline-block w-6 border-t-2 border-dashed"
+                              style={{ borderColor: coupleLineColor || '#f59e0b' }}
+                            />
+                            <span>Pasangan</span>
+                          </div>
+                        </>
+                      )}
                       <div className="flex items-center gap-1.5">
                         <span className="inline-block w-3.5 h-3.5 rounded-sm border-2 border-dashed border-slate-400" />
                         <span>Wafat</span>

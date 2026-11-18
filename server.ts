@@ -460,6 +460,241 @@ ATURAN EKSTRAKSI:
     }
   });
 
+  // Volatile RAM pairing & live-sync mailboxes (zero DB / zero disk / auto-pruned)
+  const pairJsonParser = express.json({ limit: '15mb' });
+  const volatilePairSessions = new Map<
+    string,
+    { sessionId: string; pubJwk: unknown; expiresAt: number }
+  >();
+  const volatilePairPayloads = new Map<
+    string,
+    {
+      linkId: string;
+      encrypted: unknown;
+      senderPubJwk?: unknown;
+      createdAt: number;
+      ack?: { linkId: string; deviceName: string; browserInfo: string; restoredKeys: number };
+      expiresAt: number;
+    }
+  >();
+  const volatilePairLiveRooms = new Map<
+    string,
+    {
+      linkId: string;
+      seq: number;
+      senderDeviceId: string;
+      encrypted: unknown;
+      updatedAt: number;
+      expiresAt: number;
+    }
+  >();
+  const PAIR_SESSION_TTL_MS = 5 * 60 * 1000;
+  const PAIR_LIVE_TTL_MS = 24 * 60 * 60 * 1000;
+
+  function pruneExpiredPairData() {
+    const now = Date.now();
+    for (const [k, v] of volatilePairSessions.entries()) {
+      if (v.expiresAt <= now) volatilePairSessions.delete(k);
+    }
+    for (const [k, v] of volatilePairPayloads.entries()) {
+      if (v.expiresAt <= now) volatilePairPayloads.delete(k);
+    }
+    for (const [k, v] of volatilePairLiveRooms.entries()) {
+      if (v.expiresAt <= now) volatilePairLiveRooms.delete(k);
+    }
+    while (volatilePairSessions.size > 300) {
+      const oldest = volatilePairSessions.keys().next().value;
+      if (!oldest) break;
+      volatilePairSessions.delete(oldest);
+    }
+    while (volatilePairPayloads.size > 300) {
+      const oldest = volatilePairPayloads.keys().next().value;
+      if (!oldest) break;
+      volatilePairPayloads.delete(oldest);
+    }
+    while (volatilePairLiveRooms.size > 300) {
+      const oldest = volatilePairLiveRooms.keys().next().value;
+      if (!oldest) break;
+      volatilePairLiveRooms.delete(oldest);
+    }
+  }
+
+  // Laptop registers ephemeral ECDH public key so 6-char short session code works too
+  app.post('/api/pair-session', pairJsonParser, (req, res) => {
+    pruneExpiredPairData();
+    const body = req.body as { sessionId?: unknown; pubJwk?: unknown };
+    const sessionId = String(body?.sessionId || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    if (sessionId.length !== 6 || !body?.pubJwk || typeof body.pubJwk !== 'object') {
+      res.status(400).json({ error: 'Invalid pairing session' });
+      return;
+    }
+    volatilePairSessions.set(sessionId, {
+      sessionId,
+      pubJwk: body.pubJwk,
+      expiresAt: Date.now() + PAIR_SESSION_TTL_MS,
+    });
+    res.json({ ok: true, sessionId });
+  });
+
+  app.get('/api/pair-session/:sessionId', (req, res) => {
+    pruneExpiredPairData();
+    const sessionId = String(req.params.sessionId || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    const entry = volatilePairSessions.get(sessionId);
+    if (!entry) {
+      res.status(404).json({ error: 'Kode sesi tidak ditemukan atau sudah kedaluwarsa.' });
+      return;
+    }
+    res.json({ found: true, sessionId: entry.sessionId, pubJwk: entry.pubJwk });
+  });
+
+  // Phone posts encrypted pairing payload (HTTP dual-transport alongside WebSocket)
+  app.post('/api/pair-relay/:sessionId', pairJsonParser, (req, res) => {
+    pruneExpiredPairData();
+    const sessionId = String(req.params.sessionId || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    const body = req.body as { linkId?: unknown; encrypted?: unknown; senderPubJwk?: unknown };
+    const linkId = String(body?.linkId || '').trim();
+    if (sessionId.length !== 6 || !linkId || !body?.encrypted || typeof body.encrypted !== 'object') {
+      res.status(400).json({ error: 'Invalid pairing payload' });
+      return;
+    }
+    volatilePairPayloads.set(sessionId, {
+      linkId,
+      encrypted: body.encrypted,
+      senderPubJwk: body.senderPubJwk,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + PAIR_SESSION_TTL_MS,
+    });
+    res.json({ ok: true });
+  });
+
+  // Laptop polls encrypted pairing payload
+  app.get('/api/pair-relay/:sessionId', (req, res) => {
+    pruneExpiredPairData();
+    const sessionId = String(req.params.sessionId || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    const entry = volatilePairPayloads.get(sessionId);
+    if (!entry) {
+      res.json({ found: false });
+      return;
+    }
+    res.json({
+      found: true,
+      linkId: entry.linkId,
+      encrypted: entry.encrypted,
+      senderPubJwk: entry.senderPubJwk,
+      createdAt: entry.createdAt,
+    });
+  });
+
+  // Laptop confirms receipt back to Phone
+  app.post('/api/pair-relay/:sessionId/ack', pairJsonParser, (req, res) => {
+    pruneExpiredPairData();
+    const sessionId = String(req.params.sessionId || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    const body = req.body as {
+      linkId?: unknown;
+      deviceName?: unknown;
+      browserInfo?: unknown;
+      restoredKeys?: unknown;
+    };
+    const ack = {
+      linkId: String(body?.linkId || '').trim(),
+      deviceName: String(body?.deviceName || 'Laptop / PC Browser').slice(0, 80),
+      browserInfo: String(body?.browserInfo || '').slice(0, 100),
+      restoredKeys: Number(body?.restoredKeys || 0),
+    };
+    const existing = volatilePairPayloads.get(sessionId);
+    if (existing) {
+      existing.ack = ack;
+      existing.expiresAt = Date.now() + 60 * 1000;
+    } else {
+      volatilePairPayloads.set(sessionId, {
+        linkId: ack.linkId,
+        encrypted: null,
+        createdAt: Date.now(),
+        ack,
+        expiresAt: Date.now() + 60 * 1000,
+      });
+    }
+    res.json({ ok: true });
+  });
+
+  app.get('/api/pair-relay/:sessionId/ack', (req, res) => {
+    pruneExpiredPairData();
+    const sessionId = String(req.params.sessionId || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    const entry = volatilePairPayloads.get(sessionId);
+    if (!entry?.ack) {
+      res.json({ acked: false });
+      return;
+    }
+    res.json({ acked: true, ...entry.ack });
+  });
+
+  // Bidirectional HP <-> Laptop live-sync mailbox (works even across sleep/reconnects)
+  app.post('/api/pair-live/:linkId', pairJsonParser, (req, res) => {
+    pruneExpiredPairData();
+    const linkId = String(req.params.linkId || '')
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 64);
+    const body = req.body as { senderDeviceId?: unknown; encrypted?: unknown };
+    const senderDeviceId = String(body?.senderDeviceId || '').trim().slice(0, 80);
+    if (!linkId || !senderDeviceId || !body?.encrypted || typeof body.encrypted !== 'object') {
+      res.status(400).json({ error: 'Invalid live sync payload' });
+      return;
+    }
+    const prev = volatilePairLiveRooms.get(linkId);
+    const seq = (prev?.seq || 0) + 1;
+    const updatedAt = Date.now();
+    volatilePairLiveRooms.set(linkId, {
+      linkId,
+      seq,
+      senderDeviceId,
+      encrypted: body.encrypted,
+      updatedAt,
+      expiresAt: updatedAt + PAIR_LIVE_TTL_MS,
+    });
+    res.json({ ok: true, seq, updatedAt });
+  });
+
+  app.get('/api/pair-live/:linkId', (req, res) => {
+    pruneExpiredPairData();
+    const linkId = String(req.params.linkId || '')
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 64);
+    const sinceSeq = Number(req.query.sinceSeq || 0);
+    const deviceId = String(req.query.deviceId || '').trim();
+    const entry = volatilePairLiveRooms.get(linkId);
+    if (!entry || entry.seq <= sinceSeq || (deviceId && entry.senderDeviceId === deviceId)) {
+      res.json({ hasUpdate: false, seq: entry?.seq || sinceSeq });
+      return;
+    }
+    res.json({
+      hasUpdate: true,
+      seq: entry.seq,
+      senderDeviceId: entry.senderDeviceId,
+      encrypted: entry.encrypted,
+      updatedAt: entry.updatedAt,
+    });
+  });
+
   app.use(express.json({ limit: '256kb' }));
 
   const server = http.createServer(app);

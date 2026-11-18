@@ -25,7 +25,11 @@ export type SmartPresetId =
   | 'family_cluster'
   | 'heritage_showcase';
 
-export type GuideOverlayMode = 'gen_bands' | 'grid_9_rows' | 'orbit_rings';
+export type GuideOverlayMode =
+  | 'gen_bands'
+  | 'grid_9_rows'
+  | 'orbit_rings'
+  | 'modular_center';
 
 export const MM_TO_PX = 3.78; // 1mm pada 96 DPI ≈ 3.78px
 
@@ -115,6 +119,452 @@ export function getBaseCardSizeForScale(
   };
 }
 
+export function getUniformSubCardSize(
+  displayMode: CardDisplayMode,
+  photoSize: PhotoFrameSize,
+  cardScale = 1
+): { w: number; h: number; photoW: number; photoH: number; badgeH: number } {
+  const pDim = BASE_PHOTO_DIMS[photoSize] || BASE_PHOTO_DIMS['2x3'];
+  const aspect = pDim.h / Math.max(1, pDim.w);
+
+  if (displayMode === 'photo_only') {
+    const photoW = Math.max(18, Math.round(pDim.w * cardScale));
+    const photoH = Math.max(18, Math.round(photoW * aspect));
+    return {
+      w: photoW + 6,
+      h: photoH + 6,
+      photoW,
+      photoH,
+      badgeH: 0,
+    };
+  }
+
+  if (displayMode === 'photo_name') {
+    const photoW = Math.max(20, Math.round(pDim.w * cardScale));
+    const photoH = Math.max(20, Math.round(photoW * aspect));
+    const badgeH = Math.max(14, Math.round(21 * cardScale));
+    const w = Math.max(photoW + 6, Math.round((pDim.w + 14) * cardScale));
+    const h = photoH + badgeH + 6;
+    return { w, h, photoW, photoH, badgeH };
+  }
+
+  if (displayMode === 'name_only') {
+    const w = Math.max(54, Math.round(108 * cardScale));
+    const h = Math.max(22, Math.round(30 * cardScale));
+    return { w, h, photoW: 0, photoH: 0, badgeH: h - 4 };
+  }
+
+  // 'full'
+  const photoW = Math.max(22, Math.round(pDim.w * cardScale));
+  const photoH = Math.max(22, Math.round(photoW * aspect));
+  const badgeH = Math.max(24, Math.round(42 * cardScale));
+  const w = Math.max(photoW + 10, Math.round(Math.max(96, pDim.w + 24) * cardScale));
+  const h = photoH + badgeH + 6;
+  return { w, h, photoW, photoH, badgeH };
+}
+
+export interface ModularNuclearGroup {
+  id: string;
+  headDepth: number;
+  couple: MergedCardMember[];
+  childrenRows: MergedCardMember[][];
+  cols: number;
+  w: number;
+  h: number;
+}
+
+export interface ModularContainerPlan {
+  layout: 'grid' | 'I' | 'L';
+  cols: number;
+  rows: number;
+  cellW: number;
+  cellH: number;
+  photoW: number;
+  photoH: number;
+  badgeH: number;
+  gap: number;
+  tightGap: number;
+  looseGap: number;
+  padX: number;
+  padY: number;
+  headerH: number;
+  groups: ModularNuclearGroup[];
+  lRightGroups: ModularNuclearGroup[];
+  lDownGroups: ModularNuclearGroup[];
+  iSubCols: number;
+  w: number;
+  h: number;
+}
+
+function buildNuclearFamilyGroups(
+  membersMeta: MergedCardMember[],
+  cellW: number,
+  cellH: number,
+  tightGap: number,
+  maxLeafCols: number
+): ModularNuclearGroup[] {
+  if (!membersMeta || membersMeta.length === 0) return [];
+
+  const byMemberId = new Map<string, MergedCardMember>();
+  const spousesOf = new Map<string, MergedCardMember[]>();
+  const childrenOf = new Map<string, MergedCardMember[]>();
+
+  membersMeta.forEach((mm) => {
+    if (mm.memberId && !mm.isSpouseOf) {
+      byMemberId.set(mm.memberId, mm);
+    }
+    if (mm.isSpouseOf) {
+      if (!spousesOf.has(mm.isSpouseOf)) spousesOf.set(mm.isSpouseOf, []);
+      spousesOf.get(mm.isSpouseOf)!.push(mm);
+    } else if (mm.parentMemberId) {
+      if (!childrenOf.has(mm.parentMemberId)) childrenOf.set(mm.parentMemberId, []);
+      childrenOf.get(mm.parentMemberId)!.push(mm);
+    }
+  });
+
+  const rootsInMod = membersMeta.filter(
+    (mm) => !mm.isSpouseOf && (!mm.parentMemberId || !byMemberId.has(mm.parentMemberId))
+  );
+  const entryRoots =
+    rootsInMod.length > 0
+      ? rootsInMod
+      : membersMeta.filter((mm) => !mm.isSpouseOf).slice(0, 1);
+
+  const groups: ModularNuclearGroup[] = [];
+  const usedIds = new Set<string>();
+
+  const hasOwnFamily = (mm: MergedCardMember): boolean => {
+    if (!mm.memberId) return false;
+    const spCount = spousesOf.get(mm.memberId)?.length || 0;
+    const chCount = childrenOf.get(mm.memberId)?.length || 0;
+    return spCount > 0 || chCount > 0;
+  };
+
+  const makeGroup = (head: MergedCardMember) => {
+    if (usedIds.has(head.originalNodeId)) return;
+    usedIds.add(head.originalNodeId);
+    const spList = head.memberId ? spousesOf.get(head.memberId) || [] : [];
+    const couple: MergedCardMember[] = [head, ...spList];
+    spList.forEach((sp) => usedIds.add(sp.originalNodeId));
+
+    const rawKids = head.memberId ? childrenOf.get(head.memberId) || [] : [];
+    const singleLeafKids: MergedCardMember[] = [];
+    const nestedHeads: MergedCardMember[] = [];
+
+    rawKids.forEach((kid) => {
+      if (hasOwnFamily(kid)) {
+        nestedHeads.push(kid);
+      } else {
+        usedIds.add(kid.originalNodeId);
+        singleLeafKids.push(kid);
+      }
+    });
+
+    const cols = Math.max(
+      couple.length,
+      Math.min(maxLeafCols, Math.max(1, singleLeafKids.length))
+    );
+    const childrenRows: MergedCardMember[][] = [];
+    for (let i = 0; i < singleLeafKids.length; i += cols) {
+      childrenRows.push(singleLeafKids.slice(i, i + cols));
+    }
+
+    const coupleW = couple.length * cellW; // Pasangan 0mm menempel rapat!
+    const maxChildRowLen = childrenRows.reduce((mx, r) => Math.max(mx, r.length), 0);
+    const childrenW =
+      maxChildRowLen > 0
+        ? maxChildRowLen * cellW + Math.max(0, maxChildRowLen - 1) * tightGap
+        : 0;
+    const groupPad = 2;
+    const w = Math.max(coupleW, childrenW) + groupPad * 2;
+    const h =
+      groupPad * 2 +
+      cellH +
+      (childrenRows.length > 0
+        ? childrenRows.length * (tightGap + cellH)
+        : 0);
+
+    groups.push({
+      id: `nf_${head.originalNodeId}`,
+      headDepth: head.depthInModule ?? 0,
+      couple,
+      childrenRows,
+      cols,
+      w,
+      h,
+    });
+
+    nestedHeads.forEach((nh) => makeGroup(nh));
+  };
+
+  entryRoots.forEach((er) => makeGroup(er));
+
+  // Tangkap anggota yatim jika ada
+  const leftovers = membersMeta.filter((mm) => !usedIds.has(mm.originalNodeId));
+  if (leftovers.length > 0) {
+    const cols = Math.min(maxLeafCols, leftovers.length);
+    const rows: MergedCardMember[][] = [];
+    for (let i = 0; i < leftovers.length; i += cols) {
+      rows.push(leftovers.slice(i, i + cols));
+    }
+    const maxR = rows.reduce((mx, r) => Math.max(mx, r.length), 0);
+    groups.push({
+      id: `nf_rest`,
+      headDepth: leftovers[0].depthInModule ?? 1,
+      couple: rows[0] || [],
+      childrenRows: rows.slice(1),
+      cols,
+      w: maxR * cellW + Math.max(0, maxR - 1) * tightGap + 4,
+      h: rows.length * cellH + Math.max(0, rows.length - 1) * tightGap + 4,
+    });
+  }
+
+  return groups;
+}
+
+export function computeModularContainerPlan(
+  membersCount: number,
+  displayMode: CardDisplayMode,
+  photoSize: PhotoFrameSize,
+  cardScale = 1,
+  customCols?: number,
+  modularSubLayout: 'grid' | 'I' | 'L' = 'grid',
+  membersMeta?: MergedCardMember[]
+): ModularContainerPlan {
+  const unit = getUniformSubCardSize(displayMode, photoSize, cardScale);
+  const cellW = unit.w;
+  const cellH = unit.h;
+  const clampedScale = Math.max(0.55, Math.min(1.15, cardScale));
+
+  // Jarak internal keluarga inti 1–2mm, jarak antar keluarga inti 3–5mm
+  const tightGap = Math.max(3, Math.round(1.5 * MM_TO_PX * clampedScale));
+  const looseGap = Math.max(
+    tightGap + 6,
+    Math.round(4 * MM_TO_PX * clampedScale)
+  );
+  const padX = Math.max(5, Math.round(looseGap * 0.55));
+  const padY = Math.max(5, Math.round(looseGap * 0.5));
+  const headerH =
+    displayMode === 'photo_only'
+      ? 0
+      : Math.max(15, Math.round(19 * Math.max(0.65, cardScale)));
+
+  if (
+    (modularSubLayout === 'I' || modularSubLayout === 'L') &&
+    membersMeta &&
+    membersMeta.length >= 2
+  ) {
+    const maxLeafCols = Math.max(2, Math.min(5, customCols || 3));
+    const groups = buildNuclearFamilyGroups(
+      membersMeta,
+      cellW,
+      cellH,
+      tightGap,
+      maxLeafCols
+    );
+
+    if (modularSubLayout === 'I') {
+      const headGroup = groups[0];
+      const childGroups = groups.slice(1);
+      const iSubCols =
+        childGroups.length === 0
+          ? 1
+          : Math.max(
+              1,
+              Math.min(
+                childGroups.length,
+                customCols || (childGroups.length >= 4 ? 2 : 1)
+              )
+            );
+
+      // Hitung lebar & tinggi blok childGroups per baris
+      let subRowsW = 0;
+      let subRowsH = 0;
+      for (let i = 0; i < childGroups.length; i += iSubCols) {
+        const slice = childGroups.slice(i, i + iSubCols);
+        const rw =
+          slice.reduce((s, g) => s + g.w, 0) +
+          Math.max(0, slice.length - 1) * looseGap;
+        const rh = Math.max(...slice.map((g) => g.h));
+        subRowsW = Math.max(subRowsW, rw);
+        subRowsH += (i > 0 ? looseGap : 0) + rh;
+      }
+
+      const bodyW = Math.max(headGroup ? headGroup.w : cellW, subRowsW);
+      const bodyH =
+        (headGroup ? headGroup.h : 0) +
+        (childGroups.length > 0 ? looseGap + subRowsH : 0);
+
+      return {
+        layout: 'I',
+        cols: maxLeafCols,
+        rows: Math.max(1, groups.length),
+        cellW,
+        cellH,
+        photoW: unit.photoW,
+        photoH: unit.photoH,
+        badgeH: unit.badgeH,
+        gap: tightGap,
+        tightGap,
+        looseGap,
+        padX,
+        padY,
+        headerH,
+        groups,
+        lRightGroups: [],
+        lDownGroups: [],
+        iSubCols,
+        w: bodyW + padX * 2,
+        h: headerH + (headerH > 0 ? 4 : 0) + bodyH + padY * 2,
+      };
+    }
+
+    // Pola L: Kepala di kiri-atas, cabang pertama ke kanan (lengan atas L), cabang lanjut ke bawah (lengan turun L)
+    const headGroup = groups[0];
+    const restGroups = groups.slice(1);
+
+    // Jika hanya 1 keluarga inti di modul (G3 + anak lajang), buat formasi siku L dari anak-anak di dalam grup!
+    if (restGroups.length === 0 && headGroup) {
+      const coupleCount = headGroup.couple.length;
+      const flatKids = headGroup.childrenRows.flat();
+      if (flatKids.length >= 2) {
+        const rightKidCount = Math.min(2, Math.ceil(flatKids.length / 2));
+        const rightKids = flatKids.slice(0, rightKidCount);
+        const downKids = flatKids.slice(rightKidCount);
+        const topRowW =
+          coupleCount * cellW +
+          tightGap +
+          rightKids.length * cellW +
+          Math.max(0, rightKids.length - 1) * tightGap;
+        const downCols = Math.min(2, Math.max(1, downKids.length));
+        const downRows = Math.ceil(downKids.length / downCols);
+        const downW =
+          downCols * cellW + Math.max(0, downCols - 1) * tightGap;
+        const bodyW = Math.max(topRowW, downW) + 4;
+        const bodyH =
+          cellH +
+          (downRows > 0
+            ? tightGap + downRows * cellH + Math.max(0, downRows - 1) * tightGap
+            : 0) +
+          4;
+        return {
+          layout: 'L',
+          cols: coupleCount + rightKidCount,
+          rows: 1 + downRows,
+          cellW,
+          cellH,
+          photoW: unit.photoW,
+          photoH: unit.photoH,
+          badgeH: unit.badgeH,
+          gap: tightGap,
+          tightGap,
+          looseGap,
+          padX,
+          padY,
+          headerH,
+          groups,
+          lRightGroups: [],
+          lDownGroups: [],
+          iSubCols: 1,
+          w: bodyW + padX * 2,
+          h: headerH + (headerH > 0 ? 4 : 0) + bodyH + padY * 2,
+        };
+      }
+    }
+
+    const rightCount =
+      restGroups.length > 0
+        ? Math.min(customCols && customCols >= 3 ? 2 : 1, Math.ceil(restGroups.length / 3))
+        : 0;
+    const lRightGroups = restGroups.slice(0, rightCount);
+    const lDownGroups = restGroups.slice(rightCount);
+
+    const topArmW =
+      (headGroup ? headGroup.w : 0) +
+      lRightGroups.reduce((s, g) => s + looseGap + g.w, 0);
+    const topArmH = Math.max(
+      headGroup ? headGroup.h : 0,
+      ...lRightGroups.map((g) => g.h),
+      0
+    );
+
+    const downCols = lDownGroups.length >= 4 ? 2 : 1;
+    let downArmW = 0;
+    let downArmH = 0;
+    for (let i = 0; i < lDownGroups.length; i += downCols) {
+      const slice = lDownGroups.slice(i, i + downCols);
+      const rw =
+        slice.reduce((s, g) => s + g.w, 0) +
+        Math.max(0, slice.length - 1) * looseGap;
+      const rh = Math.max(...slice.map((g) => g.h));
+      downArmW = Math.max(downArmW, rw);
+      downArmH += (i > 0 ? looseGap : 0) + rh;
+    }
+
+    const bodyW = Math.max(topArmW, downArmW);
+    const bodyH = topArmH + (downArmH > 0 ? looseGap + downArmH : 0);
+
+    return {
+      layout: 'L',
+      cols: Math.max(2, customCols || 3),
+      rows: Math.max(1, 1 + lDownGroups.length),
+      cellW,
+      cellH,
+      photoW: unit.photoW,
+      photoH: unit.photoH,
+      badgeH: unit.badgeH,
+      gap: tightGap,
+      tightGap,
+      looseGap,
+      padX,
+      padY,
+      headerH,
+      groups,
+      lRightGroups,
+      lDownGroups,
+      iSubCols: downCols,
+      w: bodyW + padX * 2,
+      h: headerH + (headerH > 0 ? 4 : 0) + bodyH + padY * 2,
+    };
+  }
+
+  const defaultCols =
+    membersCount <= 2
+      ? 2
+      : membersCount === 3
+      ? 3
+      : membersCount === 4
+      ? 2
+      : membersCount <= 6
+      ? 3
+      : 4;
+  const cols = Math.max(1, Math.min(membersCount, customCols || defaultCols));
+  const rows = Math.max(1, Math.ceil(membersCount / cols));
+
+  return {
+    layout: 'grid',
+    cols,
+    rows,
+    cellW,
+    cellH,
+    photoW: unit.photoW,
+    photoH: unit.photoH,
+    badgeH: unit.badgeH,
+    gap: tightGap,
+    tightGap,
+    looseGap,
+    padX,
+    padY,
+    headerH,
+    groups: [],
+    lRightGroups: [],
+    lDownGroups: [],
+    iSubCols: 1,
+    w: cols * cellW + (cols - 1) * tightGap + padX * 2,
+    h: headerH + (headerH > 0 ? 4 : 0) + rows * cellH + (rows - 1) * tightGap + padY * 2,
+  };
+}
+
 export function computeMergedCardMetrics(
   membersCount: number,
   displayMode: CardDisplayMode,
@@ -135,108 +585,26 @@ export function computeMergedCardMetrics(
   w: number;
   h: number;
 } {
-  const pDim = BASE_PHOTO_DIMS[photoSize] || BASE_PHOTO_DIMS['3x4'];
-  // Jarak sub-card rapat 1–2mm (~6px)
-  const gap = Math.max(4, Math.round(6 * cardScale));
-  const padX = Math.max(4, Math.round(6 * cardScale));
-  const padY = Math.max(4, Math.round(6 * cardScale));
-
-  let cellW: number;
-  let cellH: number;
-  let headerH: number;
-  if (displayMode === 'photo_only') {
-    cellW = Math.max(28, Math.round((pDim.w + 6) * cardScale));
-    cellH = Math.max(28, Math.round((pDim.h + 6) * cardScale));
-    headerH = 0;
-  } else if (displayMode === 'photo_name') {
-    cellW = Math.max(64, Math.round(Math.max(82, pDim.w + 16) * cardScale));
-    cellH = Math.max(48, Math.round((pDim.h + 28) * cardScale));
-    headerH = Math.max(16, Math.round(20 * cardScale));
-  } else if (displayMode === 'name_only') {
-    cellW = Math.max(76, Math.round(114 * cardScale));
-    cellH = Math.max(26, Math.round(32 * cardScale));
-    headerH = Math.max(16, Math.round(20 * cardScale));
-  } else {
-    cellW = Math.max(76, Math.round(Math.max(100, pDim.w + 26) * cardScale));
-    cellH = Math.max(58, Math.round((pDim.h + 46) * cardScale));
-    headerH = Math.max(18, Math.round(22 * cardScale));
-  }
-
-  if (modularSubLayout === 'I' && membersMeta && membersMeta.length >= 2) {
-    // Pola I: Kepala (depth 0 + pasangannya) di baris atas, lalu generasi di bawah tersusun berbaris ke bawah
-    const depthBuckets = new Map<number, number>();
-    membersMeta.forEach((mm) => {
-      const d = mm.depthInModule ?? 0;
-      depthBuckets.set(d, (depthBuckets.get(d) || 0) + 1);
-    });
-    const maxRowCount = Math.max(
-      1,
-      ...Array.from(depthBuckets.values()).map((cnt) => Math.min(customCols || 3, cnt))
-    );
-    let totalSubRows = 0;
-    depthBuckets.forEach((cnt) => {
-      totalSubRows += Math.max(1, Math.ceil(cnt / maxRowCount));
-    });
-    return {
-      cols: maxRowCount,
-      rows: totalSubRows,
-      cellW,
-      cellH,
-      gap,
-      padX,
-      padY,
-      headerH,
-      w: maxRowCount * cellW + Math.max(0, maxRowCount - 1) * gap + padX * 2,
-      h: headerH + totalSubRows * cellH + Math.max(0, totalSubRows - 1) * gap + padY * 2 + 4,
-    };
-  }
-
-  if (modularSubLayout === 'L' && membersMeta && membersMeta.length >= 2) {
-    // Pola L: Kepala di kiri-atas, lengan kanan menampung cabang atas, lengan bawah menampung keturunan turun membentuk siku L
-    const headCount = Math.max(1, membersMeta.filter((m) => (m.depthInModule ?? 0) === 0).length);
-    const restCount = Math.max(0, membersMeta.length - headCount);
-    const rightArmCols = Math.min(3, Math.max(1, Math.ceil(restCount / 2)));
-    const totalCols = Math.max(headCount + 1, Math.min(4, headCount + rightArmCols));
-    const downCount = Math.max(1, restCount - rightArmCols);
-    const totalRows = 1 + Math.ceil(downCount / Math.min(2, totalCols));
-    return {
-      cols: totalCols,
-      rows: totalRows,
-      cellW,
-      cellH,
-      gap,
-      padX,
-      padY,
-      headerH,
-      w: totalCols * cellW + Math.max(0, totalCols - 1) * gap + padX * 2,
-      h: headerH + totalRows * cellH + Math.max(0, totalRows - 1) * gap + padY * 2 + 4,
-    };
-  }
-
-  const defaultCols =
-    membersCount <= 2
-      ? 2
-      : membersCount === 3
-      ? 3
-      : membersCount === 4
-      ? 2
-      : membersCount <= 6
-      ? 3
-      : 4;
-  const cols = Math.max(1, Math.min(membersCount, customCols || defaultCols));
-  const rows = Math.max(1, Math.ceil(membersCount / cols));
-
+  const plan = computeModularContainerPlan(
+    membersCount,
+    displayMode,
+    photoSize,
+    cardScale,
+    customCols,
+    modularSubLayout,
+    membersMeta
+  );
   return {
-    cols,
-    rows,
-    cellW,
-    cellH,
-    gap,
-    padX,
-    padY,
-    headerH,
-    w: cols * cellW + (cols - 1) * gap + padX * 2,
-    h: headerH + rows * cellH + (rows - 1) * gap + padY * 2,
+    cols: plan.cols,
+    rows: plan.rows,
+    cellW: plan.cellW,
+    cellH: plan.cellH,
+    gap: plan.gap,
+    padX: plan.padX,
+    padY: plan.padY,
+    headerH: plan.headerH,
+    w: plan.w,
+    h: plan.h,
   };
 }
 
@@ -260,6 +628,69 @@ export function computeOptimalCardScale(
     genCounts.set(g, (genCounts.get(g) ?? 0) + 1 + (m.spouses ? m.spouses.length : 0));
   });
   const genCount = Math.max(1, genCounts.size);
+
+  // Untuk Modular Card I / L di A3 (kapasitas 100+ anggota), simulasikan packing langsung agar skala terbesar muat tanpa dead space!
+  if (presetId === 'modular_g3_I' || presetId === 'modular_g3_L') {
+    const minModScale =
+      totalCards >= 120 ? 0.32 : totalCards >= 95 ? 0.36 : totalCards >= 70 ? 0.42 : 0.5;
+    const maxModScale = totalCards <= 20 ? 1.15 : totalCards <= 50 ? 0.95 : 0.85;
+    let bestScale = minModScale;
+    for (let s = maxModScale; s >= minModScale; s = +(s - 0.05).toFixed(2)) {
+      const unit = getUniformSubCardSize(displayMode, photoSize, s);
+      const res = generateSmartLayoutFromTable(
+        members,
+        presetId,
+        boardWidth,
+        boardHeight,
+        { w: unit.w, h: unit.h },
+        {
+          displayMode,
+          photoSize,
+          cardScale: s,
+          cardGapMm: 3.5,
+          modularG12Position: 'center',
+        }
+      );
+      // Cek apakah semua node muat di dalam kertas A3 tanpa melebihi batas kanan/bawah
+      let maxBottom = 0;
+      let maxRight = 0;
+      res.nodes.forEach((n) => {
+        if (n.mergedMembers && n.mergedMembers.length >= 2) {
+          const pl = computeModularContainerPlan(
+            n.mergedMembers.length,
+            displayMode,
+            photoSize,
+            s * (n.scaleMultiplier ?? 1),
+            n.mergedCols,
+            n.modularSubLayout || 'grid',
+            n.mergedMembers
+          );
+          maxBottom = Math.max(maxBottom, n.y + pl.h);
+          maxRight = Math.max(maxRight, n.x + pl.w);
+        } else {
+          const mult =
+            n.modularSubLayout === 'I' || n.modularSubLayout === 'L'
+              ? 1
+              : n.scaleMultiplier ?? 1;
+          const nw =
+            mult === 1
+              ? unit.w
+              : getUniformSubCardSize(displayMode, photoSize, s * mult).w;
+          const nh =
+            mult === 1
+              ? unit.h
+              : getUniformSubCardSize(displayMode, photoSize, s * mult).h;
+          maxBottom = Math.max(maxBottom, n.y + nh);
+          maxRight = Math.max(maxRight, n.x + nw);
+        }
+      });
+      if (maxBottom <= boardHeight - 40 && maxRight <= boardWidth - 18) {
+        bestScale = s;
+        break;
+      }
+    }
+    return bestScale;
+  }
 
   const base1 = getBaseCardSizeForScale(displayMode, photoSize, 1);
   const usableW = Math.max(320, boardWidth - 116);
@@ -354,36 +785,36 @@ export function analyzeTrahForSmartLayout(
 export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
   {
     id: 'modular_g3_I',
-    title: 'Modular Card G3 Pola I (G1–G2 Besar)',
-    subtitle: 'G1–G2 Besar di Atas/Tengah • Card G3 Bungkus Anak–Cucu Vertikal (1.5mm)',
+    title: 'Modular Card I (Poros Tengah • Tanpa Garis)',
+    subtitle: 'G1–G2 Besar di Tengah • G3+ Foto 2×3 + Badge • Keluarga Inti 3–5mm • Kapasitas 100+ A3',
     badge: 'Modular I',
     category: 'modular',
     description:
-      'Menampilkan G1–G2 berukuran lebih besar di atas/tengah, sementara tiap G3 menjadi Card Modular yang merangkum sub-card anak & cucu tersusun lurus ke bawah berjarak 1–2mm sesuai garis keturunan.',
+      'Desain A3 berkapasitas 100+ anggota tanpa garis konektor: G1–G2 besar di poros tengah, kontainer keluarga inti G3 (jarak 1–2mm internal, 3–5mm antar kelompok, pasangan 0mm) dengan foto seragam 2×3 + badge ringkas dan gradasi warna tua ➔ muda.',
     recommendedTheme: 'dark',
     recommendedBg: '',
     recommendedOrientation: 'landscape',
-    recommendedCardMode: 'full',
+    recommendedCardMode: 'photo_name',
     recommendedPhotoSize: '2x3',
-    recommendedLineStyle: 'pcb90',
-    recommendedGuideMode: 'gen_bands',
+    recommendedLineStyle: 'none',
+    recommendedGuideMode: 'modular_center',
     recommendedGenGradient: 'royal_emerald',
   },
   {
     id: 'modular_g3_L',
-    title: 'Modular Card G3 Pola L (Siku Anak–Cucu)',
-    subtitle: 'G1–G2 Besar • Card G3 Membentuk Siku L Anak–Cucu Menempel (1.5mm)',
+    title: 'Modular Card L (Poros Tengah • Tanpa Garis)',
+    subtitle: 'G1–G2 Besar di Tengah • Siku L Keluarga Inti • Foto 2×3 Seragam • Kapasitas 100+ A3',
     badge: 'Modular L',
     category: 'modular',
     description:
-      'G1–G2 tampil lebih besar sebagai pusat trah, lalu setiap cabang G3 menjadi Card Modular berbentuk siku L yang menyatukan sub-card anak & cucu berjarak 1–2mm dengan pasangan menempel.',
+      'Tata letak A3 kompak tanpa garis konektor: G1–G2 besar di tengah kanvas, setiap modul G3 tersusun siku L yang memisahkan kelompok keluarga inti 3–5mm (internal 1–2mm, pasangan 0mm) dengan foto seragam 2×3 + gradasi warna tua ➔ muda.',
     recommendedTheme: 'dark',
     recommendedBg: '',
     recommendedOrientation: 'landscape',
-    recommendedCardMode: 'full',
+    recommendedCardMode: 'photo_name',
     recommendedPhotoSize: '2x3',
-    recommendedLineStyle: 'pcb45',
-    recommendedGuideMode: 'gen_bands',
+    recommendedLineStyle: 'none',
+    recommendedGuideMode: 'modular_center',
     recommendedGenGradient: 'ocean_blue',
   },
   {
@@ -601,8 +1032,8 @@ export function generateSmartLayoutFromTable(
   const displayMode: CardDisplayMode = options?.displayMode ?? 'full';
   const photoSize: PhotoFrameSize = options?.photoSize ?? '3x4';
   const cardScale: number = options?.cardScale ?? 1;
-  const cardGapMm: number = Math.max(1, Math.min(5, options?.cardGapMm ?? 2.5));
-  const modularG12Position: 'top' | 'center' = options?.modularG12Position ?? 'top';
+  const cardGapMm: number = Math.max(1, Math.min(5, options?.cardGapMm ?? 3.5));
+  const modularG12Position: 'top' | 'center' = options?.modularG12Position ?? 'center';
 
   const { roots, childrenMap } = buildHierarchyFromMembers(members);
   const nodes: InteractiveNode[] = [];
@@ -1013,16 +1444,27 @@ export function generateSmartLayoutFromTable(
   }
 
   // -------------------------------------------------------------------------
-  // MODE MODULAR G3 POLA I / L (G1–G2 BESAR DI ATAS/TENGAH + CARD G3 BUNGKUS ANAK–CUCU)
+  // MODE MODULAR G3 POLA I / L (POROS TENGAH G1–G2 + PACKING A3 100+ ANTI DEAD-SPACE)
   // -------------------------------------------------------------------------
   if (presetId === 'modular_g3_I' || presetId === 'modular_g3_L') {
     const modularLayout: 'I' | 'L' = presetId === 'modular_g3_L' ? 'L' : 'I';
-    const bigScaleMult = 1.32;
-    const bigW = Math.round(cardW * bigScaleMult);
-    const bigH = Math.round(cardH * bigScaleMult);
-    const leftM = 28;
-    const rightM = 28;
-    const usableW = Math.max(320, boardWidth - leftM - rightM);
+    const subUnit = getUniformSubCardSize(displayMode, photoSize, cardScale);
+
+    // Kartu utama G1 dan G2 dibuat lebih besar sebagai pusat gravitasi
+    const totalPeopleCount = members.reduce(
+      (s, m) => s + 1 + (m.spouses?.length || 0),
+      0
+    );
+    const g1ScaleMult = totalPeopleCount >= 90 ? 1.45 : 1.55;
+    const g2ScaleMult = totalPeopleCount >= 90 ? 1.25 : 1.32;
+    const g1Dim = getUniformSubCardSize(displayMode, photoSize, cardScale * g1ScaleMult);
+    const g2Dim = getUniformSubCardSize(displayMode, photoSize, cardScale * g2ScaleMult);
+
+    const outerMarginX = 20;
+    const topMarginY = 42;
+    const bottomMarginY = 54;
+    const usableW = Math.max(320, boardWidth - outerMarginX * 2);
+    const usableH = Math.max(260, boardHeight - topMarginY - bottomMarginY);
 
     interface ModNode {
       member: FamilyMember;
@@ -1046,25 +1488,23 @@ export function generateSmartLayoutFromTable(
       if (!seen.has(m.id)) modRoots.push(buildMod(m, m.generationLevel ?? 0));
     });
 
-    // Kumpulkan G1, G2, dan kepala G3 (depth === 2 atau anak terakhir sebelum cabang)
     const g1List: ModNode[] = [];
     const g2List: { node: ModNode; parentId: string | null }[] = [];
-    const g3Heads: { node: ModNode; parentId: string | null }[] = [];
+    const g3Heads: { node: ModNode; parentId: string | null; g2Index: number }[] = [];
 
-    const walkTop = (mn: ModNode, parentId: string | null) => {
+    const walkTop = (mn: ModNode, parentId: string | null, activeG2Idx: number) => {
       if (mn.depth === 0) {
         g1List.push(mn);
-        mn.children.forEach((c) => walkTop(c, mn.member.id));
+        mn.children.forEach((c) => walkTop(c, mn.member.id, activeG2Idx));
       } else if (mn.depth === 1) {
+        const myG2Idx = g2List.length;
         g2List.push({ node: mn, parentId });
-        mn.children.forEach((c) => walkTop(c, mn.member.id));
-      } else if (mn.depth === 2) {
-        g3Heads.push({ node: mn, parentId });
+        mn.children.forEach((c) => walkTop(c, mn.member.id, myG2Idx));
       } else {
-        g3Heads.push({ node: mn, parentId });
+        g3Heads.push({ node: mn, parentId, g2Index: activeG2Idx });
       }
     };
-    modRoots.forEach((r) => walkTop(r, null));
+    modRoots.forEach((r) => walkTop(r, null, 0));
 
     const collectModularSubtree = (head: ModNode): {
       members: MergedCardMember[];
@@ -1115,15 +1555,39 @@ export function generateSmartLayoutFromTable(
       return { members: list, snapshotEdges: snapEdges };
     };
 
-    const g3Boxes = g3Heads.map(({ node: head, parentId }) => {
+    // Jarak antar modul G3 / kelompok luar 3–5mm (diperkecil proporsional bila skala padat)
+    const moduleGapPx = Math.max(
+      10,
+      Math.round(Math.max(3, Math.min(5, cardGapMm)) * MM_TO_PX * Math.max(0.65, Math.min(1.1, cardScale)))
+    );
+    const internalTightPx = Math.max(4, Math.round(1.5 * MM_TO_PX * Math.max(0.65, cardScale)));
+
+    interface G3Box {
+      isMerged: boolean;
+      head: ModNode;
+      parentId: string | null;
+      g2Index: number;
+      orderPos: number;
+      members: MergedCardMember[];
+      snapshotEdges: InteractiveEdge[];
+      customCols?: number;
+      w: number;
+      h: number;
+      x: number;
+      y: number;
+    }
+
+    const g3Boxes: G3Box[] = g3Heads.map(({ node: head, parentId, g2Index }, idx) => {
       const sub = collectModularSubtree(head);
       if (sub.members.length >= 2) {
-        const metrics = computeMergedCardMetrics(
+        // Pilih jumlah kolom internal paling efisien agar modul tidak terlalu tinggi/kurus di A3
+        const candCols = sub.members.length >= 18 ? 4 : sub.members.length >= 9 ? 3 : 2;
+        const plan = computeModularContainerPlan(
           sub.members.length,
           displayMode,
           photoSize,
           cardScale,
-          undefined,
+          candCols,
           modularLayout,
           sub.members
         );
@@ -1131,30 +1595,90 @@ export function generateSmartLayoutFromTable(
           isMerged: true,
           head,
           parentId,
+          g2Index,
+          orderPos: idx,
           members: sub.members,
           snapshotEdges: sub.snapshotEdges,
-          w: metrics.w,
-          h: metrics.h,
+          customCols: candCols,
+          w: plan.w,
+          h: plan.h,
+          x: 0,
+          y: 0,
         };
       }
       return {
         isMerged: false,
         head,
         parentId,
+        g2Index,
+        orderPos: idx,
         members: sub.members,
         snapshotEdges: sub.snapshotEdges,
-        w: cardW,
-        h: cardH,
+        w: subUnit.w,
+        h: subUnit.h,
+        x: 0,
+        y: 0,
       };
     });
 
-    const moduleGapX = Math.max(unmarriedGapPx, Math.round(cardGapMm * MM_TO_PX));
-    const bandGapY = Math.max(24, Math.round(cardGapMm * MM_TO_PX * 2.4));
+    // Helper susun Central Hub (G1 + G2) di poros tengah atau atas
+    const g1UnitGap = Math.max(8, Math.round(2.5 * MM_TO_PX * cardScale));
+    const g2UnitGap = Math.max(6, Math.round(2 * MM_TO_PX * cardScale));
 
-    const placeBigUnit = (m: FamilyMember, centerX: number, topY: number, parentNodeId: string | null, depth: number) => {
-      const spCount = m.spouses?.length || 0;
-      const totalUnitW = bigW + spCount * bigW;
-      let startX = centerX - totalUnitW / 2;
+    const buildG1RowW = () =>
+      g1List.reduce((s, r) => s + (1 + (r.member.spouses?.length || 0)) * g1Dim.w, 0) +
+      Math.max(0, g1List.length - 1) * g1UnitGap;
+
+    const g2UnitWidths = g2List.map(
+      ({ node }) => (1 + (node.member.spouses?.length || 0)) * g2Dim.w
+    );
+    const maxHubAllowedW = Math.min(usableW, Math.round(usableW * 0.72));
+    const g2Rows: Array<typeof g2List> = [];
+    {
+      let curRow: typeof g2List = [];
+      let curW = 0;
+      g2List.forEach((item, idx) => {
+        const uw = g2UnitWidths[idx];
+        const nextW = curRow.length === 0 ? uw : curW + g2UnitGap + uw;
+        if (curRow.length > 0 && nextW > maxHubAllowedW) {
+          g2Rows.push(curRow);
+          curRow = [item];
+          curW = uw;
+        } else {
+          curRow.push(item);
+          curW = nextW;
+        }
+      });
+      if (curRow.length > 0) g2Rows.push(curRow);
+    }
+    const g2MaxRowW = g2Rows.reduce((mx, row) => {
+      const rw =
+        row.reduce(
+          (s, r) => s + (1 + (r.node.member.spouses?.length || 0)) * g2Dim.w,
+          0
+        ) +
+        Math.max(0, row.length - 1) * g2UnitGap;
+      return Math.max(mx, rw);
+    }, 0);
+
+    const g1RowH = g1List.length > 0 ? g1Dim.h : 0;
+    const g2BlockH =
+      g2Rows.length > 0
+        ? g2Rows.length * g2Dim.h + Math.max(0, g2Rows.length - 1) * internalTightPx
+        : 0;
+    const hubW = Math.max(buildG1RowW(), g2MaxRowW);
+    const hubH =
+      g1RowH + (g1RowH > 0 && g2BlockH > 0 ? internalTightPx + 4 : 0) + g2BlockH;
+
+    const placeBigUnit = (
+      m: FamilyMember,
+      startX: number,
+      topY: number,
+      unitDim: { w: number; h: number },
+      scaleMult: number,
+      parentNodeId: string | null,
+      depth: number
+    ) => {
       const primaryId = `n_${m.id}`;
       nodes.push({
         id: primaryId,
@@ -1167,7 +1691,7 @@ export function generateSmartLayoutFromTable(
         gender: m.gender,
         memberId: m.id,
         genLevel: m.generationLevel ?? depth,
-        scaleMultiplier: bigScaleMult,
+        scaleMultiplier: scaleMult,
       });
       if (parentNodeId) {
         edges.push({ from: parentNodeId, to: primaryId, type: 'child' });
@@ -1178,151 +1702,294 @@ export function generateSmartLayoutFromTable(
           id: spId,
           name: sp.name,
           sub: sp.status === 'cerai_mati' ? 'Pasangan (Wafat)' : 'Pasangan',
-          x: Math.round(startX + (sIdx + 1) * bigW),
+          x: Math.round(startX + (sIdx + 1) * unitDim.w), // 0mm menempel rapat!
           y: Math.round(topY),
           photo: '',
           wafat: sp.status === 'cerai_mati',
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
           genLevel: m.generationLevel ?? depth,
-          scaleMultiplier: bigScaleMult,
+          scaleMultiplier: scaleMult,
         });
         edges.push({ from: primaryId, to: spId, type: 'couple' });
       });
       return primaryId;
     };
 
-    const g1RowH = g1List.length > 0 ? bigH : 0;
-    const g2RowH = g2List.length > 0 ? bigH : 0;
-
-    // Bagi g3Boxes ke 1 baris (mode Atas) atau 2 sayap atas+bawah (mode Tengah)
-    const placeG3Row = (boxes: typeof g3Boxes, startY: number) => {
-      if (boxes.length === 0) return startY;
-      // Wrap jika lebar melebihi usableW
-      const rowsG3: typeof g3Boxes[] = [];
-      let curR: typeof g3Boxes = [];
-      let curW = 0;
-      boxes.forEach((bx) => {
-        const addW = curR.length === 0 ? bx.w : curW + moduleGapX + bx.w;
-        if (curR.length > 0 && addW > usableW) {
-          rowsG3.push(curR);
-          curR = [bx];
-          curW = bx.w;
-        } else {
-          curR.push(bx);
-          curW = addW;
-        }
-      });
-      if (curR.length > 0) rowsG3.push(curR);
-
-      let curY = startY;
-      rowsG3.forEach((rowItems) => {
-        const totalRowW =
-          rowItems.reduce((s, it) => s + it.w, 0) +
-          Math.max(0, rowItems.length - 1) * moduleGapX;
-        let curX = leftM + Math.max(0, (usableW - totalRowW) / 2);
-        const maxRowH = Math.max(...rowItems.map((it) => it.h));
-
-        rowItems.forEach((item) => {
-          const m = item.head.member;
-          const pNodeId = item.parentId ? `n_${item.parentId}` : null;
-          if (item.isMerged) {
-            const modId = `mod_g3_${m.id}`;
-            nodes.push({
-              id: modId,
-              name: `Cabang ${m.name}`,
-              sub: `G3 Modular (${item.members.length} Org)`,
-              x: Math.round(curX),
-              y: Math.round(curY),
-              photo: m.photoUrl || '',
-              wafat: item.members.every((x) => x.wafat),
-              genLevel: m.generationLevel ?? 2,
-              mergedMembers: item.members,
-              mergedEdgesSnapshot: item.snapshotEdges,
-              modularSubLayout: modularLayout,
-              modularHeadMemberId: m.id,
-            });
-            if (pNodeId) {
-              edges.push({ from: pNodeId, to: modId, type: 'child' });
-            }
-          } else {
-            const cid = `n_${m.id}`;
-            nodes.push({
-              id: cid,
-              name: m.name,
-              sub: formatMemberLifeSubtitle(m),
-              x: Math.round(curX),
-              y: Math.round(curY),
-              photo: m.photoUrl || '',
-              wafat: m.isDeceased,
-              gender: m.gender,
-              memberId: m.id,
-              genLevel: m.generationLevel ?? 2,
-            });
-            if (pNodeId) {
-              edges.push({ from: pNodeId, to: cid, type: 'child' });
-            }
-          }
-          curX += item.w + moduleGapX;
+    const placeHubAt = (hubLeftX: number, hubTopY: number) => {
+      let curY = hubTopY;
+      if (g1List.length > 0) {
+        const g1W = buildG1RowW();
+        let gx = hubLeftX + (hubW - g1W) / 2;
+        g1List.forEach((g1) => {
+          const uw = (1 + (g1.member.spouses?.length || 0)) * g1Dim.w;
+          placeBigUnit(g1.member, gx, curY, g1Dim, g1ScaleMult, null, 0);
+          gx += uw + g1UnitGap;
         });
-        curY += maxRowH + bandGapY;
+        curY += g1Dim.h + internalTightPx + 4;
+      }
+      g2Rows.forEach((row) => {
+        const rowW =
+          row.reduce(
+            (s, r) => s + (1 + (r.node.member.spouses?.length || 0)) * g2Dim.w,
+            0
+          ) +
+          Math.max(0, row.length - 1) * g2UnitGap;
+        let gx = hubLeftX + (hubW - rowW) / 2;
+        row.forEach(({ node: g2, parentId }) => {
+          const uw = (1 + (g2.member.spouses?.length || 0)) * g2Dim.w;
+          placeBigUnit(
+            g2.member,
+            gx,
+            curY,
+            g2Dim,
+            g2ScaleMult,
+            parentId ? `n_${parentId}` : null,
+            1
+          );
+          gx += uw + g2UnitGap;
+        });
+        curY += g2Dim.h + internalTightPx;
       });
-      return curY;
     };
 
-    const g1UnitsW =
-      g1List.reduce((s, r) => s + (1 + (r.member.spouses?.length || 0)) * bigW, 0) +
-      Math.max(0, g1List.length - 1) * 24;
-    const g2UnitsW =
-      g2List.reduce((s, r) => s + (1 + (r.node.member.spouses?.length || 0)) * bigW, 0) +
-      Math.max(0, g2List.length - 1) * 18;
+    // Shelf / 2D Compact Packer untuk menata kontainer G3 tanpa ruang kosong terbuang (zero dead space)
+    const packShelfZone = (
+      boxes: G3Box[],
+      zoneX: number,
+      zoneY: number,
+      zoneW: number,
+      centerRowsHoriz = true
+    ): { totalH: number; maxRight: number } => {
+      if (boxes.length === 0) return { totalH: 0, maxRight: zoneX };
+      const shelves: { items: G3Box[]; w: number; h: number }[] = [];
 
-    if (modularG12Position === 'center' && g3Boxes.length >= 2) {
-      const splitIdx = Math.ceil(g3Boxes.length / 2);
-      const upperG3 = g3Boxes.slice(0, splitIdx);
-      const lowerG3 = g3Boxes.slice(splitIdx);
-      let cursorY = topSafeY;
-      cursorY = placeG3Row(upperG3, cursorY);
+      // First-Fit Decreasing / Proximity-aware shelf fill untuk minimalkan ruang kosong di ujung baris
+      boxes.forEach((bx) => {
+        // Coba masukkan ke shelf yang sudah ada jika muat lebar & selisih tingginya cocok (<=45px) agar zero dead space
+        let placedShelf: (typeof shelves)[number] | undefined;
+        let bestWaste = Infinity;
+        for (const sh of shelves) {
+          const nextW = sh.w + moduleGapPx + bx.w;
+          if (nextW <= zoneW) {
+            const heightPenalty = Math.abs(sh.h - bx.h) * 2;
+            const waste = zoneW - nextW + heightPenalty;
+            if (waste < bestWaste) {
+              bestWaste = waste;
+              placedShelf = sh;
+            }
+          }
+        }
+        if (placedShelf) {
+          placedShelf.items.push(bx);
+          placedShelf.w += moduleGapPx + bx.w;
+          placedShelf.h = Math.max(placedShelf.h, bx.h);
+        } else {
+          shelves.push({ items: [bx], w: bx.w, h: bx.h });
+        }
+      });
 
-      if (g1List.length > 0) {
-        let gx = leftM + Math.max(0, (usableW - g1UnitsW) / 2);
-        g1List.forEach((g1) => {
-          const uw = (1 + (g1.member.spouses?.length || 0)) * bigW;
-          placeBigUnit(g1.member, gx + uw / 2, cursorY, null, 0);
-          gx += uw + 24;
+      let curY = zoneY;
+      let maxRight = zoneX;
+      shelves.forEach((sh) => {
+        const startX = centerRowsHoriz
+          ? zoneX + Math.max(0, (zoneW - sh.w) / 2)
+          : zoneX;
+        let curX = startX;
+        sh.items.forEach((it) => {
+          it.x = Math.round(curX);
+          // Sejajarkan vertikal di tengah shelf agar simetris rapi
+          it.y = Math.round(curY + Math.max(0, (sh.h - it.h) / 2));
+          curX += it.w + moduleGapPx;
+          maxRight = Math.max(maxRight, it.x + it.w);
         });
-        cursorY += g1RowH + bandGapY;
-      }
-      if (g2List.length > 0) {
-        let gx = leftM + Math.max(0, (usableW - g2UnitsW) / 2);
-        g2List.forEach(({ node: g2, parentId }) => {
-          const uw = (1 + (g2.member.spouses?.length || 0)) * bigW;
-          placeBigUnit(g2.member, gx + uw / 2, cursorY, parentId ? `n_${parentId}` : null, 1);
-          gx += uw + 18;
+        curY += sh.h + moduleGapPx;
+      });
+
+      return {
+        totalH: curY - zoneY - moduleGapPx,
+        maxRight,
+      };
+    };
+
+    const commitG3Boxes = (boxes: G3Box[]) => {
+      boxes.forEach((item) => {
+        const m = item.head.member;
+        const pNodeId = item.parentId ? `n_${item.parentId}` : null;
+        if (item.isMerged) {
+          const modId = `mod_g3_${m.id}`;
+          nodes.push({
+            id: modId,
+            name: m.name,
+            sub: `${item.members.length} Org`,
+            x: item.x,
+            y: item.y,
+            photo: m.photoUrl || '',
+            wafat: item.members.every((x) => x.wafat),
+            genLevel: m.generationLevel ?? 2,
+            mergedMembers: item.members,
+            mergedCols: item.customCols,
+            mergedEdgesSnapshot: item.snapshotEdges,
+            modularSubLayout: modularLayout,
+            modularHeadMemberId: m.id,
+          });
+          if (pNodeId) {
+            edges.push({ from: pNodeId, to: modId, type: 'child' });
+          }
+        } else {
+          const cid = `n_${m.id}`;
+          nodes.push({
+            id: cid,
+            name: m.name,
+            sub: formatMemberLifeSubtitle(m),
+            x: item.x,
+            y: item.y,
+            photo: m.photoUrl || '',
+            wafat: m.isDeceased,
+            gender: m.gender,
+            memberId: m.id,
+            genLevel: m.generationLevel ?? 2,
+            modularSubLayout: modularLayout,
+          });
+          if (pNodeId) {
+            edges.push({ from: pNodeId, to: cid, type: 'child' });
+          }
+        }
+      });
+    };
+
+    if (modularG12Position === 'center' && g3Boxes.length >= 1) {
+      // Bagi kontainer G3 secara seimbang ke segala arah di sekitar Poros Tengah G1–G2:
+      // 1) Jika kiri & kanan Poros Tengah punya ruang cukup, isi sayap kiri/kanan agar tidak ada dead space
+      const minBoxW = Math.min(...g3Boxes.map((b) => b.w));
+      const sideSpaceEach = Math.floor((usableW - hubW - moduleGapPx * 2) / 2);
+      const canUseSideWings = sideSpaceEach >= minBoxW + 4 && g3Boxes.length >= 4;
+
+      const leftWing: G3Box[] = [];
+      const rightWing: G3Box[] = [];
+      const topPool: G3Box[] = [];
+      const bottomPool: G3Box[] = [];
+
+      // Distribusikan berdasarkan kedekatan G2 (kiri/kanan) & keseimbangan luas (area) atas vs bawah
+      const remaining = [...g3Boxes];
+
+      if (canUseSideWings) {
+        // Ambil 1-2 modul yang pas masuk ke sayap kiri (dari G2 kiri) & sayap kanan (dari G2 kanan)
+        let leftAccH = 0;
+        let rightAccH = 0;
+        const maxWingH = Math.max(hubH + 40, usableH * 0.42);
+        const picked = new Set<number>();
+
+        for (let i = 0; i < remaining.length; i++) {
+          const bx = remaining[i];
+          if (bx.w <= sideSpaceEach && leftAccH + bx.h <= maxWingH && leftWing.length < 2) {
+            leftWing.push(bx);
+            leftAccH += bx.h + moduleGapPx;
+            picked.add(bx.orderPos);
+            break;
+          }
+        }
+        for (let i = remaining.length - 1; i >= 0; i--) {
+          const bx = remaining[i];
+          if (
+            !picked.has(bx.orderPos) &&
+            bx.w <= sideSpaceEach &&
+            rightAccH + bx.h <= maxWingH &&
+            rightWing.length < 2
+          ) {
+            rightWing.push(bx);
+            rightAccH += bx.h + moduleGapPx;
+            picked.add(bx.orderPos);
+            break;
+          }
+        }
+        const restForTopBottom = remaining.filter((b) => !picked.has(b.orderPos));
+        let topArea = 0;
+        let botArea = 0;
+        restForTopBottom.forEach((bx) => {
+          const area = (bx.w + moduleGapPx) * (bx.h + moduleGapPx);
+          if (topArea <= botArea) {
+            topPool.push(bx);
+            topArea += area;
+          } else {
+            bottomPool.push(bx);
+            botArea += area;
+          }
         });
-        cursorY += g2RowH + bandGapY;
+      } else {
+        // Bagi simetris ke Atas & Bawah G1–G2 berdasarkan luas area
+        let topArea = 0;
+        let botArea = 0;
+        remaining.forEach((bx) => {
+          const area = (bx.w + moduleGapPx) * (bx.h + moduleGapPx);
+          if (topArea <= botArea) {
+            topPool.push(bx);
+            topArea += area;
+          } else {
+            bottomPool.push(bx);
+            botArea += area;
+          }
+        });
       }
-      placeG3Row(lowerG3, cursorY);
+
+      // Hitung tinggi nyata zona atas, sayap tengah & bawah agar G1–G2 benar-benar menjadi poros gravitasi di tengah tanpa tabrakan vertikal
+      const hubX = Math.round(outerMarginX + Math.max(0, (usableW - hubW) / 2));
+      const topPacked = packShelfZone(topPool, outerMarginX, topMarginY, usableW, true);
+      const botPacked = packShelfZone(bottomPool, outerMarginX, topMarginY, usableW, true);
+      const lwAvailW = Math.max(100, hubX - outerMarginX - moduleGapPx);
+      const rwX = hubX + hubW + moduleGapPx;
+      const rwAvailW = Math.max(100, boardWidth - outerMarginX - rwX);
+      const lwPre = leftWing.length > 0 ? packShelfZone(leftWing, outerMarginX, topMarginY, lwAvailW, true) : { totalH: 0, maxRight: 0 };
+      const rwPre = rightWing.length > 0 ? packShelfZone(rightWing, rwX, topMarginY, rwAvailW, true) : { totalH: 0, maxRight: 0 };
+
+      const midBandH = Math.max(hubH, lwPre.totalH, rwPre.totalH);
+      const topNeedH = topPool.length > 0 ? topPacked.totalH + moduleGapPx : 0;
+      const botNeedH = bottomPool.length > 0 ? botPacked.totalH + moduleGapPx : 0;
+      const totalContentH = topNeedH + midBandH + botNeedH;
+
+      // Letakkan pita tengah (Poros G1–G2 + sayap) di antara zona atas & zona bawah (atau tepat tengah kanvas jika muat)
+      const idealMidBandY = topMarginY + Math.max(0, (usableH - midBandH) / 2);
+      const minMidBandY = topMarginY + topNeedH;
+      const maxMidBandY = Math.max(minMidBandY, topMarginY + usableH - botNeedH - midBandH);
+      const midBandY =
+        totalContentH <= usableH
+          ? Math.max(minMidBandY, Math.min(maxMidBandY, Math.round(idealMidBandY)))
+          : Math.round(topMarginY + topNeedH);
+      const hubY = Math.round(midBandY + Math.max(0, (midBandH - hubH) / 2));
+
+      // Reposisikan zona Atas tepat di atas pita tengah, zona Bawah tepat di bawah pita tengah
+      const topStartY =
+        topPool.length > 0
+          ? Math.max(topMarginY, midBandY - moduleGapPx - topPacked.totalH)
+          : topMarginY;
+      packShelfZone(topPool, outerMarginX, topStartY, usableW, true);
+
+      const botStartY = midBandY + midBandH + moduleGapPx;
+      packShelfZone(bottomPool, outerMarginX, botStartY, usableW, true);
+
+      // Posisikan Sayap Kiri & Kanan sejajar vertikal di tengah pita tengah
+      if (leftWing.length > 0) {
+        const lwStartY = Math.round(midBandY + Math.max(0, (midBandH - lwPre.totalH) / 2));
+        packShelfZone(leftWing, outerMarginX, lwStartY, lwAvailW, true);
+      }
+      if (rightWing.length > 0) {
+        const rwStartY = Math.round(midBandY + Math.max(0, (midBandH - rwPre.totalH) / 2));
+        packShelfZone(rightWing, rwX, rwStartY, rwAvailW, true);
+      }
+
+      placeHubAt(hubX, hubY);
+      commitG3Boxes([...topPool, ...leftWing, ...rightWing, ...bottomPool]);
     } else {
-      let cursorY = topSafeY;
-      if (g1List.length > 0) {
-        let gx = leftM + Math.max(0, (usableW - g1UnitsW) / 2);
-        g1List.forEach((g1) => {
-          const uw = (1 + (g1.member.spouses?.length || 0)) * bigW;
-          placeBigUnit(g1.member, gx + uw / 2, cursorY, null, 0);
-          gx += uw + 24;
-        });
-        cursorY += g1RowH + bandGapY;
-      }
-      if (g2List.length > 0) {
-        let gx = leftM + Math.max(0, (usableW - g2UnitsW) / 2);
-        g2List.forEach(({ node: g2, parentId }) => {
-          const uw = (1 + (g2.member.spouses?.length || 0)) * bigW;
-          placeBigUnit(g2.member, gx + uw / 2, cursorY, parentId ? `n_${parentId}` : null, 1);
-          gx += uw + 18;
-        });
-        cursorY += g2RowH + bandGapY;
-      }
-      placeG3Row(g3Boxes, cursorY);
+      // Mode Atas (jika user memilih "Atas" manual)
+      const hubX = Math.round(outerMarginX + Math.max(0, (usableW - hubW) / 2));
+      placeHubAt(hubX, topMarginY);
+      packShelfZone(
+        g3Boxes,
+        outerMarginX,
+        topMarginY + (hubH > 0 ? hubH + moduleGapPx : 0),
+        usableW,
+        true
+      );
+      commitG3Boxes(g3Boxes);
     }
 
     return { nodes, edges };

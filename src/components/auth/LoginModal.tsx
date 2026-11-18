@@ -218,11 +218,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               showNotification={showNotification}
               onPairedSuccess={() => {
                 const syncedAcc = AuthService.getAccount();
-                if (syncedAcc) {
-                  onSuccess(syncedAcc);
-                } else {
-                  onClose();
-                }
+                window.setTimeout(() => {
+                  if (syncedAcc) {
+                    onSuccess(syncedAcc);
+                  } else {
+                    onClose();
+                  }
+                }, 450);
               }}
             />
           </div>

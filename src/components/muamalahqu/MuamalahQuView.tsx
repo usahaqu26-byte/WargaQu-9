@@ -31,6 +31,10 @@ import { ModuleOnboardingService } from '../../services/moduleOnboardingService'
 import { MenuItem } from '../../types';
 import { StorageService } from '../../services/storage';
 import { AUTH_SYNC_EVENT, AuthService } from '../../services/authService';
+import {
+  DEVICE_PAIRING_SYNC_EVENT,
+  PairingSyncEventDetail,
+} from '../../services/devicePairingService';
 import { MonetizationService } from '../../services/monetizationService';
 import { RealtimeRelayService } from '../../services/realtimeRelayService';
 
@@ -137,9 +141,23 @@ export const MuamalahQuView: React.FC<MuamalahQuViewProps> = ({
         phone: acc.phone,
       }));
     };
+    const syncRemotePairing = (ev: Event) => {
+      const detail = (ev as CustomEvent<PairingSyncEventDetail>).detail;
+      if (!detail?.remoteApplied) return;
+      try {
+        const savedCart = localStorage.getItem('wargaqu_cart_v1');
+        if (savedCart) setCart(JSON.parse(savedCart));
+        const savedSettings = localStorage.getItem('wargaqu_store_settings_v1');
+        if (savedSettings) setSettings(prev => ({ ...prev, ...JSON.parse(savedSettings) }));
+      } catch {}
+    };
     syncFromAuth();
     window.addEventListener(AUTH_SYNC_EVENT, syncFromAuth);
-    return () => window.removeEventListener(AUTH_SYNC_EVENT, syncFromAuth);
+    window.addEventListener(DEVICE_PAIRING_SYNC_EVENT, syncRemotePairing);
+    return () => {
+      window.removeEventListener(AUTH_SYNC_EVENT, syncFromAuth);
+      window.removeEventListener(DEVICE_PAIRING_SYNC_EVENT, syncRemotePairing);
+    };
   }, []);
 
   // Photo Compression State

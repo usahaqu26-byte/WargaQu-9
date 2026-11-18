@@ -22,6 +22,11 @@ import { WargaQuLogoIcon } from '../common/WargaQuLogo';
 import { AUTH_SYNC_EVENT, AuthAccount, AuthService } from '../../services/authService';
 import { RT_SYNC_EVENT, RtSiagaStorage, PaguyubanProfile } from '../../services/rtSiagaStorage';
 import { DOMPETQU_SYNC_EVENT, DompetQuStorage, DompetWallet } from '../../services/dompetQuStorage';
+import {
+  DEVICE_PAIRING_SYNC_EVENT,
+  DevicePairingService,
+  PairedHostSession,
+} from '../../services/devicePairingService';
 import { DompetSmartVoiceModal } from '../dompetqu/DompetSmartVoiceModal';
 
 interface WargaDashboardProps {
@@ -82,6 +87,9 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
   );
   const [smartVoiceOpen, setSmartVoiceOpen] = useState<boolean>(false);
   const [unreadChatCount, setUnreadChatCount] = useState<number>(() => getLiveUnreadChatCount());
+  const [pairedHost, setPairedHost] = useState<PairedHostSession | null>(() =>
+    DevicePairingService.getPairedHost()
+  );
 
   useEffect(() => {
     const syncAll = () => {
@@ -91,15 +99,18 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
       setDompetWallets(DompetQuStorage.getWallets());
       setDompetTotal(DompetQuStorage.getTotalCombinedBalance());
       setUnreadChatCount(getLiveUnreadChatCount());
+      setPairedHost(DevicePairingService.getPairedHost());
     };
     window.addEventListener(AUTH_SYNC_EVENT, syncAll);
     window.addEventListener(RT_SYNC_EVENT, syncAll);
     window.addEventListener(DOMPETQU_SYNC_EVENT, syncAll);
+    window.addEventListener(DEVICE_PAIRING_SYNC_EVENT, syncAll);
     window.addEventListener('focus', syncAll);
     return () => {
       window.removeEventListener(AUTH_SYNC_EVENT, syncAll);
       window.removeEventListener(RT_SYNC_EVENT, syncAll);
       window.removeEventListener(DOMPETQU_SYNC_EVENT, syncAll);
+      window.removeEventListener(DEVICE_PAIRING_SYNC_EVENT, syncAll);
       window.removeEventListener('focus', syncAll);
     };
   }, []);
@@ -180,7 +191,9 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
             </div>
             <p className="text-[11px] lg:text-xs text-emerald-100/90 truncate">
               {authAccount
-                ? `${authAccount.email} · ${authAccount.phone}`
+                ? `${authAccount.email} · ${authAccount.phone}${pairedHost ? ' · Sinkron Live HP ↔ Laptop' : ''}`
+                : pairedHost
+                ? `Tersambung ke ${pairedHost.hostLabel} · Sinkronisasi Live Aktif`
                 : 'Masuk Email & No HP atau Scan QR dari HP untuk sinkronisasi'}
             </p>
           </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AndroidFrame } from './components/AndroidFrame';
 import { WargaDashboard } from './components/warga/WargaDashboard';
 import { EmptyModuleView } from './components/warga/EmptyModuleView';
@@ -47,8 +47,10 @@ import {
 import { FirebaseSyncService } from './services/firebaseSyncService';
 import { AutoBackupService } from './services/autoBackupService';
 import {
+  DEVICE_PAIRING_SYNC_EVENT,
   DevicePairingService,
   PENDING_PAIR_TOKEN_KEY,
+  PairingSyncEventDetail,
 } from './services/devicePairingService';
 
 type AppScreen = 'warga' | 'dompetqu' | 'akun' | 'admin_zero_trust' | 'leluhurqu' | 'rtqu' | 'siagaqu' | 'chatqu' | 'muamalahqu' | 'areaqu' | 'usahaqu' | 'modularqu' | 'bantuan' | 'empty_module';
@@ -270,8 +272,25 @@ export default function App() {
       AccountGovernanceService.publishCurrentPresence(currentScreenRef.current);
     };
 
+    const handlePairingSync = (ev: Event) => {
+      const detail = (ev as CustomEvent<PairingSyncEventDetail>).detail;
+      if (!detail?.remoteApplied) return;
+      setTables(StorageService.getTables());
+      setMenuList(StorageService.getMenu());
+      setIngredients(StorageService.getIngredients());
+      setHistory(StorageService.getHistory());
+      setActiveOrders(StorageService.getActiveOrders());
+      const latestAcc = AuthService.getAccount();
+      setAuthAccount(latestAcc);
+      const latestProf = StorageService.getProfile();
+      setProfile(latestAcc ? { ...latestProf, phone: latestAcc.phone } : latestProf);
+      setPrinterConfig(StorageService.getPrinterConfig());
+      refreshGovernanceState();
+    };
+
     window.addEventListener(AUTH_SYNC_EVENT, handleAuthSync);
     window.addEventListener(ACCOUNT_GOV_SYNC_EVENT, refreshGovernanceState);
+    window.addEventListener(DEVICE_PAIRING_SYNC_EVENT, handlePairingSync);
 
     RealtimeRelayService.start();
     DevicePairingService.startLiveSync(showNotification);
@@ -369,16 +388,17 @@ export default function App() {
       window.removeEventListener('hashchange', onHashInviteCheck);
       window.removeEventListener(AUTH_SYNC_EVENT, handleAuthSync);
       window.removeEventListener(ACCOUNT_GOV_SYNC_EVENT, refreshGovernanceState);
+      window.removeEventListener(DEVICE_PAIRING_SYNC_EVENT, handlePairingSync);
       window.removeEventListener(REALTIME_RELAY_EVENT, handleGlobalRelay);
     };
   }, []);
 
-  const showNotification = (msg: string) => {
+  const showNotification = useCallback((msg: string) => {
     setNotification(msg);
     setTimeout(() => {
       setNotification((prev) => (prev === msg ? null : prev));
     }, 3000);
-  };
+  }, []);
 
   const currentScreenRef = useRef(currentScreen);
   const lastBackPressRef = useRef(0);

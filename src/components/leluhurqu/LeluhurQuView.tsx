@@ -69,6 +69,10 @@ import {
   SettingsSectionTab,
 } from './LeluhurSettingsView';
 import { AUTH_SYNC_EVENT, AuthService } from '../../services/authService';
+import {
+  DEVICE_PAIRING_SYNC_EVENT,
+  PairingSyncEventDetail,
+} from '../../services/devicePairingService';
 import { LeluhurBookModal } from './LeluhurBookModal';
 import { TrahQrCodeCard, TrahQrScannerModal } from './TrahInviteQrModal';
 import { MonetizationService } from '../../services/monetizationService';
@@ -1796,9 +1800,36 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             : displayName,
       }));
     };
+    const handleRemotePairingSync = (ev: Event) => {
+      const detail = (ev as CustomEvent<PairingSyncEventDetail>).detail;
+      if (!detail?.remoteApplied) return;
+      const nextScope = getCurrentAccountScope();
+      setAccountScope(nextScope);
+      const nextTrahs = loadTrahListForScope(nextScope);
+      const nextPosts = loadPostsForScope(nextScope);
+      const nextLogs = loadActivityLogsForScope(nextScope.scopeKey);
+      setTrahList(nextTrahs);
+      setTrahPosts(nextPosts);
+      setActivityLogs(nextLogs);
+      setActiveTrahId((prevId) =>
+        nextTrahs.some((t) => t.id === prevId) ? prevId : nextTrahs[0]?.id || ''
+      );
+      try {
+        const savedPref = localStorage.getItem(APP_PREFS_KEY);
+        if (savedPref) {
+          setAppPreferences((prev) => ({ ...prev, ...JSON.parse(savedPref) }));
+        }
+      } catch {
+        // ignore
+      }
+    };
     syncFromAuth();
     window.addEventListener(AUTH_SYNC_EVENT, syncFromAuth);
-    return () => window.removeEventListener(AUTH_SYNC_EVENT, syncFromAuth);
+    window.addEventListener(DEVICE_PAIRING_SYNC_EVENT, handleRemotePairingSync);
+    return () => {
+      window.removeEventListener(AUTH_SYNC_EVENT, syncFromAuth);
+      window.removeEventListener(DEVICE_PAIRING_SYNC_EVENT, handleRemotePairingSync);
+    };
   }, []);
 
   const handleAcceptTrahInvite = async (

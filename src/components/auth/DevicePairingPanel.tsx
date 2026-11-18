@@ -62,6 +62,11 @@ export const LaptopQrWaitCard: React.FC<LaptopQrWaitCardProps> = ({
   } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>('');
 
+  const onPairedSuccessRef = useRef(onPairedSuccess);
+  const showNotificationRef = useRef(showNotification);
+  onPairedSuccessRef.current = onPairedSuccess;
+  showNotificationRef.current = showNotification;
+
   const handleRefreshQr = () => {
     setPairedDone(null);
     setErrorMsg('');
@@ -105,15 +110,15 @@ export const LaptopQrWaitCard: React.FC<LaptopQrWaitCardProps> = ({
       session,
       info => {
         setPairedDone(info);
-        showNotification(`Laptop terhubung ke akun ${info.accountEmail}!`);
-        onPairedSuccess?.(info);
+        showNotificationRef.current(`Laptop terhubung (${info.accountEmail}) · ${info.restoredKeys} data tersinkron!`);
+        onPairedSuccessRef.current?.(info);
       },
       msg => {
         setErrorMsg(msg);
       }
     );
     return stopListen;
-  }, [session, onPairedSuccess, showNotification]);
+  }, [session]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -162,16 +167,12 @@ export const LaptopQrWaitCard: React.FC<LaptopQrWaitCardProps> = ({
           className={`font-semibold tabular-nums ${
             relayState === 'connected'
               ? 'text-emerald-700'
-              : relayState === 'connecting'
-              ? 'text-amber-700'
-              : 'text-rose-700'
+              : 'text-amber-700'
           }`}
         >
           {relayState === 'connected'
-            ? 'Relay Siap'
-            : relayState === 'connecting'
-            ? 'Menghubungkan...'
-            : 'Relay Offline'}
+            ? 'Relay Real-Time Siap'
+            : 'Relay Jalur HTTP Siap'}
         </span>
       </div>
 
@@ -202,14 +203,14 @@ export const LaptopQrWaitCard: React.FC<LaptopQrWaitCardProps> = ({
             </div>
             <div className="text-center space-y-1">
               <div className="text-xs font-bold text-slate-900">
-                Kode Sesi:{' '}
-                <span className="font-mono tracking-wider text-emerald-800">
+                Kode Sesi (Bisa Diketik di HP):{' '}
+                <span className="font-mono tracking-wider text-sm text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
                   {session.sessionId}
                 </span>
               </div>
               <div className="text-[11px] text-slate-500 tabular-nums">
                 Berlaku {Math.floor(secondsLeft / 60)}:
-                {String(secondsLeft % 60).padStart(2, '0')} · Terenkripsi ujung-ke-ujung
+                {String(secondsLeft % 60).padStart(2, '0')} · Terenkripsi 2 arah (HP ↔ Laptop)
               </div>
             </div>
           </>
@@ -227,9 +228,10 @@ export const LaptopQrWaitCard: React.FC<LaptopQrWaitCardProps> = ({
         </div>
       )}
 
-      <div className="text-[11px] text-slate-600 space-y-1 leading-relaxed">
-        <div>1. Buka WargaQu di HP Anda, masuk ke menu <strong>Akun Saya</strong>.</div>
-        <div>2. Ketuk <strong>Tautkan Laptop / PC</strong> lalu arahkan kamera ke QR di atas.</div>
+      <div className="text-[11px] text-slate-600 space-y-1 leading-relaxed bg-slate-50 border border-slate-200 rounded-xl p-2.5">
+        <div>1. Buka aplikasi ini di HP (menu <strong>Akun Saya</strong>) — <em>tidak wajib login dulu</em>.</div>
+        <div>2. Ketuk <strong>Tautkan Laptop (Scan QR)</strong> lalu scan QR atau cukup ketik 6 huruf <strong>{session.sessionId}</strong>.</div>
+        <div>3. Semua data langsung masuk otomatis &amp; setiap edit di Laptop ikut sinkron ke HP.</div>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -598,14 +600,14 @@ export const PhoneScanPairModal: React.FC<PhoneScanPairModalProps> = ({
 
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-700 block">
-                Atau tempel kode tautan dari Laptop:
+                Atau ketik 6 huruf Kode Sesi dari layar Laptop (contoh: ABC123):
               </label>
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={manualInput}
                   onChange={e => setManualInput(e.target.value)}
-                  placeholder="WQP1:XXXXXX:..."
+                  placeholder="Contoh: ABC123 atau WQP1:..."
                   className="flex-1 min-h-[40px] border border-slate-300 rounded-xl px-3 text-xs font-mono"
                 />
                 <button
