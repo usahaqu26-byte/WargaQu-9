@@ -116,53 +116,86 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
   return (
     <div className="w-full h-full bg-[#f0fdf4] overflow-hidden flex flex-col relative no-scrollbar select-none">
       {/* TOP APP BAR & HEADER CONTAINER (Emerald Green #047857 to #059669) */}
-      <div className="bg-gradient-to-b from-[#047857] via-[#059669] to-[#059669] pt-5 px-5 pb-16 rounded-b-[32px] relative text-white shrink-0 shadow-md">
-        <div className="flex justify-between items-center mb-3 gap-2">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <WargaQuLogoIcon uid="dashboard_hdr" className="w-10 h-10 drop-shadow-md shrink-0" />
-            <div className="flex flex-col min-w-0">
-              <span className="text-2xl font-extrabold italic tracking-tight text-white leading-none whitespace-nowrap">
-                warga<span className="text-[#5eead4] font-black drop-shadow-xs">Qu</span>
-              </span>
-              <span className="text-[10px] text-emerald-100/90 font-medium tracking-wide truncate mt-1">
-                Smart Citizen System · {hasRtCommunity ? rtProfile.orgName : 'Mandiri'}
-              </span>
+      <div className="bg-gradient-to-b from-[#047857] via-[#059669] to-[#059669] pt-5 px-5 lg:px-8 pb-16 lg:pb-14 rounded-b-[32px] lg:rounded-b-none relative text-white shrink-0 shadow-md">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex justify-between items-center mb-3 lg:mb-2 gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <WargaQuLogoIcon uid="dashboard_hdr" className="w-10 h-10 drop-shadow-md shrink-0" />
+              <div className="flex flex-col min-w-0">
+                <span className="text-2xl font-extrabold italic tracking-tight text-white leading-none whitespace-nowrap">
+                  warga<span className="text-[#5eead4] font-black drop-shadow-xs">Qu</span>
+                </span>
+                <span className="text-[10px] lg:text-xs text-emerald-100/90 font-medium tracking-wide truncate mt-1">
+                  Smart Citizen System · {hasRtCommunity ? rtProfile.orgName : 'Mandiri'}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Desktop quick actions (Mobile menggunakan bottom nav bar di bawah; zero duplikat) */}
+              <button
+                type="button"
+                onClick={() => setSmartVoiceOpen(true)}
+                className="hidden lg:inline-flex px-3.5 py-2 min-h-[40px] rounded-xl bg-emerald-800/80 hover:bg-emerald-900 border border-emerald-400/40 text-white font-bold text-xs items-center gap-1.5 transition whitespace-nowrap"
+                title="Catat Suara Cerdas ke DompetQu"
+              >
+                <Mic className="w-4 h-4 text-[#5eead4]" />
+                <span>Catat Suara</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onOpenEmptyModule('akun')}
+                className="hidden lg:inline-flex px-3.5 py-2 min-h-[40px] rounded-xl bg-emerald-800/60 hover:bg-emerald-900 border border-emerald-300/30 text-white font-bold text-xs items-center gap-1.5 transition whitespace-nowrap"
+                title="Akun Saya, Pengaturan & Tautkan Laptop"
+              >
+                <UserCheck className="w-4 h-4 text-[#5eead4]" />
+                <span>Akun Saya</span>
+              </button>
+
+              {!authAccount && onOpenLogin && (
+                <button
+                  type="button"
+                  onClick={() => onOpenLogin()}
+                  className="px-3.5 py-2 min-h-[40px] rounded-xl bg-white text-emerald-800 hover:bg-emerald-50 font-extrabold text-xs flex items-center gap-1.5 shrink-0 shadow-sm active:scale-95 transition whitespace-nowrap"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>Masuk</span>
+                </button>
+              )}
             </div>
           </div>
 
-          {!authAccount && onOpenLogin && (
-            <button
-              type="button"
-              onClick={() => onOpenLogin()}
-              className="px-3.5 py-2 min-h-[40px] rounded-xl bg-white text-emerald-800 hover:bg-emerald-50 font-extrabold text-xs flex items-center gap-1.5 shrink-0 shadow-sm active:scale-95 transition whitespace-nowrap"
-            >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>Masuk</span>
-            </button>
-          )}
-        </div>
-
-        {/* Greeting User + Synced Account Strip */}
-        <div className="mt-1 mb-1 min-w-0">
-          <p className="text-xs text-emerald-200 tracking-wider font-medium">Halo,</p>
-          <h1 className="text-lg font-bold text-white tracking-wide truncate">
-            {authAccount ? AuthService.getDisplayName(authAccount).toUpperCase() : 'TAMU WARGAQU'}
-          </h1>
-          <p className="text-[11px] text-emerald-100/90 truncate">
-            {authAccount
-              ? `${authAccount.email} · ${authAccount.phone}`
-              : 'Masuk Email & No HP untuk sinkronisasi semua modul'}
-          </p>
+          {/* Greeting User + Synced Account Strip */}
+          <div className="mt-1 mb-1 min-w-0 lg:flex lg:items-baseline lg:justify-between lg:gap-4">
+            <div className="min-w-0">
+              <p className="text-xs text-emerald-200 tracking-wider font-medium lg:inline lg:mr-2">
+                Halo,
+              </p>
+              <h1 className="text-lg lg:text-xl font-bold text-white tracking-wide truncate lg:inline">
+                {authAccount
+                  ? AuthService.getDisplayName(authAccount).toUpperCase()
+                  : 'TAMU WARGAQU'}
+              </h1>
+            </div>
+            <p className="text-[11px] lg:text-xs text-emerald-100/90 truncate">
+              {authAccount
+                ? `${authAccount.email} · ${authAccount.phone}`
+                : 'Masuk Email & No HP atau Scan QR dari HP untuk sinkronisasi'}
+            </p>
+          </div>
         </div>
       </div>
 
       {/* SCROLLABLE MAIN CONTENT AREA */}
-      <div className="flex-1 overflow-y-auto no-scrollbar px-4 -mt-12 pb-24 space-y-4">
-        {/* PWA Direct Mobile Install Banner */}
-        <PWAInstallBanner showToast={showToast} />
+      <div className="flex-1 overflow-y-auto no-scrollbar px-4 lg:px-8 -mt-12 lg:-mt-9 pb-24 lg:pb-10">
+        <div className="max-w-6xl mx-auto space-y-4 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-6 lg:items-start">
+          {/* KOLOM KIRI DI DESKTOP: PWA BANNER & DOMPETQU */}
+          <div className="space-y-4 lg:col-span-5">
+            <PWAInstallBanner showToast={showToast} />
 
-        {/* DOMPETQU: SATU-SATUNYA WADAH RINGKASAN & AKSES DOMPET PRIBADI */}
-        <div className="bg-white rounded-2xl p-4 shadow-sm border border-emerald-100/90 relative overflow-hidden">
+            {/* DOMPETQU: SATU-SATUNYA WADAH RINGKASAN & AKSES DOMPET PRIBADI */}
+            <div className="bg-white rounded-2xl p-4 lg:p-5 shadow-sm border border-emerald-100/90 relative overflow-hidden">
           <div className="flex justify-between items-center pb-2.5 border-b border-emerald-50 gap-2">
             <div className="inline-flex items-center gap-1.5 text-emerald-800 text-xs font-bold min-w-0">
               <Wallet className="w-4 h-4 text-emerald-700 shrink-0" />
@@ -214,16 +247,17 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
               ))}
             </div>
           </div>
-        </div>
+          </div>
+          </div>
 
         {/* MENU UTAMA (8 MODUL INTI — TANPA DUPLIKAT & TANPA SUB-MENU GANDA) */}
-        <div className="bg-white rounded-2xl p-4 shadow-sm border border-emerald-100/90 relative z-10">
+        <div className="bg-white rounded-2xl p-4 lg:p-5 shadow-sm border border-emerald-100/90 relative z-10 lg:col-span-7">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="font-bold text-slate-800 text-sm">Menu Utama</h3>
+            <h3 className="font-bold text-slate-800 text-sm lg:text-base">Menu Utama</h3>
             <span className="text-[11px] text-slate-400 font-medium">8 Modul Inti</span>
           </div>
 
-          <div className="grid grid-cols-4 gap-y-5 gap-x-2">
+          <div className="grid grid-cols-4 gap-y-5 gap-x-2 lg:gap-4">
             {/* 1. LeluhurQu */}
             <button
               type="button"
@@ -358,10 +392,11 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
             </button>
           </div>
         </div>
+        </div>
       </div>
 
-      {/* BOTTOM NAVIGATION BAR (3 AKSI UTAMA THUMB-ZONE: BERANDA, CATAT SUARA, AKUN SAYA) */}
-      <div className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-emerald-100 px-6 py-2 grid grid-cols-3 items-end z-40 shadow-lg">
+      {/* BOTTOM NAVIGATION BAR (KHUSUS HP / TABLET KECIL — TERSEMBUNYI DI DESKTOP) */}
+      <div className="lg:hidden absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-emerald-100 px-6 py-2 grid grid-cols-3 items-end z-40 shadow-lg">
         {/* Beranda */}
         <button
           type="button"

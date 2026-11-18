@@ -46,6 +46,10 @@ import {
 } from './services/realtimeRelayService';
 import { FirebaseSyncService } from './services/firebaseSyncService';
 import { AutoBackupService } from './services/autoBackupService';
+import {
+  DevicePairingService,
+  PENDING_PAIR_TOKEN_KEY,
+} from './services/devicePairingService';
 
 type AppScreen = 'warga' | 'dompetqu' | 'akun' | 'admin_zero_trust' | 'leluhurqu' | 'rtqu' | 'siagaqu' | 'chatqu' | 'muamalahqu' | 'areaqu' | 'usahaqu' | 'modularqu' | 'bantuan' | 'empty_module';
 
@@ -153,10 +157,33 @@ export default function App() {
       return '';
     };
 
+    const extractPairFromLocation = () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const pairQuery = (params.get('pair') || '').trim();
+        if (pairQuery) return `?pair=${encodeURIComponent(pairQuery)}`;
+        const hash = window.location.hash || '';
+        const pIdx = hash.search(/pair=/);
+        if (pIdx !== -1) {
+          const hp = new URLSearchParams(hash.slice(pIdx));
+          const pairHash = (hp.get('pair') || '').trim();
+          if (pairHash) return `?pair=${encodeURIComponent(pairHash)}`;
+        }
+      } catch {
+        // ignore URL errors
+      }
+      return '';
+    };
+
     try {
+      const pairToken = extractPairFromLocation();
       const trahInvite = extractInviteFromLocation();
       const rtInvite = extractRtInviteFromLocation();
-      if (trahInvite) {
+      if (pairToken) {
+        localStorage.setItem(PENDING_PAIR_TOKEN_KEY, pairToken);
+        setCurrentScreen('akun');
+        window.history.replaceState({ screen: 'akun' }, '', '#akun');
+      } else if (trahInvite) {
         localStorage.setItem('wargaqu_pending_trah_invite_v1', trahInvite);
         setCurrentScreen('leluhurqu');
         window.history.replaceState({ screen: 'leluhurqu' }, '', '#leluhurqu');
@@ -170,6 +197,17 @@ export default function App() {
     }
 
     const onHashInviteCheck = () => {
+      const pairToken = extractPairFromLocation();
+      if (pairToken) {
+        try {
+          localStorage.setItem(PENDING_PAIR_TOKEN_KEY, pairToken);
+        } catch {
+          // ignore
+        }
+        setCurrentScreen('akun');
+        window.dispatchEvent(new CustomEvent('wargaqu-pair-invite-arrived'));
+        return;
+      }
       const trahInvite = extractInviteFromLocation();
       if (trahInvite) {
         try {
@@ -236,6 +274,7 @@ export default function App() {
     window.addEventListener(ACCOUNT_GOV_SYNC_EVENT, refreshGovernanceState);
 
     RealtimeRelayService.start();
+    DevicePairingService.startLiveSync(showNotification);
     FirebaseSyncService.init();
     AutoBackupService.startAutoBackupMonitor();
     void AccountGovernanceService.syncPolicyFromServer();
@@ -385,7 +424,8 @@ export default function App() {
   useEffect(() => {
     const hasPendingInvite = Boolean(
       localStorage.getItem('wargaqu_pending_trah_invite_v1') ||
-        localStorage.getItem('wargaqu_pending_rt_invite_v1')
+        localStorage.getItem('wargaqu_pending_rt_invite_v1') ||
+        localStorage.getItem(PENDING_PAIR_TOKEN_KEY)
     );
     if (!hasPendingInvite) {
       window.history.replaceState({ screen: 'warga' }, '', '#warga');
@@ -612,7 +652,7 @@ export default function App() {
 
       {/* Pop-up Notification Toast across views */}
       {notification && (
-        <div className="absolute top-12 left-4 right-4 z-50 bg-emerald-950/95 text-[#5eead4] px-4 py-2 rounded-2xl shadow-xl border border-emerald-500/40 text-xs font-semibold flex items-center justify-between animate-in fade-in slide-in-from-top duration-200">
+        <div className="absolute top-12 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md z-50 bg-emerald-950/95 text-[#5eead4] px-4 py-2 rounded-2xl shadow-xl border border-emerald-500/40 text-xs font-semibold flex items-center justify-between animate-in fade-in slide-in-from-top duration-200">
           <span>{notification}</span>
         </div>
       )}

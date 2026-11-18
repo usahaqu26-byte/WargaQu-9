@@ -101,6 +101,7 @@ export interface FamilyMember {
   callName?: string;
   birthYear?: string;
   deathYear?: string;
+  city?: string;
   isDeceased: boolean;
   photoUrl?: string;
   gender: 'L' | 'P';
@@ -1000,18 +1001,30 @@ export function parseCommaChildren(
     name = name.replace(/^(\d+[\.\)\-:\s]+|[\-\•\*\>\s]+)/, '').trim();
 
     // Deteksi jenis kelamin dari kurung seperti (P), (Pr), (Perempuan), (Wanita), (L), (Lk), (Pria)
-    if (/\((P|Pr|Perempuan|Wanita|Perp|F)\)/i.test(name)) {
+    if (/\((P|Pr|Perempuan|Wanita|Perp|Cewek|F)\)/i.test(name)) {
       gender = 'P';
       explicitGender = true;
-      name = name.replace(/\((P|Pr|Perempuan|Wanita|Perp|F)\)/i, '').trim();
-    } else if (/\((L|Lk|Laki|Laki-laki|Pria|M)\)/i.test(name)) {
+      name = name.replace(/\((P|Pr|Perempuan|Wanita|Perp|Cewek|F)\)/i, '').trim();
+    } else if (/\((L|Lk|Laki|Laki-laki|Pria|Cowok|M)\)/i.test(name)) {
       gender = 'L';
       explicitGender = true;
-      name = name.replace(/\((L|Lk|Laki|Laki-laki|Pria|M)\)/i, '').trim();
+      name = name.replace(/\((L|Lk|Laki|Laki-laki|Pria|Cowok|M)\)/i, '').trim();
     }
 
     return { name, gender, orderIndex: index + 1, explicitGender };
   });
+}
+
+function serializeQuickChildren(
+  items: Array<{ name: string; gender: 'L' | 'P'; explicitGender?: boolean }>
+): string {
+  return items
+    .map((item) => {
+      if (item.gender === 'P') return `${item.name} (P)`;
+      if (item.explicitGender) return `${item.name} (L)`;
+      return item.name;
+    })
+    .join(', ');
 }
 
 export function getKinshipLabel(level: number): string {
@@ -1098,7 +1111,7 @@ export function normalizeTrahMembers(
     if (raw.parentId !== cleanParentId) repairedCount++;
 
     const rawGenderStr = String((raw as { gender?: string }).gender || '').trim();
-    const normGender: 'L' | 'P' = /^(P|PR|PEREMPUAN|WANITA|PERP|F)$/i.test(rawGenderStr) ? 'P' : 'L';
+    const normGender: 'L' | 'P' = /^(P|PR|PEREMPUAN|WANITA|PERP|CEWEK|F)$/i.test(rawGenderStr) ? 'P' : 'L';
     if (raw.gender !== normGender) repairedCount++;
 
     members.push({
@@ -1500,6 +1513,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   const [excelParentFilter, setExcelParentFilter] = useState<string>('all');
   const [excelStatusFilter, setExcelStatusFilter] = useState<string>('all');
   const [excelSpouseFilter, setExcelSpouseFilter] = useState<string>('all');
+  const [excelGenderFilter, setExcelGenderFilter] = useState<'all' | 'L' | 'P'>('all');
   const [excelSortMode, setExcelSortMode] = useState<'tree' | 'generation'>('tree');
 
   // Modals state
@@ -1515,6 +1529,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   const [callNameInput, setCallNameInput] = useState<string>('');
   const [birthYearInput, setBirthYearInput] = useState<string>('');
   const [deathYearInput, setDeathYearInput] = useState<string>('');
+  const [cityInput, setCityInput] = useState<string>('');
   const [isDeceasedInput, setIsDeceasedInput] = useState<boolean>(false);
   const [photoUrlInput, setPhotoUrlInput] = useState<string>('');
   const [isCompressingPhoto, setIsCompressingPhoto] = useState<boolean>(false);
@@ -2027,6 +2042,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   useEffect(() => {
     setExcelGenFilter('all');
     setExcelParentFilter('all');
+    setExcelGenderFilter('all');
   }, [activeTrah.id]);
 
   // Bentuk foto helper
@@ -2106,7 +2122,9 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
     if (quickBatchMode === 'replace') {
       setQuickCommaInput(
-        existingChildren.map((c) => (c.gender === 'P' ? `${c.name} (P)` : c.name)).join(', ')
+        existingChildren
+          .map((c) => `${c.name} (${c.gender === 'P' ? 'P' : 'L'})`)
+          .join(', ')
       );
     }
   };
@@ -2118,7 +2136,9 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
     setQuickBatchMode('replace');
     setQuickCommaInput(
-      existingChildren.map((c) => (c.gender === 'P' ? `${c.name} (P)` : c.name)).join(', ')
+      existingChildren
+        .map((c) => `${c.name} (${c.gender === 'P' ? 'P' : 'L'})`)
+        .join(', ')
     );
   };
 
@@ -2251,6 +2271,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
       const rebuiltChildren: FamilyMember[] = matchedPairs.map(({ parsed, existing }, idx) => {
         if (existing) {
+          const nextOrder = idx + 1;
+          const nextNotes =
+            existing.notes && /^Anak ke-\d+ dari /.test(existing.notes)
+              ? `Anak ke-${nextOrder} dari ${parent.name}`
+              : existing.notes;
           return {
             ...existing,
             name: parsed.name,
@@ -2258,7 +2283,8 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             gender: parsed.explicitGender ? parsed.gender : existing.gender,
             parentId: parent.id,
             generationLevel: parentGen + 1,
-            orderIndex: idx + 1,
+            orderIndex: nextOrder,
+            notes: nextNotes,
           };
         }
         return {
@@ -2284,7 +2310,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         currentTrah.id === 'trah-ayah-user' ||
         currentTrah.name.toUpperCase().includes('SANTA');
       updatedTrahMembers = normalizeTrahMembers([...patchedBase, ...rebuiltChildren], isSanta).members;
-      showNotification(`Berhasil memperbarui ${rebuiltChildren.length} anak untuk ${parent.name} tanpa memutus keturunan! ✨`);
+      showNotification(`Berhasil memperbarui urutan & data ${rebuiltChildren.length} anak untuk ${parent.name}; semua keturunan otomatis menyesuaikan! ✨`);
     } else {
       const startOrder = existingChildren.length;
       const newChildren: FamilyMember[] = parsedList.map((item, idx) => ({
@@ -2338,13 +2364,37 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
 
   const handleToggleParsedGender = (index: number) => {
-    setQuickParsedChildren((prev) =>
-      prev.map((item, idx) =>
-        idx === index
-          ? { ...item, gender: item.gender === 'L' ? 'P' : 'L', explicitGender: true }
-          : item
-      )
+    const baseList =
+      quickParsedChildren.length > 0
+        ? quickParsedChildren
+        : parseCommaChildren(quickCommaInput);
+    const nextList = baseList.map((item, idx) =>
+      idx === index
+        ? {
+            ...item,
+            gender: (item.gender === 'L' ? 'P' : 'L') as 'L' | 'P',
+            explicitGender: true,
+          }
+        : item
     );
+    setQuickParsedChildren(nextList);
+    setQuickCommaInput(serializeQuickChildren(nextList));
+  };
+
+  const handleMoveQuickParsedChild = (index: number, direction: 'up' | 'down') => {
+    const baseList =
+      quickParsedChildren.length > 0
+        ? quickParsedChildren
+        : parseCommaChildren(quickCommaInput);
+    const targetIdx = direction === 'up' ? index - 1 : index + 1;
+    if (targetIdx < 0 || targetIdx >= baseList.length) return;
+    const nextList = [...baseList];
+    const temp = nextList[index];
+    nextList[index] = nextList[targetIdx];
+    nextList[targetIdx] = temp;
+    const reindexed = nextList.map((item, i) => ({ ...item, orderIndex: i + 1 }));
+    setQuickParsedChildren(reindexed);
+    setQuickCommaInput(serializeQuickChildren(reindexed));
   };
 
   // Standard Form Add/Edit
@@ -2356,6 +2406,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     setCallNameInput('');
     setBirthYearInput('');
     setDeathYearInput('');
+    setCityInput('');
     setIsDeceasedInput(true);
     setPhotoUrlInput('');
     setPhotoCompressionInfo(null);
@@ -2374,6 +2425,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     setCallNameInput('');
     setBirthYearInput('');
     setDeathYearInput('');
+    setCityInput('');
     setIsDeceasedInput(false);
     setPhotoUrlInput('');
     setPhotoCompressionInfo(null);
@@ -2393,6 +2445,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     setCallNameInput(m.callName || '');
     setBirthYearInput(m.birthYear || '');
     setDeathYearInput(m.deathYear || '');
+    setCityInput(m.city || '');
     setIsDeceasedInput(m.isDeceased);
     setPhotoUrlInput(m.photoUrl || '');
     setPhotoCompressionInfo(null);
@@ -2489,6 +2542,18 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     if (formMemberId === member.id) {
       setGenderInput(nextGender);
     }
+    if (isQuickBatchOpen && quickBatchMode === 'replace' && member.parentId === quickParentId) {
+      const updatedParentChildren = (
+        nextList.find((t) => t.id === activeTrah.id)?.members || []
+      )
+        .filter((m) => m.parentId === quickParentId)
+        .sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+      setQuickCommaInput(
+        updatedParentChildren
+          .map((c) => `${c.name} (${c.gender === 'P' ? 'P' : 'L'})`)
+          .join(', ')
+      );
+    }
     appendActivityLog({
       trahId: activeTrah.id,
       trahName: activeTrah.name,
@@ -2501,6 +2566,99 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     );
   };
 
+  const handleMoveSiblingOrder = (memberId: string, direction: 'up' | 'down') => {
+    const targetMember = activeTrah.members.find((m) => m.id === memberId);
+    if (!targetMember) return;
+    const parentKey = targetMember.parentId || null;
+    const parentObj = parentKey
+      ? activeTrah.members.find((m) => m.id === parentKey)
+      : null;
+
+    const siblings = activeTrah.members
+      .filter((m) => (m.parentId || null) === parentKey)
+      .sort(
+        (a, b) =>
+          (a.orderIndex || 0) - (b.orderIndex || 0) ||
+          a.name.localeCompare(b.name)
+      );
+
+    const curIdx = siblings.findIndex((s) => s.id === memberId);
+    const swapIdx = direction === 'up' ? curIdx - 1 : curIdx + 1;
+    if (curIdx === -1 || swapIdx < 0 || swapIdx >= siblings.length) return;
+
+    const swappedWith = siblings[swapIdx];
+    const reorderedSiblings = [...siblings];
+    reorderedSiblings[curIdx] = swappedWith;
+    reorderedSiblings[swapIdx] = targetMember;
+
+    const newOrderById = new Map<string, number>();
+    reorderedSiblings.forEach((s, idx) => newOrderById.set(s.id, idx + 1));
+
+    let updatedSelected: FamilyMember | undefined;
+    const nextList = trahList.map((t) => {
+      if (t.id !== activeTrah.id) return t;
+      return {
+        ...t,
+        members: t.members.map((m) => {
+          const nextOrder = newOrderById.get(m.id);
+          if (nextOrder === undefined) return m;
+          const nextNotes =
+            parentObj && m.notes && /^Anak ke-\d+ dari /.test(m.notes)
+              ? `Anak ke-${nextOrder} dari ${parentObj.name}`
+              : m.notes;
+          const nextMember: FamilyMember = {
+            ...m,
+            orderIndex: nextOrder,
+            notes: nextNotes,
+          };
+          if (selectedMember?.id === m.id) {
+            updatedSelected = nextMember;
+          }
+          return nextMember;
+        }),
+      };
+    });
+
+    setTrahList(nextList);
+    flushTrahListToStorage(nextList);
+    if (updatedSelected) {
+      setSelectedMember(updatedSelected);
+    }
+    if (formMemberId === memberId) {
+      setOrderIndexInput(newOrderById.get(memberId) || 1);
+    }
+    if (
+      isQuickBatchOpen &&
+      quickBatchMode === 'replace' &&
+      (targetMember.parentId || '') === quickParentId
+    ) {
+      setQuickCommaInput(
+        reorderedSiblings
+          .map((c) => `${c.name} (${c.gender === 'P' ? 'P' : 'L'})`)
+          .join(', ')
+      );
+    }
+
+    const newPos = newOrderById.get(memberId) || 1;
+    const descCount = getDescendantIds(memberId, activeTrah.members).size;
+    appendActivityLog({
+      trahId: activeTrah.id,
+      trahName: activeTrah.name,
+      actionType: 'member_update',
+      targetName: targetMember.name,
+      summary: `Mengubah urutan "${targetMember.name}" menjadi Anak ke-${newPos}`,
+      details:
+        descCount > 0
+          ? `${descCount} keturunan otomatis ikut menyesuaikan posisi.`
+          : undefined,
+    });
+    showNotification(
+      `"${targetMember.name}" kini urutan ke-${newPos}${
+        descCount > 0 ? ` (${descCount} keturunannya otomatis ikut pindah!)` : ' ✨'
+      }`
+    );
+  };
+
   const handleSyncMemberFromGrid = (
     memberId: string,
     patch: {
@@ -2508,6 +2666,9 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       gender?: 'L' | 'P';
       isDeceased?: boolean;
       photoUrl?: string;
+      birthYear?: string;
+      deathYear?: string;
+      city?: string;
     }
   ) => {
     let syncedMember: FamilyMember | undefined;
@@ -2523,6 +2684,9 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             ...(patch.gender !== undefined ? { gender: patch.gender } : {}),
             ...(patch.isDeceased !== undefined ? { isDeceased: patch.isDeceased } : {}),
             ...(patch.photoUrl !== undefined ? { photoUrl: patch.photoUrl } : {}),
+            ...(patch.birthYear !== undefined ? { birthYear: patch.birthYear || undefined } : {}),
+            ...(patch.deathYear !== undefined ? { deathYear: patch.deathYear || undefined } : {}),
+            ...(patch.city !== undefined ? { city: patch.city || undefined } : {}),
           };
           syncedMember = updated;
           return updated;
@@ -2555,6 +2719,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         callName: callNameInput.trim() || undefined,
         birthYear: birthYearInput.trim() || undefined,
         deathYear: isDeceasedInput ? deathYearInput.trim() || undefined : undefined,
+        city: cityInput.trim() || undefined,
         isDeceased: isDeceasedInput,
         photoUrl: photoUrlInput.trim() || undefined,
         gender: genderInput,
@@ -2590,6 +2755,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         callName: callNameInput.trim() || undefined,
         birthYear: birthYearInput.trim() || undefined,
         deathYear: isDeceasedInput ? deathYearInput.trim() || undefined : undefined,
+        city: cityInput.trim() || undefined,
         isDeceased: isDeceasedInput,
         photoUrl: photoUrlInput.trim() || undefined,
         gender: genderInput,
@@ -2631,6 +2797,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             callName: callNameInput.trim() || undefined,
             birthYear: birthYearInput.trim() || undefined,
             deathYear: isDeceasedInput ? deathYearInput.trim() || undefined : undefined,
+            city: cityInput.trim() || undefined,
             isDeceased: isDeceasedInput,
             photoUrl: photoUrlInput.trim() || undefined,
             gender: genderInput,
@@ -2676,9 +2843,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       activeTrah.name.toUpperCase().includes('SANTA');
     const { members: normalized, repairedCount } = normalizeTrahMembers(activeTrah.members, isSanta);
 
-    setTrahList((prev) =>
-      prev.map((t) => (t.id === activeTrah.id ? { ...t, members: normalized } : t))
+    const nextList = trahList.map((t) =>
+      t.id === activeTrah.id ? { ...t, members: normalized } : t
     );
+    setTrahList(nextList);
+    flushTrahListToStorage(nextList);
 
     if (repairedCount > 0) {
       appendActivityLog({
@@ -3428,9 +3597,12 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         if (excelSpouseFilter === 'multi_spouse' && (!m.spouses || m.spouses.length <= 1)) return false;
         if (excelSpouseFilter === 'divorced' && (!m.spouses || !m.spouses.some((s) => s.status === 'cerai_hidup'))) return false;
       }
+      if (excelGenderFilter !== 'all') {
+        if (m.gender !== excelGenderFilter) return false;
+      }
       return true;
     });
-  }, [activeTrah.members, searchQuery, excelGenFilter, excelParentFilter, excelStatusFilter, excelSpouseFilter, excelSortMode]);
+  }, [activeTrah.members, searchQuery, excelGenFilter, excelParentFilter, excelStatusFilter, excelSpouseFilter, excelGenderFilter, excelSortMode]);
 
   const selectedMemberChildren = selectedMember
     ? activeTrah.members
@@ -3918,6 +4090,16 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                   <option value="divorced">Pernah Cerai</option>
                 </select>
 
+                <select
+                  value={excelGenderFilter}
+                  onChange={(e) => setExcelGenderFilter(e.target.value as 'all' | 'L' | 'P')}
+                  className="bg-emerald-950/80 text-white border border-emerald-400/40 rounded-xl px-2 py-1 text-[11px] font-bold outline-hidden"
+                >
+                  <option value="all">⚥ Semua Gender</option>
+                  <option value="L">👨 Pria (L)</option>
+                  <option value="P">👩 Wanita (P)</option>
+                </select>
+
                 <button
                   type="button"
                   onClick={() => setExcelSortMode((m) => (m === 'tree' ? 'generation' : 'tree'))}
@@ -4026,6 +4208,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                               setExcelParentFilter('all');
                               setExcelStatusFilter('all');
                               setExcelSpouseFilter('all');
+                              setExcelGenderFilter('all');
                               setSearchQuery('');
                             }}
                             className="text-emerald-700 font-bold underline ml-1"
@@ -4041,6 +4224,14 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                           ? activeTrah.members.find((p) => p.id === m.parentId)
                           : null;
                         const hasBrokenParent = Boolean(m.parentId && !directParent);
+                        const siblings = activeTrah.members
+                          .filter((s) => (s.parentId || null) === (m.parentId || null))
+                          .sort(
+                            (a, b) =>
+                              (a.orderIndex || 0) - (b.orderIndex || 0) ||
+                              a.name.localeCompare(b.name)
+                          );
+                        const siblingIdx = siblings.findIndex((s) => s.id === m.id);
                         const children = activeTrah.members
                           .filter((c) => c.parentId === m.id)
                           .sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
@@ -4051,14 +4242,38 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                           <tr key={m.id} className="hover:bg-emerald-50/50 transition-colors align-top">
                             <td className="py-2.5 px-3 text-center font-mono font-bold text-stone-400">{idx + 1}</td>
                             <td className="py-2.5 px-3">
-                              <div className="flex flex-col items-start gap-0.5">
+                              <div className="flex flex-col items-start gap-1">
                                 <span className={`inline-flex text-[10px] font-black uppercase px-2 py-0.5 rounded-md border ${meta.badgeBg}`}>
                                   {getKinshipLabel(m.generationLevel)}
                                 </span>
-                                {directParent && m.orderIndex && (
-                                  <span className="text-[10px] text-stone-500 font-medium">
-                                    Anak ke-{m.orderIndex}
-                                  </span>
+                                {(directParent || siblings.length > 1) && (
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <span className="text-[10px] text-stone-600 font-semibold">
+                                      {directParent ? `Anak ke-${siblingIdx + 1}` : `Urut #${siblingIdx + 1}`}
+                                    </span>
+                                    {siblings.length > 1 && (
+                                      <span className="inline-flex items-center gap-0.5">
+                                        <button
+                                          type="button"
+                                          disabled={siblingIdx <= 0}
+                                          onClick={() => handleMoveSiblingOrder(m.id, 'up')}
+                                          title="Geser naik jadi lebih tua (Kakak) — keturunan otomatis ikut"
+                                          className="px-1 py-0.2 rounded bg-stone-100 hover:bg-amber-200 disabled:opacity-30 border border-stone-300 text-stone-800 text-[10px] font-black leading-none transition"
+                                        >
+                                          ↑
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={siblingIdx >= siblings.length - 1}
+                                          onClick={() => handleMoveSiblingOrder(m.id, 'down')}
+                                          title="Geser turun jadi lebih muda (Adik) — keturunan otomatis ikut"
+                                          className="px-1 py-0.2 rounded bg-stone-100 hover:bg-amber-200 disabled:opacity-30 border border-stone-300 text-stone-800 text-[10px] font-black leading-none transition"
+                                        >
+                                          ↓
+                                        </button>
+                                      </span>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                             </td>
@@ -4189,10 +4404,15 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                                           setSelectedMember(c);
                                           setIsDetailModalOpen(true);
                                         }}
-                                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-900 font-semibold text-[10px] transition"
+                                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border font-semibold text-[10px] transition ${
+                                          c.gender === 'P'
+                                            ? 'bg-rose-50 hover:bg-rose-100 border-rose-200 text-rose-900'
+                                            : 'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-900'
+                                        }`}
                                         title={`Lihat detail ${c.name}`}
                                       >
-                                        <span className="font-mono text-indigo-500 text-[9px]">{cIdx + 1}.</span>
+                                        <span className="font-mono opacity-60 text-[9px]">{cIdx + 1}.</span>
+                                        <span>{c.gender === 'P' ? '👩' : '👨'}</span>
                                         <span>{c.name}</span>
                                       </button>
                                     ))}
@@ -4676,6 +4896,13 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             showNotification={showNotification}
             defaultCuratorName={accountProfile.displayName}
             defaultCreatedYear={accountProfile.defaultPosterYear}
+            defaultPhotoShape={
+              appPreferences.photoShape === 'circle'
+                ? 'bulat'
+                : appPreferences.photoShape === 'square'
+                ? 'kotak'
+                : 'segi6'
+            }
           />
         )}
       </main>
@@ -5248,22 +5475,74 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                     </div>
                   )}
 
-                  <div className="flex items-start justify-between pt-1 border-t border-emerald-200">
-                    <span className="font-bold text-indigo-700 w-28">Anak ({currentQuickExistingChildren.length}) :</span>
-                    <div className="flex-1">
-                      {currentQuickExistingChildren.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {currentQuickExistingChildren.map((c, cIdx) => (
-                            <span key={c.id} className="inline-flex items-center gap-1 text-[11px] bg-indigo-50 border border-indigo-200 text-indigo-900 font-bold px-2 py-0.5 rounded-lg">
-                              <span className="text-indigo-400 font-mono text-[9px]">{cIdx + 1}.</span>
-                              <span>{c.name}</span>
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-stone-400 italic text-[11px]">Belum ada anak tercatat</span>
-                      )}
+                  <div className="pt-1.5 border-t border-emerald-200 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-indigo-800 text-[11px]">
+                        Anak ({currentQuickExistingChildren.length}) — Ubah Gender &amp; Posisi Kakak/Adik Langsung:
+                      </span>
                     </div>
+                    {currentQuickExistingChildren.length > 0 ? (
+                      <div className="space-y-1 max-h-40 overflow-y-auto pr-0.5">
+                        {currentQuickExistingChildren.map((c, cIdx) => {
+                          const descCount = getDescendantIds(c.id, activeTrah.members).size;
+                          return (
+                            <div
+                              key={c.id}
+                              className="flex items-center justify-between gap-1.5 bg-white border border-indigo-200/80 px-2 py-1 rounded-xl text-[11px] shadow-2xs"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-800 font-mono font-bold text-[10px] flex items-center justify-center shrink-0">
+                                  {cIdx + 1}
+                                </span>
+                                <span className="font-bold text-stone-900 truncate">{c.name}</span>
+                                {descCount > 0 && (
+                                  <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold shrink-0">
+                                    +{descCount} keturunan
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuickToggleMemberGender(c)}
+                                  title="Klik untuk ubah Pria (L) / Wanita (P)"
+                                  className={`px-1.5 py-0.5 rounded-md border text-[10px] font-black transition ${
+                                    c.gender === 'P'
+                                      ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                      : 'bg-sky-100 text-sky-800 border-sky-300'
+                                  }`}
+                                >
+                                  {c.gender === 'P' ? '👩 P' : '👨 L'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={cIdx <= 0}
+                                  onClick={() => handleMoveSiblingOrder(c.id, 'up')}
+                                  title="Geser ke atas (Kakak) — keturunan ikut otomatis"
+                                  className="px-1.5 py-0.5 rounded-md bg-stone-100 hover:bg-amber-200 disabled:opacity-30 border border-stone-300 text-stone-800 font-black text-[10px] transition"
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={cIdx >= currentQuickExistingChildren.length - 1}
+                                  onClick={() => handleMoveSiblingOrder(c.id, 'down')}
+                                  title="Geser ke bawah (Adik) — keturunan ikut otomatis"
+                                  className="px-1.5 py-0.5 rounded-md bg-stone-100 hover:bg-amber-200 disabled:opacity-30 border border-stone-300 text-stone-800 font-black text-[10px] transition"
+                                >
+                                  ↓
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        <p className="text-[10px] text-emerald-900/80 leading-snug pt-0.5">
+                          💡 Tekan <strong>↑ / ↓</strong> untuk tukar posisi Kakak–Adik langsung. Semua anak &amp; cucu yang sudah dibuat otomatis ikut tanpa perlu buat ulang.
+                        </p>
+                      </div>
+                    ) : (
+                      <span className="text-stone-400 italic text-[11px]">Belum ada anak tercatat</span>
+                    )}
                   </div>
                 </div>
 
@@ -5331,27 +5610,47 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
               {quickParsedChildren.length > 0 && (
                 <div className="p-3 bg-stone-100 rounded-xl space-y-2 border border-stone-200">
                   <div className="text-[10px] font-bold uppercase text-stone-600 tracking-wider">
-                    Pratinjau Urutan Kakak & Adik (Klik L/P untuk ubah jenis kelamin):
+                    Pratinjau Urutan Kakak & Adik (Klik L/P untuk gender, ↑/↓ untuk tukar urutan):
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-40 overflow-y-auto">
+                  <div className="grid grid-cols-1 gap-1.5 max-h-44 overflow-y-auto">
                     {quickParsedChildren.map((child, idx) => (
-                      <div key={idx} className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-stone-200 text-xs shadow-2xs">
-                        <div className="flex items-center gap-1.5 truncate">
-                          <span className="w-5 h-5 rounded-full bg-stone-200 flex items-center justify-center font-mono font-bold text-[10px] text-stone-700">
+                      <div key={idx} className="flex items-center justify-between gap-2 bg-white px-2.5 py-1.5 rounded-lg border border-stone-200 text-xs shadow-2xs">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                          <span className="w-5 h-5 rounded-full bg-stone-200 flex items-center justify-center font-mono font-bold text-[10px] text-stone-700 shrink-0">
                             {idx + 1}
                           </span>
                           <span className="font-bold text-stone-900 block truncate">{child.name}</span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleToggleParsedGender(idx)}
-                          className={`px-2 py-0.5 rounded text-[10px] font-black border transition ${
-                            child.gender === 'L' ? 'bg-sky-100 text-sky-800 border-sky-300' : 'bg-rose-100 text-rose-800 border-rose-300'
-                          }`}
-                        >
-                          {child.gender === 'L' ? '👨 L' : '👩 P'}
-                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleParsedGender(idx)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-black border transition ${
+                              child.gender === 'L' ? 'bg-sky-100 text-sky-800 border-sky-300' : 'bg-rose-100 text-rose-800 border-rose-300'
+                            }`}
+                          >
+                            {child.gender === 'L' ? '👨 L' : '👩 P'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx <= 0}
+                            onClick={() => handleMoveQuickParsedChild(idx, 'up')}
+                            title="Naikkan jadi Kakak"
+                            className="px-1.5 py-0.5 rounded bg-stone-100 hover:bg-amber-200 disabled:opacity-30 border border-stone-300 text-stone-800 font-black text-[10px]"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx >= quickParsedChildren.length - 1}
+                            onClick={() => handleMoveQuickParsedChild(idx, 'down')}
+                            title="Turunkan jadi Adik"
+                            className="px-1.5 py-0.5 rounded bg-stone-100 hover:bg-amber-200 disabled:opacity-30 border border-stone-300 text-stone-800 font-black text-[10px]"
+                          >
+                            ↓
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -5521,7 +5820,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <div>
                 <label className="text-[11px] font-bold text-stone-700 block mb-1">Tahun Lahir</label>
                 <input
@@ -5530,7 +5829,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                   value={birthYearInput}
                   onChange={(e) => setBirthYearInput(e.target.value)}
                   placeholder="1968"
-                  className="w-full px-3 py-2 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:border-emerald-500 font-mono"
+                  className="w-full px-2.5 py-2 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:border-emerald-500 font-mono"
                 />
               </div>
               <div>
@@ -5542,7 +5841,17 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                   value={deathYearInput}
                   onChange={(e) => setDeathYearInput(e.target.value)}
                   placeholder={isDeceasedInput ? '2020' : '-'}
-                  className="w-full px-3 py-2 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:border-emerald-500 font-mono disabled:opacity-50"
+                  className="w-full px-2.5 py-2 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:border-emerald-500 font-mono disabled:opacity-50"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-bold text-stone-700 block mb-1">Kota / Asal</label>
+                <input
+                  type="text"
+                  value={cityInput}
+                  onChange={(e) => setCityInput(e.target.value)}
+                  placeholder="Yogyakarta"
+                  className="w-full px-2.5 py-2 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:border-emerald-500"
                 />
               </div>
             </div>
@@ -5855,11 +6164,35 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
               {selectedMemberChildren.length > 0 && (
                 <div className="pt-0.5">
                   <span className="text-stone-500 block mb-1">👶 Anak / Keturunan ({selectedMemberChildren.length}):</span>
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap gap-1.5">
                     {selectedMemberChildren.map((c, cIdx) => (
-                      <span key={c.id} className="px-2 py-0.5 rounded-lg bg-white border border-stone-200 text-[11px] font-bold text-stone-800">
-                        {cIdx + 1}. {c.name}
-                      </span>
+                      <div key={c.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white border border-stone-200 text-[11px] font-bold text-stone-800">
+                        <span>{cIdx + 1}.</span>
+                        <span>{c.gender === 'P' ? '👩' : '👨'}</span>
+                        <span>{c.name}</span>
+                        {selectedMemberChildren.length > 1 && (
+                          <span className="inline-flex items-center gap-0.5 ml-0.5">
+                            <button
+                              type="button"
+                              disabled={cIdx <= 0}
+                              onClick={() => handleMoveSiblingOrder(c.id, 'up')}
+                              className="px-1 rounded bg-stone-100 hover:bg-amber-200 disabled:opacity-30 text-[9px] font-black border border-stone-300"
+                              title="Naikkan urutan (Kakak)"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              disabled={cIdx >= selectedMemberChildren.length - 1}
+                              onClick={() => handleMoveSiblingOrder(c.id, 'down')}
+                              className="px-1 rounded bg-stone-100 hover:bg-amber-200 disabled:opacity-30 text-[9px] font-black border border-stone-300"
+                              title="Turunkan urutan (Adik)"
+                            >
+                              ↓
+                            </button>
+                          </span>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </div>

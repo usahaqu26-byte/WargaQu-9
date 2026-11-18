@@ -14,6 +14,7 @@ import {
   Lock,
   Smartphone,
   Cloud,
+  Monitor,
 } from 'lucide-react';
 import { AUTH_SYNC_EVENT, AuthAccount, AuthService } from '../../services/authService';
 import { RT_SYNC_EVENT, RtSiagaStorage, WargaMember } from '../../services/rtSiagaStorage';
@@ -24,6 +25,13 @@ import {
 } from '../../services/firebaseSyncService';
 import { EncryptedBackupPanel } from '../common/EncryptedBackupPanel';
 import { AutoBackupResetPanel } from '../common/AutoBackupResetPanel';
+import { LinkedDevicesSection } from './DevicePairingPanel';
+import { DevicePairingService } from '../../services/devicePairingService';
+import {
+  DesktopViewportMode,
+  VIEWPORT_MODE_SYNC_EVENT,
+  ViewportLayoutService,
+} from '../../services/viewportLayoutService';
 
 interface AccountViewProps {
   onBack: () => void;
@@ -57,6 +65,12 @@ export const AccountView: React.FC<AccountViewProps> = ({
     () => FirebaseSyncService.getCurrentUser()?.email || ''
   );
   const [cloudConnecting, setCloudConnecting] = useState<boolean>(false);
+  const [pendingPairToken, setPendingPairToken] = useState<string>(() =>
+    DevicePairingService.getPendingPairToken()
+  );
+  const [viewportMode, setViewportMode] = useState<DesktopViewportMode>(() =>
+    ViewportLayoutService.getMode()
+  );
 
   useEffect(() => {
     const sync = () => {
@@ -73,15 +87,25 @@ export const AccountView: React.FC<AccountViewProps> = ({
         setGuardianInput(cfg.guardianContact || '');
       }
     };
+    const onPairArrived = () => {
+      setPendingPairToken(DevicePairingService.getPendingPairToken());
+    };
+    const onViewportSync = () => {
+      setViewportMode(ViewportLayoutService.getMode());
+    };
     window.addEventListener(AUTH_SYNC_EVENT, sync);
     window.addEventListener(RT_SYNC_EVENT, sync);
     window.addEventListener(ZERO_TRUST_SYNC_EVENT, sync);
     window.addEventListener(FIREBASE_AUTH_SYNC_EVENT, sync);
+    window.addEventListener('wargaqu-pair-invite-arrived', onPairArrived);
+    window.addEventListener(VIEWPORT_MODE_SYNC_EVENT, onViewportSync);
     return () => {
       window.removeEventListener(AUTH_SYNC_EVENT, sync);
       window.removeEventListener(RT_SYNC_EVENT, sync);
       window.removeEventListener(ZERO_TRUST_SYNC_EVENT, sync);
       window.removeEventListener(FIREBASE_AUTH_SYNC_EVENT, sync);
+      window.removeEventListener('wargaqu-pair-invite-arrived', onPairArrived);
+      window.removeEventListener(VIEWPORT_MODE_SYNC_EVENT, onViewportSync);
     };
   }, []);
 
@@ -162,35 +186,39 @@ export const AccountView: React.FC<AccountViewProps> = ({
 
   return (
     <div className="w-full h-full bg-white flex flex-col overflow-hidden text-slate-800">
-      <header className="bg-white border-b border-slate-200 px-4 pt-4 pb-3 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2.5">
-          <button
-            onClick={onBack}
-            className="w-10 h-10 -ml-1 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-700"
-            title="Kembali"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div>
-            <h1 className="text-base font-extrabold text-slate-900">Akun &amp; Pengaturan</h1>
-            <p className="text-[11px] text-slate-500">
-              Identitas tunggal Email &amp; No HP untuk semua modul
-            </p>
+      <header className="bg-white border-b border-slate-200 px-4 lg:px-6 pt-4 pb-3 shrink-0">
+        <div className="max-w-5xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={onBack}
+              className="w-10 h-10 -ml-1 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-700"
+              title="Kembali"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div>
+              <h1 className="text-base font-extrabold text-slate-900">Akun &amp; Pengaturan</h1>
+              <p className="text-[11px] text-slate-500">
+                Identitas tunggal Email, No HP &amp; Tautan Laptop/PC
+              </p>
+            </div>
           </div>
-        </div>
 
-        {account && (
-          <button
-            onClick={handleLogout}
-            className="min-h-[36px] px-2.5 border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-lg text-[11px] font-bold flex items-center gap-1"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Keluar</span>
-          </button>
-        )}
+          {account && (
+            <button
+              onClick={handleLogout}
+              className="min-h-[36px] px-2.5 border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-lg text-[11px] font-bold flex items-center gap-1"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Keluar</span>
+            </button>
+          )}
+        </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto divide-y divide-slate-200">
+      <main className="flex-1 overflow-y-auto">
+        <div className="max-w-5xl mx-auto divide-y divide-slate-200 lg:divide-y-0 lg:grid lg:grid-cols-2 lg:gap-6 lg:p-6">
+          <div className="divide-y divide-slate-200 lg:border lg:border-slate-200 lg:rounded-2xl lg:overflow-hidden lg:bg-white lg:self-start">
         {/* Form Login / Edit Akun */}
         <section className="p-4 space-y-3">
           {isFrozen && (
@@ -369,6 +397,57 @@ export const AccountView: React.FC<AccountViewProps> = ({
           </section>
         )}
 
+        {/* Buka di Laptop / PC via Barcode QR (WhatsApp Web Style) */}
+        <LinkedDevicesSection
+          showNotification={showNotification}
+          initialPendingPairToken={pendingPairToken}
+        />
+
+        {/* Preferensi Tampilan Layar Laptop / PC */}
+        <section className="p-4 space-y-2.5 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Monitor className="w-4 h-4 text-emerald-700" />
+              <span className="font-extrabold text-slate-900">
+                Tampilan Layar di Laptop / PC
+              </span>
+            </div>
+            <span className="text-[11px] text-slate-500">Responsif</span>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5 bg-slate-100 p-1 rounded-xl">
+            {(
+              [
+                { id: 'auto', label: 'Otomatis' },
+                { id: 'desktop', label: 'Layar Lebar' },
+                { id: 'mobile', label: 'Bingkai HP' },
+              ] as const
+            ).map(opt => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => {
+                  ViewportLayoutService.setMode(opt.id);
+                  setViewportMode(opt.id);
+                  showNotification(`Mode tampilan diatur: ${opt.label}`);
+                }}
+                className={`min-h-[36px] rounded-lg font-bold text-[11px] transition ${
+                  viewportMode === opt.id
+                    ? 'bg-white text-emerald-800 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-slate-500 leading-snug">
+            Otomatis melebar di monitor Laptop/PC agar Kanvas LeluhurQu, RtQu &amp; UsahaQu lebih
+            lega, dan tetap ringkas saat dibuka di HP.
+          </p>
+        </section>
+        </div>
+
+        <div className="divide-y divide-slate-200 lg:border lg:border-slate-200 lg:rounded-2xl lg:overflow-hidden lg:bg-white lg:self-start">
         {/* Auto-Backup HP & Google Drive (Sistem Timpa) + Safe Reset */}
         <section className="p-4 space-y-3 bg-slate-50/40">
           <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
@@ -483,6 +562,8 @@ export const AccountView: React.FC<AccountViewProps> = ({
             </div>
           ))}
         </section>
+        </div>
+        </div>
       </main>
     </div>
   );

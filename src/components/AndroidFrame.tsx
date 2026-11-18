@@ -1,12 +1,17 @@
 import React, { useEffect, useState } from 'react';
+import {
+  DesktopViewportMode,
+  VIEWPORT_MODE_SYNC_EVENT,
+  ViewportLayoutService,
+} from '../services/viewportLayoutService';
 
 interface AndroidFrameProps {
   children: React.ReactNode;
 }
 
-function detectViewportLayout() {
+function detectViewportLayout(mode: DesktopViewportMode) {
   if (typeof window === 'undefined') {
-    return { isFullBleed: true, rootFontPx: 16 };
+    return { isFullBleed: true, isDesktopWide: false, rootFontPx: 16 };
   }
 
   const ua = navigator.userAgent || '';
@@ -20,8 +25,11 @@ function detectViewportLayout() {
   const isPortrait = vh >= vw;
   const minScreenDim = Math.min(window.screen?.width || vw, window.screen?.height || vh);
 
-  // Full-bleed edge-to-edge on all phones, tablets, foldables, or viewports under desktop width
-  const isFullBleed = hasTouch || isPortrait || vw < 1024;
+  const isDesktopScreen = !hasTouch && !isPortrait && vw >= 1024;
+
+  // Full-bleed edge-to-edge on all phones/tablets AND on Laptop/PC unless user explicitly picks "mobile" frame preview
+  const isFullBleed = !isDesktopScreen || mode !== 'mobile';
+  const isDesktopWide = isDesktopScreen && mode !== 'mobile';
 
   // If a phone browser (e.g. Chrome "Situs desktop" or wide WebView) forces a ~700-980px layout width
   // onto a physical ~360-540px screen, scale root fontSize (rem) so text & spacing match native phone scale.
@@ -31,15 +39,17 @@ function detectViewportLayout() {
     rootFontPx = Math.round(Math.min(34, Math.max(18, ratio * 15)));
   }
 
-  return { isFullBleed, rootFontPx };
+  return { isFullBleed, isDesktopWide, rootFontPx };
 }
 
 export const AndroidFrame: React.FC<AndroidFrameProps> = ({ children }) => {
-  const [layout, setLayout] = useState(() => detectViewportLayout());
+  const [mode, setMode] = useState<DesktopViewportMode>(() => ViewportLayoutService.getMode());
+  const [layout, setLayout] = useState(() => detectViewportLayout(ViewportLayoutService.getMode()));
 
   useEffect(() => {
-    const update = () => {
-      const next = detectViewportLayout();
+    const update = (nextMode?: DesktopViewportMode) => {
+      const effectiveMode = nextMode ?? ViewportLayoutService.getMode();
+      const next = detectViewportLayout(effectiveMode);
       setLayout(next);
       if (typeof document !== 'undefined') {
         document.documentElement.style.fontSize =
@@ -47,17 +57,27 @@ export const AndroidFrame: React.FC<AndroidFrameProps> = ({ children }) => {
       }
     };
 
-    update();
-    window.addEventListener('resize', update);
-    window.addEventListener('orientationchange', update);
+    const onResize = () => update();
+    const onModeChange = (ev: Event) => {
+      const nextMode =
+        (ev as CustomEvent<DesktopViewportMode>).detail || ViewportLayoutService.getMode();
+      setMode(nextMode);
+      update(nextMode);
+    };
+
+    update(mode);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    window.addEventListener(VIEWPORT_MODE_SYNC_EVENT, onModeChange);
     return () => {
-      window.removeEventListener('resize', update);
-      window.removeEventListener('orientationchange', update);
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+      window.removeEventListener(VIEWPORT_MODE_SYNC_EVENT, onModeChange);
       if (typeof document !== 'undefined') {
         document.documentElement.style.fontSize = '';
       }
     };
-  }, []);
+  }, [mode]);
 
   return (
     <div
@@ -65,10 +85,10 @@ export const AndroidFrame: React.FC<AndroidFrameProps> = ({ children }) => {
         layout.isFullBleed ? 'bg-[#f0fdf4]' : 'bg-emerald-950/15'
       }`}
     >
-      {/* Auto-adaptive container: full-bleed on HP/tablet/mobile, clean centered frame on wide desktop */}
+      {/* Adaptive shell: full-screen responsive on HP & Laptop/PC, optional phone frame preview on desktop */}
       <div
         className={`w-full h-full max-h-full flex flex-col relative bg-[#f0fdf4] overflow-hidden ${
-          layout.isFullBleed ? 'max-w-none' : 'max-w-md shadow-2xl'
+          layout.isFullBleed ? 'max-w-none' : 'max-w-md shadow-2xl border-x border-emerald-200/70'
         }`}
       >
         {children}

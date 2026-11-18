@@ -58,6 +58,8 @@ import {
   GuideOverlayMode,
   analyzeTrahForSmartLayout,
   computeOptimalCardScale,
+  computeMergedCardMetrics,
+  formatMemberLifeSubtitle,
   generateSmartLayoutFromTable,
 } from './smartGridLayouts';
 
@@ -66,9 +68,17 @@ export type CanvasTheme = 'dark' | 'light';
 export type CanvasBackground = '' | 'bg-gunung' | 'bg-pohon' | 'bg-galaksi';
 export type GridPaperSize = 'a4' | 'a3' | 'a2' | 'a1' | 'a0';
 export type GridPaperOrientation = 'landscape' | 'portrait';
-export type CardDisplayMode = 'full' | 'name_only' | 'photo_only';
-export type PhotoFrameSize = 'bulat' | '2x3' | '3x4' | '4x6';
+export type CardDisplayMode = 'full' | 'photo_name' | 'name_only' | 'photo_only';
+export type PhotoFrameSize = 'kotak' | 'bulat' | '2x3' | '3x4' | '4x6';
+export type GridPhotoShape = 'kotak' | 'bulat' | 'segi6';
+export type GenGradientPaletteId =
+  | 'none'
+  | 'royal_emerald'
+  | 'ocean_blue'
+  | 'amber_earth'
+  | 'violet_dusk';
 export type ConnectorLineStyle = 'pcb90' | 'pcb45' | 'straight' | 'curved';
+export type EdgePortSide = 'auto' | 'top' | 'bottom' | 'left' | 'right';
 export type CaptionPosition =
   | 'bottom-bar'
   | 'bottom-right'
@@ -95,6 +105,9 @@ export interface MergedCardMember {
   wafat: boolean;
   gender?: 'L' | 'P';
   genLevel?: number;
+  parentMemberId?: string;
+  depthInModule?: number;
+  isSpouseOf?: string;
   customBgColor?: string;
   customBorderColor?: string;
   relX: number;
@@ -115,6 +128,9 @@ export interface InteractiveNode {
   customBgColor?: string;
   customBorderColor?: string;
   genLevel?: number;
+  scaleMultiplier?: number;
+  modularSubLayout?: 'grid' | 'I' | 'L';
+  modularHeadMemberId?: string;
   mergedMembers?: MergedCardMember[];
   mergedCols?: number;
   mergedEdgesSnapshot?: InteractiveEdge[];
@@ -126,6 +142,10 @@ export interface InteractiveEdge {
   type: 'couple' | 'child';
   offsetX?: number;
   offsetY?: number;
+  dotPos?: number;
+  hideDot?: boolean;
+  fromPort?: EdgePortSide;
+  toPort?: EdgePortSide;
 }
 
 export interface SavedGridDesign {
@@ -139,10 +159,18 @@ export interface SavedGridDesign {
   paperOrientation: GridPaperOrientation;
   cardDisplayMode: CardDisplayMode;
   photoFrameSize: PhotoFrameSize;
+  photoShape?: GridPhotoShape;
   cardScale?: number;
   showGenGuides?: boolean;
   guideOverlayMode?: GuideOverlayMode;
   linesOnTop?: boolean;
+  showLineDots?: boolean;
+  showEndpointDots?: boolean;
+  genGradientPalette?: GenGradientPaletteId;
+  cardGapMm?: number;
+  modularG12Position?: 'top' | 'center';
+  focalRootMemberId?: string;
+  maxVisibleDepth?: number;
   theme: CanvasTheme;
   bgStyle: CanvasBackground;
   lineStyle?: ConnectorLineStyle;
@@ -152,6 +180,8 @@ export interface SavedGridDesign {
   cardBgColor?: string;
   cardBorderColor?: string;
   captionInfo?: CanvasCaptionInfo;
+  activePresetId?: SmartPresetId;
+  structureSig?: string;
 }
 
 export interface InteractiveGridCanvasViewProps {
@@ -164,11 +194,15 @@ export interface InteractiveGridCanvasViewProps {
       gender?: 'L' | 'P';
       isDeceased?: boolean;
       photoUrl?: string;
+      birthYear?: string;
+      deathYear?: string;
+      city?: string;
     }
   ) => void;
   showNotification: (msg: string) => void;
   defaultCuratorName?: string;
   defaultCreatedYear?: string;
+  defaultPhotoShape?: GridPhotoShape;
 }
 
 // Ukuran Kertas Standar A0 - A4 pada skala 96 DPI (proporsional cetak)
@@ -184,11 +218,149 @@ const GRID_PAPER_MAP: Record<
 };
 
 const PHOTO_DIMENSIONS: Record<PhotoFrameSize, { w: number; h: number; label: string }> = {
-  bulat: { w: 56, h: 56, label: 'Bulat' },
+  kotak: { w: 58, h: 58, label: 'Kotak 1:1' },
+  bulat: { w: 56, h: 56, label: 'Bulat 1:1' },
   '2x3': { w: 56, h: 84, label: '2×3' },
   '3x4': { w: 66, h: 88, label: '3×4' },
   '4x6': { w: 80, h: 120, label: '4×6' },
 };
+
+const HEXAGON_CLIP_PATH = 'polygon(50% 0%, 96% 25%, 96% 75%, 50% 100%, 4% 75%, 4% 25%)';
+
+// Palet Gradasi Generasi: G1 paling Tua/Gelap -> G2, G3 -> G5+ makin Muda/Cerah
+const GEN_GRADIENT_PALETTES: Record<
+  Exclude<GenGradientPaletteId, 'none'>,
+  {
+    label: string;
+    stops: Array<{ bg: string; border: string; line: string }>;
+  }
+> = {
+  royal_emerald: {
+    label: 'Zamrud Tua ➔ Mint Cerah',
+    stops: [
+      { bg: '#022c22', border: '#10b981', line: '#065f46' }, // G1 paling gelap
+      { bg: '#064e3b', border: '#34d399', line: '#059669' }, // G2
+      { bg: '#047857', border: '#6ee7b7', line: '#10b981' }, // G3
+      { bg: '#34d399', border: '#065f46', line: '#34d399' }, // G4 cerah
+      { bg: '#a7f3d0', border: '#047857', line: '#6ee7b7' }, // G5 muda
+      { bg: '#ecfdf5', border: '#10b981', line: '#a7f3d0' }, // G6+ paling cerah
+    ],
+  },
+  ocean_blue: {
+    label: 'Biru Samudra ➔ Langit Cerah',
+    stops: [
+      { bg: '#0f172a', border: '#38bdf8', line: '#1e3a8a' },
+      { bg: '#1e3a8a', border: '#60a5fa', line: '#1d4ed8' },
+      { bg: '#1d4ed8', border: '#93c5fd', line: '#3b82f6' },
+      { bg: '#60a5fa', border: '#1e3a8a', line: '#60a5fa' },
+      { bg: '#bfdbfe', border: '#2563eb', line: '#93c5fd' },
+      { bg: '#eff6ff', border: '#3b82f6', line: '#bfdbfe' },
+    ],
+  },
+  amber_earth: {
+    label: 'Coklat Emas ➔ Krem Cerah',
+    stops: [
+      { bg: '#451a03', border: '#f59e0b', line: '#78350f' },
+      { bg: '#78350f', border: '#fbbf24', line: '#b45309' },
+      { bg: '#b45309', border: '#fcd34d', line: '#d97706' },
+      { bg: '#fbbf24', border: '#78350f', line: '#f59e0b' },
+      { bg: '#fde68a', border: '#b45309', line: '#fcd34d' },
+      { bg: '#fffbeb', border: '#d97706', line: '#fde68a' },
+    ],
+  },
+  violet_dusk: {
+    label: 'Ungu Tua ➔ Lavender Cerah',
+    stops: [
+      { bg: '#2e1065', border: '#c084fc', line: '#581c87' },
+      { bg: '#4c1d95', border: '#d8b4fe', line: '#7e22ce' },
+      { bg: '#6d28d9', border: '#e9d5ff', line: '#9333ea' },
+      { bg: '#a855f7', border: '#4c1d95', line: '#c084fc' },
+      { bg: '#e9d5ff', border: '#7e22ce', line: '#d8b4fe' },
+      { bg: '#faf5ff', border: '#9333ea', line: '#e9d5ff' },
+    ],
+  },
+};
+
+function getGenGradientStyle(
+  paletteId: GenGradientPaletteId,
+  genLevel = 0
+): { bg: string; border: string; line: string } | null {
+  if (paletteId === 'none') return null;
+  const pal = GEN_GRADIENT_PALETTES[paletteId];
+  if (!pal) return null;
+  const idx = Math.max(0, Math.min(pal.stops.length - 1, Math.floor(genLevel)));
+  return pal.stops[idx];
+}
+
+// Saring anggota berdasarkan Jendela Fokus Cabang & Kedalaman Generasi (Solusi G1 s/d G20+ anti-kecil)
+function buildWindowedMembers(
+  allMembers: FamilyMember[],
+  focalRootId: string,
+  maxVisibleDepth: number
+): {
+  members: FamilyMember[];
+  focalMember: FamilyMember | null;
+  maxRawGen: number;
+} {
+  const maxRawGen = allMembers.reduce(
+    (mx, m) => Math.max(mx, m.generationLevel ?? 0),
+    0
+  );
+  if (!allMembers || allMembers.length === 0) {
+    return { members: [], focalMember: null, maxRawGen: 0 };
+  }
+
+  let scoped = allMembers;
+  let focalMember: FamilyMember | null = null;
+  let baseDepth = 0;
+
+  if (focalRootId && focalRootId !== 'all') {
+    const target = allMembers.find((m) => m.id === focalRootId);
+    if (target) {
+      focalMember = target;
+      baseDepth = target.generationLevel ?? 0;
+      const childrenByParent = new Map<string, FamilyMember[]>();
+      allMembers.forEach((m) => {
+        if (m.parentId) {
+          if (!childrenByParent.has(m.parentId)) childrenByParent.set(m.parentId, []);
+          childrenByParent.get(m.parentId)!.push(m);
+        }
+      });
+      const subtree: FamilyMember[] = [];
+      const visited = new Set<string>();
+      const walk = (m: FamilyMember, relDepth: number) => {
+        if (visited.has(m.id)) return;
+        if (maxVisibleDepth > 0 && relDepth >= maxVisibleDepth) return;
+        visited.add(m.id);
+        subtree.push({
+          ...m,
+          parentId: m.id === target.id ? null : m.parentId,
+          generationLevel: relDepth,
+        });
+        (childrenByParent.get(m.id) || []).forEach((ch) => walk(ch, relDepth + 1));
+      };
+      walk(target, 0);
+      scoped = subtree;
+      return { members: scoped, focalMember, maxRawGen };
+    }
+  }
+
+  if (maxVisibleDepth > 0) {
+    const minGen = allMembers.reduce(
+      (mn, m) => Math.min(mn, m.generationLevel ?? 0),
+      Infinity
+    );
+    const startGen = Number.isFinite(minGen) ? minGen : baseDepth;
+    scoped = allMembers
+      .filter((m) => (m.generationLevel ?? 0) - startGen < maxVisibleDepth)
+      .map((m) => ({
+        ...m,
+        generationLevel: Math.max(0, (m.generationLevel ?? 0) - startGen),
+      }));
+  }
+
+  return { members: scoped, focalMember, maxRawGen };
+}
 
 const SNAP_SIZE = 20;
 const DESIGNS_STORAGE_PREFIX = 'leluhurqu_grid_designs_v2_';
@@ -268,98 +440,10 @@ function getScaledPhotoDim(
   photoSize: PhotoFrameSize,
   cardScale = 1
 ): { w: number; h: number } {
-  const base = PHOTO_DIMENSIONS[photoSize];
+  const base = PHOTO_DIMENSIONS[photoSize] || PHOTO_DIMENSIONS['3x4'];
   return {
     w: Math.max(28, Math.round(base.w * cardScale)),
     h: Math.max(28, Math.round(base.h * cardScale)),
-  };
-}
-
-function getMergedGridMetrics(
-  membersCount: number,
-  displayMode: CardDisplayMode,
-  photoSize: PhotoFrameSize,
-  cardScale = 1,
-  customCols?: number
-): {
-  cols: number;
-  rows: number;
-  cellW: number;
-  cellH: number;
-  gap: number;
-  padX: number;
-  padY: number;
-  headerH: number;
-  w: number;
-  h: number;
-} {
-  const defaultCols =
-    membersCount <= 2
-      ? 2
-      : membersCount === 3
-      ? 3
-      : membersCount === 4
-      ? 2
-      : membersCount <= 6
-      ? 3
-      : 4;
-  const cols = Math.max(1, Math.min(membersCount, customCols || defaultCols));
-  const rows = Math.max(1, Math.ceil(membersCount / cols));
-  const pDim = PHOTO_DIMENSIONS[photoSize];
-  const gap = Math.max(4, Math.round((displayMode === 'photo_only' ? 6 : 8) * cardScale));
-  const padX = Math.max(6, Math.round(10 * cardScale));
-  const padY = Math.max(6, Math.round(10 * cardScale));
-
-  if (displayMode === 'photo_only') {
-    const cellW = Math.max(28, Math.round(pDim.w * cardScale));
-    const cellH = Math.max(28, Math.round(pDim.h * cardScale));
-    return {
-      cols,
-      rows,
-      cellW,
-      cellH,
-      gap,
-      padX,
-      padY,
-      headerH: 0,
-      w: cols * cellW + (cols - 1) * gap + padX * 2,
-      h: rows * cellH + (rows - 1) * gap + padY * 2,
-    };
-  }
-
-  if (displayMode === 'name_only') {
-    const cellW = Math.max(76, Math.round(114 * cardScale));
-    const cellH = Math.max(22, Math.round(28 * cardScale));
-    const headerH = Math.max(16, Math.round(20 * cardScale));
-    return {
-      cols,
-      rows,
-      cellW,
-      cellH,
-      gap,
-      padX,
-      padY,
-      headerH,
-      w: cols * cellW + (cols - 1) * gap + padX * 2,
-      h: headerH + rows * cellH + (rows - 1) * gap + padY * 2,
-    };
-  }
-
-  // 'full'
-  const cellW = Math.max(76, Math.round(Math.max(98, pDim.w + 28) * cardScale));
-  const cellH = Math.max(58, Math.round((pDim.h + 46) * cardScale));
-  const headerH = Math.max(18, Math.round(24 * cardScale));
-  return {
-    cols,
-    rows,
-    cellW,
-    cellH,
-    gap,
-    padX,
-    padY,
-    headerH,
-    w: cols * cellW + (cols - 1) * gap + padX * 2,
-    h: headerH + rows * cellH + (rows - 1) * gap + padY * 2,
   };
 }
 
@@ -370,37 +454,50 @@ function getNodeSize(
   photoSize: PhotoFrameSize,
   cardScale = 1
 ): { w: number; h: number } {
+  const effScale = cardScale * (node.scaleMultiplier ?? 1);
+
   if (node.mergedMembers && node.mergedMembers.length >= 2) {
-    const m = getMergedGridMetrics(
+    const m = computeMergedCardMetrics(
       node.mergedMembers.length,
       displayMode,
       photoSize,
-      cardScale,
-      node.mergedCols
+      effScale,
+      node.mergedCols,
+      node.modularSubLayout || 'grid',
+      node.mergedMembers
     );
     return { w: m.w, h: m.h };
   }
 
-  const pDim = PHOTO_DIMENSIONS[photoSize];
+  const pDim = PHOTO_DIMENSIONS[photoSize] || PHOTO_DIMENSIONS['3x4'];
 
   if (displayMode === 'photo_only') {
     return {
-      w: Math.round((pDim.w + 10) * cardScale),
-      h: Math.round((pDim.h + 10) * cardScale),
+      w: Math.round((pDim.w + 8) * effScale),
+      h: Math.round((pDim.h + 8) * effScale),
+    };
+  }
+
+  if (displayMode === 'photo_name') {
+    return {
+      w: Math.round(Math.max(106, pDim.w + 16) * effScale),
+      h: Math.round((pDim.h + 30) * effScale),
     };
   }
 
   if (displayMode === 'name_only') {
-    const estW = Math.max(96, Math.min(180, node.name.length * 8 + 26));
+    const nameLen = node.name.trim().length;
+    const estW = Math.max(104, Math.min(200, nameLen * 7.5 + 24));
+    const estLines = nameLen > 24 ? 2 : 1;
     return {
-      w: Math.round(estW * cardScale),
-      h: Math.max(24, Math.round(38 * cardScale)),
+      w: Math.round(estW * effScale),
+      h: Math.max(26, Math.round((estLines > 1 ? 48 : 38) * effScale)),
     };
   }
 
-  // 'full'
-  const cardW = Math.round(Math.max(145, pDim.w + 36) * cardScale);
-  const cardH = Math.round((pDim.h + 52) * cardScale);
+  // 'full' (jarak card-ke-foto 1mm (~4px) + nama + tahun lahir/wafat - kota)
+  const cardW = Math.round(Math.max(142, pDim.w + 26) * effScale);
+  const cardH = Math.round((pDim.h + 50) * effScale);
   return { w: cardW, h: cardH };
 }
 
@@ -555,7 +652,9 @@ function getSmartPorts(
   edgeType: 'couple' | 'child',
   displayMode: CardDisplayMode,
   photoSize: PhotoFrameSize,
-  cardScale = 1
+  cardScale = 1,
+  fromPortOverride?: EdgePortSide,
+  toPortOverride?: EdgePortSide
 ) {
   const s1 = getNodeSize(n1, displayMode, photoSize, cardScale);
   const s2 = getNodeSize(n2, displayMode, photoSize, cardScale);
@@ -578,52 +677,60 @@ function getSmartPorts(
   const cy1 = n1.y + s1.h / 2;
   const cy2 = n2.y + s2.h / 2;
 
+  let autoPair: {
+    a: { x: number; y: number };
+    b: { x: number; y: number };
+    dir1: PortKey;
+    dir2: PortKey;
+  };
+
   // Pasangan di baris sejajar selalu tersambung rapi kiri-kanan
   if (
     edgeType === 'couple' &&
     Math.abs(cy1 - cy2) < Math.max(s1.h, s2.h) * 0.75
   ) {
     if (n2.x >= n1.x) {
-      return { a: p1.right, b: p2.left, dir1: 'right' as PortKey, dir2: 'left' as PortKey };
+      autoPair = { a: p1.right, b: p2.left, dir1: 'right', dir2: 'left' };
+    } else {
+      autoPair = { a: p1.left, b: p2.right, dir1: 'left', dir2: 'right' };
     }
-    return { a: p1.left, b: p2.right, dir1: 'left' as PortKey, dir2: 'right' as PortKey };
-  }
-
-  // Keturunan ke bawah -> jalur PCB keluar dari port bawah ke port atas anak
-  if (edgeType === 'child' && n2.y >= n1.y + s1.h * 0.6) {
-    return { a: p1.bottom, b: p2.top, dir1: 'bottom' as PortKey, dir2: 'top' as PortKey };
-  }
-
-  // Keturunan cabang horizontal kiri ke kanan
-  if (
+  } else if (edgeType === 'child' && n2.y >= n1.y + s1.h * 0.6) {
+    // Keturunan ke bawah -> jalur PCB keluar dari port bawah ke port atas anak
+    autoPair = { a: p1.bottom, b: p2.top, dir1: 'bottom', dir2: 'top' };
+  } else if (
     edgeType === 'child' &&
     n2.x >= n1.x + s1.w * 0.75 &&
     Math.abs(cy1 - cy2) < 200
   ) {
-    return { a: p1.right, b: p2.left, dir1: 'right' as PortKey, dir2: 'left' as PortKey };
+    // Keturunan cabang horizontal kiri ke kanan
+    autoPair = { a: p1.right, b: p2.left, dir1: 'right', dir2: 'left' };
+  } else {
+    let minDist = Infinity;
+    autoPair = { a: p1.bottom, b: p2.top, dir1: 'bottom', dir2: 'top' };
+    (Object.keys(p1) as PortKey[]).forEach((k1) => {
+      (Object.keys(p2) as PortKey[]).forEach((k2) => {
+        const dx = p1[k1].x - p2[k2].x;
+        const dy = p1[k1].y - p2[k2].y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < minDist) {
+          minDist = dist;
+          autoPair = { a: p1[k1], b: p2[k2], dir1: k1, dir2: k2 };
+        }
+      });
+    });
   }
 
-  let minDist = Infinity;
-  let bestPair: {
-    a: { x: number; y: number };
-    b: { x: number; y: number };
-    dir1: PortKey;
-    dir2: PortKey;
-  } = { a: p1.bottom, b: p2.top, dir1: 'bottom', dir2: 'top' };
+  const finalDir1 =
+    fromPortOverride && fromPortOverride !== 'auto' ? fromPortOverride : autoPair.dir1;
+  const finalDir2 =
+    toPortOverride && toPortOverride !== 'auto' ? toPortOverride : autoPair.dir2;
 
-  (Object.keys(p1) as PortKey[]).forEach((k1) => {
-    (Object.keys(p2) as PortKey[]).forEach((k2) => {
-      const dx = p1[k1].x - p2[k2].x;
-      const dy = p1[k1].y - p2[k2].y;
-      const dist = Math.hypot(dx, dy);
-      if (dist < minDist) {
-        minDist = dist;
-        bestPair = { a: p1[k1], b: p2[k2], dir1: k1, dir2: k2 };
-      }
-    });
-  });
-
-  return bestPair;
+  return {
+    a: p1[finalDir1],
+    b: p2[finalDir2],
+    dir1: finalDir1,
+    dir2: finalDir2,
+  };
 }
 
 interface NodeObstacleBox {
@@ -679,22 +786,23 @@ function buildConnectorRoute(
   const ay = Math.round(a.y * 10) / 10;
   const bx = Math.round(b.x * 10) / 10;
   const by = Math.round(b.y * 10) / 10;
-  const midX = Math.round(((ax + bx) / 2) * 10) / 10;
-  const midY = Math.round(((ay + by) / 2) * 10) / 10;
+  const dotT = Math.max(0.15, Math.min(0.85, edge.dotPos ?? 0.5));
+  const midX = Math.round((ax + (bx - ax) * dotT) * 10) / 10;
+  const midY = Math.round((ay + (by - ay) * dotT) * 10) / 10;
 
   const ox = edge.offsetX ?? 0;
   const oy = edge.offsetY ?? 0;
-  const isCustomOffset = Math.abs(ox) >= 2 || Math.abs(oy) >= 2;
+  const isCustomOffset = Math.abs(ox) >= 2 || Math.abs(oy) >= 2 || Math.abs(dotT - 0.5) >= 0.03;
   const otherBoxes = obstacles.filter((ob) => ob.id !== edge.from && ob.id !== edge.to);
 
   if (lineStyle === 'straight') {
     const hx = Math.round((midX + ox) * 10) / 10;
     const hy = Math.round((midY + oy) * 10) / 10;
-    if (!isCustomOffset) {
+    if (Math.abs(ox) < 2 && Math.abs(oy) < 2) {
       return {
         d: `M ${ax} ${ay} L ${bx} ${by}`,
         handle: { x: midX, y: midY },
-        isCustomOffset: false,
+        isCustomOffset: Math.abs(dotT - 0.5) >= 0.03,
       };
     }
     return {
@@ -707,16 +815,22 @@ function buildConnectorRoute(
   if (lineStyle === 'curved') {
     const hx = Math.round((midX + ox) * 10) / 10;
     const hy = Math.round((midY + oy) * 10) / 10;
-    if (!isCustomOffset) {
+    if (Math.abs(ox) < 2 && Math.abs(oy) < 2) {
+      const halfY = Math.round(((ay + by) / 2) * 10) / 10;
+      const halfX = Math.round(((ax + bx) / 2) * 10) / 10;
       const d =
         dir1 === 'top' || dir1 === 'bottom'
-          ? `M ${ax} ${ay} C ${ax} ${midY}, ${bx} ${midY}, ${bx} ${by}`
-          : `M ${ax} ${ay} C ${midX} ${ay}, ${midX} ${by}, ${bx} ${by}`;
-      return { d, handle: { x: midX, y: midY }, isCustomOffset: false };
+          ? `M ${ax} ${ay} C ${ax} ${halfY}, ${bx} ${halfY}, ${bx} ${by}`
+          : `M ${ax} ${ay} C ${halfX} ${ay}, ${halfX} ${by}, ${bx} ${by}`;
+      return {
+        d,
+        handle: { x: midX, y: midY },
+        isCustomOffset: Math.abs(dotT - 0.5) >= 0.03,
+      };
     }
     // Kurva kuadratik yang persis melewati titik dot (hx, hy)
-    const cx = Math.round((2 * hx - midX) * 10) / 10;
-    const cy = Math.round((2 * hy - midY) * 10) / 10;
+    const cx = Math.round((2 * hx - (ax + bx) / 2) * 10) / 10;
+    const cy = Math.round((2 * hy - (ay + by) / 2) * 10) / 10;
     return {
       d: `M ${ax} ${ay} Q ${cx} ${cy}, ${bx} ${by}`,
       handle: { x: hx, y: hy },
@@ -1040,9 +1154,7 @@ function reconcileCanvasWithMembers(
             if (!mm.memberId) return mm;
             const m = memberMap.get(mm.memberId);
             if (!m) return mm;
-            const nextSub =
-              m.callName ||
-              (m.birthYear ? `Lahir ${m.birthYear}` : `Gen ${m.generationLevel}`);
+            const nextSub = formatMemberLifeSubtitle(m);
             const nextPhoto = m.photoUrl || mm.photo;
             if (
               mm.name !== m.name ||
@@ -1066,10 +1178,24 @@ function reconcileCanvasWithMembers(
             return mm;
           });
 
+        // Pastikan urutan sibling di dalam Card Gabungan mengikuti orderIndex terbaru
+        const sortedMerged = [...syncedMerged].sort((a, b) => {
+          const ma = a.memberId ? memberMap.get(a.memberId) : undefined;
+          const mb = b.memberId ? memberMap.get(b.memberId) : undefined;
+          if (ma && mb && (ma.parentId || null) === (mb.parentId || null)) {
+            return (ma.orderIndex || 0) - (mb.orderIndex || 0);
+          }
+          return 0;
+        });
+        const orderChangedInMerged = sortedMerged.some(
+          (item, idx) => item !== syncedMerged[idx]
+        );
+        if (orderChangedInMerged) subChanged = true;
+
         if (subChanged) {
           changed = true;
-          if (syncedMerged.length === 1) {
-            const lone = syncedMerged[0];
+          if (sortedMerged.length === 1) {
+            const lone = sortedMerged[0];
             return {
               id: lone.originalNodeId || n.id,
               memberId: lone.memberId,
@@ -1085,7 +1211,15 @@ function reconcileCanvasWithMembers(
               customBorderColor: lone.customBorderColor || n.customBorderColor,
             };
           }
-          return { ...n, mergedMembers: syncedMerged };
+          return {
+            ...n,
+            mergedMembers: sortedMerged.map((mm) => {
+              const member = mm.memberId ? memberMap.get(mm.memberId) : undefined;
+              return member
+                ? { ...mm, parentMemberId: member.parentId ?? mm.parentMemberId }
+                : mm;
+            }),
+          };
         }
         return n;
       }
@@ -1093,9 +1227,7 @@ function reconcileCanvasWithMembers(
       if (!n.memberId) return n;
       const m = memberMap.get(n.memberId);
       if (!m) return n;
-      const nextSub =
-        m.callName ||
-        (m.birthYear ? `Lahir ${m.birthYear}` : `Gen ${m.generationLevel}`);
+      const nextSub = formatMemberLifeSubtitle(m);
       const nextPhoto = m.photoUrl || n.photo;
       if (
         n.name !== m.name ||
@@ -1118,6 +1250,33 @@ function reconcileCanvasWithMembers(
       }
       return n;
     });
+
+  // Sinkronkan gender kartu pasangan (tanpa memberId) agar tetap berlawanan dengan pasangan utamanya
+  const primaryGenderByNodeId = new Map<string, 'L' | 'P'>();
+  updatedNodes.forEach((n) => {
+    if (n.memberId && n.gender) {
+      primaryGenderByNodeId.set(n.id, n.gender);
+    }
+  });
+  const spouseInferredGenderByNodeId = new Map<string, 'L' | 'P'>();
+  currentEdges.forEach((e) => {
+    if (e.type !== 'couple') return;
+    const gFrom = primaryGenderByNodeId.get(e.from);
+    const gTo = primaryGenderByNodeId.get(e.to);
+    if (gFrom && !gTo) {
+      spouseInferredGenderByNodeId.set(e.to, gFrom === 'L' ? 'P' : 'L');
+    } else if (gTo && !gFrom) {
+      spouseInferredGenderByNodeId.set(e.from, gTo === 'L' ? 'P' : 'L');
+    }
+  });
+  updatedNodes.forEach((n, idx) => {
+    if (n.memberId) return;
+    const expectedSpouseGender = spouseInferredGenderByNodeId.get(n.id);
+    if (expectedSpouseGender && n.gender !== expectedSpouseGender) {
+      changed = true;
+      updatedNodes[idx] = { ...n, gender: expectedSpouseGender };
+    }
+  });
 
   const survivingIds = new Set(updatedNodes.map((n) => n.id));
   const updatedEdges: InteractiveEdge[] = currentEdges.filter((e) => {
@@ -1239,9 +1398,7 @@ function reconcileCanvasWithMembers(
         id: nodeId,
         memberId: m.id,
         name: m.name,
-        sub:
-          m.callName ||
-          (m.birthYear ? `Lahir ${m.birthYear}` : `Gen ${m.generationLevel}`),
+        sub: formatMemberLifeSubtitle(m),
         x: spot.x,
         y: spot.y,
         photo: m.photoUrl || '',
@@ -1297,7 +1454,15 @@ function reconcileCanvasWithMembers(
 
 export const InteractiveGridCanvasView: React.FC<
   InteractiveGridCanvasViewProps
-> = ({ activeTrah, onOpenTable, onSyncMember, showNotification, defaultCuratorName = '', defaultCreatedYear = '' }) => {
+> = ({
+  activeTrah,
+  onOpenTable,
+  onSyncMember,
+  showNotification,
+  defaultCuratorName = '',
+  defaultCreatedYear = '',
+  defaultPhotoShape = 'kotak',
+}) => {
   // Mode Layout & Interaksi
   const [layoutMode, setLayoutMode] = useState<GridLayoutMode>('manual');
   const [isMultiSelectMode, setIsMultiSelectMode] = useState<boolean>(false);
@@ -1309,27 +1474,39 @@ export const InteractiveGridCanvasView: React.FC<
   const [paperOrientation, setPaperOrientation] =
     useState<GridPaperOrientation>('landscape');
 
-  // Gaya Card & Foto (Lengkap / Nama Saja / Foto Saja + Bulat / 2x3 / 3x4 / 4x6 + Skala)
+  // Gaya Card & Foto (Lengkap / Foto+Nama / Nama / Foto + Kotak/Bulat/Segi6 + Skala + Jarak mm)
   const [cardDisplayMode, setCardDisplayMode] =
     useState<CardDisplayMode>('full');
   const [photoFrameSize, setPhotoFrameSize] =
     useState<PhotoFrameSize>('3x4');
+  const [photoShape, setPhotoShape] = useState<GridPhotoShape>(defaultPhotoShape);
   const [cardScale, setCardScale] = useState<number>(1);
+  const [cardGapMm, setCardGapMm] = useState<number>(2.5);
+  const [modularG12Position, setModularG12Position] = useState<'top' | 'center'>('top');
   const [showGenGuides, setShowGenGuides] = useState<boolean>(true);
   const [guideOverlayMode, setGuideOverlayMode] = useState<GuideOverlayMode>('gen_bands');
-  const [smartCategoryFilter, setSmartCategoryFilter] = useState<'all' | 'kotak9' | 'orbit' | 'klasik'>('all');
+  const [smartCategoryFilter, setSmartCategoryFilter] = useState<
+    'all' | 'kotak9' | 'orbit' | 'modular' | 'klasik'
+  >('all');
 
-  // Tema & Background
+  // Jendela Fokus Cabang & Kedalaman Generasi (Solusi Skalabilitas s/d G20+)
+  const [focalRootMemberId, setFocalRootMemberId] = useState<string>('all');
+  const [maxVisibleDepth, setMaxVisibleDepth] = useState<number>(0);
+
+  // Tema, Gradasi Generasi & Background
   const [theme, setTheme] = useState<CanvasTheme>('dark');
   const [bgStyle, setBgStyle] = useState<CanvasBackground>('');
+  const [genGradientPalette, setGenGradientPalette] =
+    useState<GenGradientPaletteId>('none');
 
-  // Gaya Garis PCB / Warna Garis & Card / Keterangan Poster
+  // Gaya Garis PCB / Dot Jalur & Ujung / Warna Garis & Card / Keterangan Poster
   const [lineStyle, setLineStyle] = useState<ConnectorLineStyle>('pcb90');
   const [lineThickness, setLineThickness] = useState<number>(2.5);
   const [childLineColor, setChildLineColor] = useState<string>('');
   const [coupleLineColor, setCoupleLineColor] = useState<string>('#f59e0b');
   const [linesOnTop, setLinesOnTop] = useState<boolean>(false);
   const [showLineDots, setShowLineDots] = useState<boolean>(true);
+  const [showEndpointDots, setShowEndpointDots] = useState<boolean>(true);
   const [cardBgColor, setCardBgColor] = useState<string>('');
   const [cardBorderColor, setCardBorderColor] = useState<string>('');
   const [captionInfo, setCaptionInfo] = useState<CanvasCaptionInfo>(() =>
@@ -1430,12 +1607,14 @@ export const InteractiveGridCanvasView: React.FC<
   // Manajemen Desain Tersimpan
   const [savedDesigns, setSavedDesigns] = useState<SavedGridDesign[]>([]);
   const [activeDesignId, setActiveDesignId] = useState<string>('');
+  const [activePresetId, setActivePresetId] = useState<SmartPresetId | undefined>(undefined);
   const [designNameInput, setDesignNameInput] = useState<string>('');
 
   const boardRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const loadedTrahIdRef = useRef<string>('');
   const lastMemberSigRef = useRef<string>('');
+  const lastStructureSigRef = useRef<string>('');
 
   // Pinch-to-Zoom 2 Jari & Pan Hand Ref
   const pinchRef = useRef<{
@@ -1500,9 +1679,112 @@ export const InteractiveGridCanvasView: React.FC<
     members
       .map(
         (m) =>
-          `${m.id}:${m.name}:${m.gender}:${m.callName || ''}:${m.birthYear || ''}:${m.deathYear || ''}:${m.isDeceased ? 1 : 0}:${m.photoUrl || ''}:${m.parentId || ''}:${m.generationLevel}:${(m.spouses || []).map((s) => s.name).join('|')}`
+          `${m.id}:${m.name}:${m.gender}:${m.orderIndex || 0}:${m.callName || ''}:${m.birthYear || ''}:${m.deathYear || ''}:${m.isDeceased ? 1 : 0}:${m.photoUrl || ''}:${m.parentId || ''}:${m.generationLevel}:${m.notes || ''}:${(m.spouses || []).map((s) => `${s.name}:${s.status}`).join('|')}`
       )
       .join(';');
+
+  const getStructureSig = (members: FamilyMember[]) =>
+    [...members]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((m) => `${m.id}:${m.parentId || ''}:${m.orderIndex || 0}`)
+      .join(';');
+
+  const windowedData = useMemo(
+    () => buildWindowedMembers(activeTrah.members, focalRootMemberId, maxVisibleDepth),
+    [activeTrah.members, focalRootMemberId, maxVisibleDepth]
+  );
+  const windowedMembers = windowedData.members;
+
+  // Helper menyusun ulang preset aktif sambil mempertahankan foto/warna kustom saat urutan adik-kakak berubah
+  const rebuildSmartLayoutPreservingVisuals = useCallback(
+    (
+      members: FamilyMember[],
+      presetId: SmartPresetId,
+      prevNodes: InteractiveNode[],
+      pW: number,
+      pH: number,
+      cMode: CardDisplayMode,
+      phSize: PhotoFrameSize,
+      cScale: number,
+      gapMm = cardGapMm,
+      modPos = modularG12Position
+    ) => {
+      const sampleDim = getNodeSize(
+        { id: 'tmp', name: 'Nama Anggota', sub: '', x: 0, y: 0, photo: '', wafat: false },
+        cMode,
+        phSize,
+        cScale
+      );
+      const rebuilt = generateSmartLayoutFromTable(
+        members,
+        presetId,
+        pW,
+        pH,
+        sampleDim,
+        {
+          displayMode: cMode,
+          photoSize: phSize,
+          cardScale: cScale,
+          cardGapMm: gapMm,
+          modularG12Position: modPos,
+        }
+      );
+      const oldStyleByMemberId = new Map<
+        string,
+        { photo?: string; customBgColor?: string; customBorderColor?: string }
+      >();
+      prevNodes.forEach((n) => {
+        if (n.memberId) {
+          oldStyleByMemberId.set(n.memberId, {
+            photo: n.photo,
+            customBgColor: n.customBgColor,
+            customBorderColor: n.customBorderColor,
+          });
+        }
+        if (n.mergedMembers) {
+          n.mergedMembers.forEach((mm) => {
+            if (mm.memberId) {
+              oldStyleByMemberId.set(mm.memberId, {
+                photo: mm.photo,
+                customBgColor: mm.customBgColor,
+                customBorderColor: mm.customBorderColor,
+              });
+            }
+          });
+        }
+      });
+
+      const hydratedNodes = rebuilt.nodes.map((n) => {
+        if (n.mergedMembers) {
+          return {
+            ...n,
+            mergedMembers: n.mergedMembers.map((mm) => {
+              const saved = mm.memberId ? oldStyleByMemberId.get(mm.memberId) : undefined;
+              return saved
+                ? {
+                    ...mm,
+                    photo: mm.photo || saved.photo || '',
+                    customBgColor: saved.customBgColor ?? mm.customBgColor,
+                    customBorderColor: saved.customBorderColor ?? mm.customBorderColor,
+                  }
+                : mm;
+            }),
+          };
+        }
+        const saved = n.memberId ? oldStyleByMemberId.get(n.memberId) : undefined;
+        return saved
+          ? {
+              ...n,
+              photo: n.photo || saved.photo || '',
+              customBgColor: saved.customBgColor ?? n.customBgColor,
+              customBorderColor: saved.customBorderColor ?? n.customBorderColor,
+            }
+          : n;
+      });
+      return { nodes: hydratedNodes, edges: rebuilt.edges };
+    },
+    [cardGapMm, modularG12Position]
+  );
 
   // Muat daftar desain tersimpan saat berganti Trah
   useEffect(() => {
@@ -1519,13 +1801,26 @@ export const InteractiveGridCanvasView: React.FC<
       console.warn('Gagal muat daftar desain:', e);
     }
 
+    const currentStructSig = getStructureSig(activeTrah.members);
+
     if (loadedDesigns.length > 0) {
       let target =
         loadedDesigns.find((d) => d.id === storedActiveId) || loadedDesigns[0];
       let nextDesigns = loadedDesigns;
+      const inferredPreset: SmartPresetId =
+        target.activePresetId ||
+        (activeTrah.members.length > 16 ? 'hierarchy_grid_fill' : 'subtree_vertical');
 
-      // Sinkronkan desain tersimpan dengan data anggota terbaru (mis. saat baru tambah/impor banyak anggota di Excel lalu kembali ke Grid!)
-      if (activeTrah.members.length > 0) {
+      const targetFocal = target.focalRootMemberId || 'all';
+      const targetDepth = target.maxVisibleDepth ?? 0;
+      const targetMembers = buildWindowedMembers(
+        activeTrah.members,
+        targetFocal,
+        targetDepth
+      ).members;
+
+      // Sinkronkan desain tersimpan dengan data anggota terbaru (termasuk perubahan gender & posisi adik-kakak dari Excel / Isi Cepat!)
+      if (targetMembers.length > 0) {
         const pKey = target.paperSize || 'a3';
         const pDim = GRID_PAPER_MAP[pKey];
         const pW = (target.paperOrientation || 'landscape') === 'landscape' ? pDim.pxW : pDim.pxH;
@@ -1534,25 +1829,44 @@ export const InteractiveGridCanvasView: React.FC<
         const phSize = target.photoFrameSize || '3x4';
         const curScale = target.cardScale ?? 1;
 
-        const reconciled = reconcileCanvasWithMembers(
-          target.nodes,
-          target.edges,
-          activeTrah.members,
-          pW,
-          pH,
-          cMode,
-          phSize,
-          curScale,
-          false
+        const structChanged = Boolean(
+          target.structureSig && target.structureSig !== currentStructSig
         );
+        const hasManualOnlyMerge =
+          target.nodes.some((n) => n.mergedMembers && n.mergedMembers.length >= 2) &&
+          inferredPreset !== 'kotak_9_baris_g45_gabung' &&
+          inferredPreset !== 'orbit_elips_gabung' &&
+          inferredPreset !== 'modular_g3_I' &&
+          inferredPreset !== 'modular_g3_L';
 
-        if (reconciled.changed) {
+        if (structChanged && !hasManualOnlyMerge) {
+          const optScale = computeOptimalCardScale(
+            targetMembers,
+            pW,
+            pH,
+            cMode,
+            phSize,
+            inferredPreset
+          );
+          const rebuilt = rebuildSmartLayoutPreservingVisuals(
+            targetMembers,
+            inferredPreset,
+            target.nodes,
+            pW,
+            pH,
+            cMode,
+            phSize,
+            target.cardScale ?? optScale,
+            target.cardGapMm ?? 2.5,
+            target.modularG12Position ?? 'top'
+          );
           target = {
             ...target,
-            nodes: reconciled.nodes,
-            edges: reconciled.edges,
-            quickText: buildQuickTextFromTrah(activeTrah.members),
-            cardScale: reconciled.nextScale,
+            nodes: rebuilt.nodes,
+            edges: rebuilt.edges,
+            quickText: buildQuickTextFromTrah(targetMembers),
+            activePresetId: inferredPreset,
+            structureSig: currentStructSig,
             updatedAt: Date.now(),
           };
           nextDesigns = loadedDesigns.map((d) => (d.id === target.id ? target : d));
@@ -1561,11 +1875,43 @@ export const InteractiveGridCanvasView: React.FC<
           } catch (err) {
             console.warn(err);
           }
+        } else {
+          const reconciled = reconcileCanvasWithMembers(
+            target.nodes,
+            target.edges,
+            targetMembers,
+            pW,
+            pH,
+            cMode,
+            phSize,
+            curScale,
+            false
+          );
+
+          if (reconciled.changed || !target.structureSig || structChanged) {
+            target = {
+              ...target,
+              nodes: reconciled.nodes,
+              edges: reconciled.edges,
+              quickText: buildQuickTextFromTrah(targetMembers),
+              cardScale: reconciled.nextScale,
+              activePresetId: target.activePresetId || inferredPreset,
+              structureSig: currentStructSig,
+              updatedAt: Date.now(),
+            };
+            nextDesigns = loadedDesigns.map((d) => (d.id === target.id ? target : d));
+            try {
+              localStorage.setItem(designsStorageKey, JSON.stringify(nextDesigns));
+            } catch (err) {
+              console.warn(err);
+            }
+          }
         }
       }
 
       setSavedDesigns(nextDesigns);
       setActiveDesignId(target.id);
+      setActivePresetId(target.activePresetId || inferredPreset);
       setDesignNameInput(target.name);
       setNodes(target.nodes);
       setEdges(target.edges);
@@ -1574,10 +1920,18 @@ export const InteractiveGridCanvasView: React.FC<
       setPaperOrientation(target.paperOrientation || 'landscape');
       setCardDisplayMode(target.cardDisplayMode || 'full');
       setPhotoFrameSize(target.photoFrameSize || '3x4');
+      setPhotoShape(target.photoShape || defaultPhotoShape);
       setCardScale(target.cardScale ?? 1);
+      setCardGapMm(target.cardGapMm ?? 2.5);
+      setModularG12Position(target.modularG12Position ?? 'top');
+      setFocalRootMemberId(target.focalRootMemberId || 'all');
+      setMaxVisibleDepth(target.maxVisibleDepth ?? 0);
       setShowGenGuides(target.showGenGuides ?? true);
       setGuideOverlayMode(target.guideOverlayMode || 'gen_bands');
       setLinesOnTop(target.linesOnTop ?? false);
+      setShowLineDots(target.showLineDots ?? true);
+      setShowEndpointDots(target.showEndpointDots ?? true);
+      setGenGradientPalette(target.genGradientPalette || 'none');
       setTheme(target.theme || 'dark');
       setBgStyle(target.bgStyle || '');
       setLineStyle(target.lineStyle || 'pcb90');
@@ -1596,10 +1950,13 @@ export const InteractiveGridCanvasView: React.FC<
       setUndoCount(0);
       loadedTrahIdRef.current = activeTrah.id;
       lastMemberSigRef.current = getMemberSig(activeTrah.members);
+      lastStructureSigRef.current = currentStructSig;
       return;
     }
 
     // Buat desain awal otomatis di kertas A3 memakai skala kartu/foto optimal
+    const defaultPresetId: SmartPresetId =
+      activeTrah.members.length > 16 ? 'hierarchy_grid_fill' : 'subtree_vertical';
     const defaultPaperDim = GRID_PAPER_MAP.a3;
     const initScale = computeOptimalCardScale(
       activeTrah.members,
@@ -1616,7 +1973,7 @@ export const InteractiveGridCanvasView: React.FC<
     );
     const built = generateSmartLayoutFromTable(
       activeTrah.members,
-      activeTrah.members.length > 16 ? 'hierarchy_grid_fill' : 'subtree_vertical',
+      defaultPresetId,
       defaultPaperDim.pxW,
       defaultPaperDim.pxH,
       defaultCardDim
@@ -1638,9 +1995,17 @@ export const InteractiveGridCanvasView: React.FC<
       paperOrientation: 'landscape',
       cardDisplayMode: 'full',
       photoFrameSize: '3x4',
+      photoShape: defaultPhotoShape,
       cardScale: initScale,
+      cardGapMm: 2.5,
+      modularG12Position: 'top',
+      focalRootMemberId: 'all',
+      maxVisibleDepth: 0,
       showGenGuides: true,
       guideOverlayMode: 'gen_bands',
+      showLineDots: true,
+      showEndpointDots: true,
+      genGradientPalette: 'none',
       theme: 'dark',
       bgStyle: '',
       lineStyle: 'pcb90',
@@ -1650,12 +2015,23 @@ export const InteractiveGridCanvasView: React.FC<
       cardBgColor: '',
       cardBorderColor: '',
       captionInfo: defaultCap,
+      activePresetId: defaultPresetId,
+      structureSig: currentStructSig,
     };
+    setPhotoShape(defaultPhotoShape);
     setCardScale(initScale);
+    setCardGapMm(2.5);
+    setModularG12Position('top');
+    setFocalRootMemberId('all');
+    setMaxVisibleDepth(0);
+    setShowLineDots(true);
+    setShowEndpointDots(true);
+    setGenGradientPalette('none');
     setShowGenGuides(true);
     setGuideOverlayMode('gen_bands');
     setSavedDesigns([initialDesign]);
     setActiveDesignId(initialDesign.id);
+    setActivePresetId(defaultPresetId);
     setDesignNameInput(initialDesign.name);
     setNodes(initialDesign.nodes);
     setEdges(initialDesign.edges);
@@ -1672,6 +2048,7 @@ export const InteractiveGridCanvasView: React.FC<
     setUndoCount(0);
     loadedTrahIdRef.current = activeTrah.id;
     lastMemberSigRef.current = getMemberSig(activeTrah.members);
+    lastStructureSigRef.current = currentStructSig;
     try {
       localStorage.setItem(designsStorageKey, JSON.stringify([initialDesign]));
       localStorage.setItem(activeDesignIdKey, initialDesign.id);
@@ -1686,9 +2063,11 @@ export const InteractiveGridCanvasView: React.FC<
       overrideNodes?: InteractiveNode[],
       overrideEdges?: InteractiveEdge[],
       overrideQuickText?: string,
-      overrideCardScale?: number
+      overrideCardScale?: number,
+      overridePresetId?: SmartPresetId
     ) => {
       if (!activeDesignId) return;
+      const curStructSig = getStructureSig(activeTrah.members);
       setSavedDesigns((prev) => {
         const nextList = prev.map((d) =>
           d.id === activeDesignId
@@ -1702,10 +2081,18 @@ export const InteractiveGridCanvasView: React.FC<
                 paperOrientation,
                 cardDisplayMode,
                 photoFrameSize,
+                photoShape,
                 cardScale: overrideCardScale ?? cardScale,
+                cardGapMm,
+                modularG12Position,
+                focalRootMemberId,
+                maxVisibleDepth,
                 showGenGuides,
                 guideOverlayMode,
                 linesOnTop,
+                showLineDots,
+                showEndpointDots,
+                genGradientPalette,
                 theme,
                 bgStyle,
                 lineStyle,
@@ -1715,6 +2102,8 @@ export const InteractiveGridCanvasView: React.FC<
                 cardBgColor,
                 cardBorderColor,
                 captionInfo,
+                activePresetId: overridePresetId ?? activePresetId ?? d.activePresetId,
+                structureSig: curStructSig,
               }
             : d
         );
@@ -1728,6 +2117,8 @@ export const InteractiveGridCanvasView: React.FC<
     },
     [
       activeDesignId,
+      activePresetId,
+      activeTrah.members,
       nodes,
       edges,
       quickText,
@@ -1735,10 +2126,18 @@ export const InteractiveGridCanvasView: React.FC<
       paperOrientation,
       cardDisplayMode,
       photoFrameSize,
+      photoShape,
       cardScale,
+      cardGapMm,
+      modularG12Position,
+      focalRootMemberId,
+      maxVisibleDepth,
       showGenGuides,
       guideOverlayMode,
       linesOnTop,
+      showLineDots,
+      showEndpointDots,
+      genGradientPalette,
       theme,
       bgStyle,
       lineStyle,
@@ -1838,10 +2237,18 @@ export const InteractiveGridCanvasView: React.FC<
     paperOrientation,
     cardDisplayMode,
     photoFrameSize,
+    photoShape,
     cardScale,
+    cardGapMm,
+    modularG12Position,
+    focalRootMemberId,
+    maxVisibleDepth,
     showGenGuides,
     guideOverlayMode,
     linesOnTop,
+    showLineDots,
+    showEndpointDots,
+    genGradientPalette,
     theme,
     bgStyle,
     lineStyle,
@@ -1853,18 +2260,58 @@ export const InteractiveGridCanvasView: React.FC<
     captionInfo,
   ]);
 
-  // Sinkronisasi otomatis perubahan anggota dari Tabel Excel / Isi Cepat / Edit ke Kanvas Grid aktif
+  // Sinkronisasi otomatis perubahan anggota (gender, nama, urutan adik-kakak) dari Tabel Excel / Isi Cepat / Edit ke Kanvas Grid aktif
   useEffect(() => {
     if (!activeDesignId || loadedTrahIdRef.current !== activeTrah.id) return;
     const nextSig = getMemberSig(activeTrah.members);
     if (nextSig === lastMemberSigRef.current) return;
     lastMemberSigRef.current = nextSig;
 
-    const refreshedQuickText = buildQuickTextFromTrah(activeTrah.members);
+    const nextStructSig = getStructureSig(activeTrah.members);
+    const structChanged = Boolean(
+      lastStructureSigRef.current && nextStructSig !== lastStructureSigRef.current
+    );
+    lastStructureSigRef.current = nextStructSig;
+
+    const refreshedQuickText = buildQuickTextFromTrah(windowedMembers);
+    const presetToUse: SmartPresetId =
+      activePresetId ||
+      (windowedMembers.length > 16 ? 'hierarchy_grid_fill' : 'subtree_vertical');
+    const hasManualOnlyMerge =
+      nodes.some((n) => n.mergedMembers && n.mergedMembers.length >= 2) &&
+      presetToUse !== 'kotak_9_baris_g45_gabung' &&
+      presetToUse !== 'orbit_elips_gabung' &&
+      presetToUse !== 'modular_g3_I' &&
+      presetToUse !== 'modular_g3_L';
+
+    if (structChanged && !hasManualOnlyMerge && windowedMembers.length > 0) {
+      const rebuilt = rebuildSmartLayoutPreservingVisuals(
+        windowedMembers,
+        presetToUse,
+        nodes,
+        boardWidth,
+        boardHeight,
+        cardDisplayMode,
+        photoFrameSize,
+        cardScale
+      );
+      setNodes(rebuilt.nodes);
+      setEdges(rebuilt.edges);
+      setQuickText(refreshedQuickText);
+      persistCurrentDesign(
+        rebuilt.nodes,
+        rebuilt.edges,
+        refreshedQuickText,
+        cardScale,
+        presetToUse
+      );
+      return;
+    }
+
     const reconciled = reconcileCanvasWithMembers(
       nodes,
       edges,
-      activeTrah.members,
+      windowedMembers,
       boardWidth,
       boardHeight,
       cardDisplayMode,
@@ -1885,7 +2332,7 @@ export const InteractiveGridCanvasView: React.FC<
       refreshedQuickText,
       reconciled.nextScale
     );
-  }, [activeTrah.id, activeTrah.members, activeDesignId]);
+  }, [activeTrah.id, activeTrah.members, windowedMembers, activeDesignId, activePresetId]);
 
   // Auto-Fit kanvas ke viewport layar (menyesuaikan lebar & tinggi agar kertas Potret/Lanskap utuh)
   const handleFitScreen = useCallback(() => {
@@ -1986,9 +2433,18 @@ export const InteractiveGridCanvasView: React.FC<
               paperOrientation,
               cardDisplayMode,
               photoFrameSize,
+              photoShape,
               cardScale,
+              cardGapMm,
+              modularG12Position,
+              focalRootMemberId,
+              maxVisibleDepth,
               showGenGuides,
               guideOverlayMode,
+              linesOnTop,
+              showLineDots,
+              showEndpointDots,
+              genGradientPalette,
               theme,
               bgStyle,
               lineStyle,
@@ -1998,6 +2454,7 @@ export const InteractiveGridCanvasView: React.FC<
               cardBgColor,
               cardBorderColor,
               captionInfo,
+              activePresetId,
             }
           : d
       );
@@ -2013,9 +2470,18 @@ export const InteractiveGridCanvasView: React.FC<
         paperOrientation,
         cardDisplayMode,
         photoFrameSize,
+        photoShape,
         cardScale,
+        cardGapMm,
+        modularG12Position,
+        focalRootMemberId,
+        maxVisibleDepth,
         showGenGuides,
         guideOverlayMode,
+        linesOnTop,
+        showLineDots,
+        showEndpointDots,
+        genGradientPalette,
         theme,
         bgStyle,
         lineStyle,
@@ -2025,6 +2491,7 @@ export const InteractiveGridCanvasView: React.FC<
         cardBgColor,
         cardBorderColor,
         captionInfo,
+        activePresetId,
       };
       nextList = [created, ...savedDesigns];
       setActiveDesignId(created.id);
@@ -2049,8 +2516,8 @@ export const InteractiveGridCanvasView: React.FC<
     const built =
       mode === 'blank'
         ? { nodes: [], edges: [] }
-        : buildCanvasFromTrah(activeTrah.members, boardWidth);
-    const text = mode === 'blank' ? '' : buildQuickTextFromTrah(activeTrah.members);
+        : buildCanvasFromTrah(windowedMembers, boardWidth);
+    const text = mode === 'blank' ? '' : buildQuickTextFromTrah(windowedMembers);
 
     const freshDesign: SavedGridDesign = {
       id: newId,
@@ -2063,9 +2530,18 @@ export const InteractiveGridCanvasView: React.FC<
       paperOrientation,
       cardDisplayMode,
       photoFrameSize,
+      photoShape,
       cardScale,
+      cardGapMm,
+      modularG12Position,
+      focalRootMemberId,
+      maxVisibleDepth,
       showGenGuides,
       guideOverlayMode,
+      linesOnTop,
+      showLineDots,
+      showEndpointDots,
+      genGradientPalette,
       theme,
       bgStyle,
       lineStyle,
@@ -2075,6 +2551,7 @@ export const InteractiveGridCanvasView: React.FC<
       cardBgColor,
       cardBorderColor,
       captionInfo,
+      activePresetId,
     };
 
     const nextList = [freshDesign, ...savedDesigns];
@@ -2098,6 +2575,7 @@ export const InteractiveGridCanvasView: React.FC<
 
   const handleLoadDesign = (design: SavedGridDesign) => {
     setActiveDesignId(design.id);
+    setActivePresetId(design.activePresetId);
     setDesignNameInput(design.name);
     setNodes(design.nodes);
     setEdges(design.edges);
@@ -2106,10 +2584,18 @@ export const InteractiveGridCanvasView: React.FC<
     setPaperOrientation(design.paperOrientation || 'landscape');
     setCardDisplayMode(design.cardDisplayMode || 'full');
     setPhotoFrameSize(design.photoFrameSize || '3x4');
+    setPhotoShape(design.photoShape || defaultPhotoShape);
     setCardScale(design.cardScale ?? 1);
+    setCardGapMm(design.cardGapMm ?? 2.5);
+    setModularG12Position(design.modularG12Position ?? 'top');
+    setFocalRootMemberId(design.focalRootMemberId || 'all');
+    setMaxVisibleDepth(design.maxVisibleDepth ?? 0);
     setShowGenGuides(design.showGenGuides ?? true);
     setGuideOverlayMode(design.guideOverlayMode || 'gen_bands');
     setLinesOnTop(design.linesOnTop ?? false);
+    setShowLineDots(design.showLineDots ?? true);
+    setShowEndpointDots(design.showEndpointDots ?? true);
+    setGenGradientPalette(design.genGradientPalette || 'none');
     setTheme(design.theme || 'dark');
     setBgStyle(design.bgStyle || '');
     setLineStyle(design.lineStyle || 'pcb90');
@@ -2126,6 +2612,7 @@ export const InteractiveGridCanvasView: React.FC<
     setMoveAnchorId(null);
     undoStackRef.current = [];
     setUndoCount(0);
+    lastStructureSigRef.current = getStructureSig(activeTrah.members);
     try {
       localStorage.setItem(activeDesignIdKey, design.id);
     } catch (e) {
@@ -2161,8 +2648,24 @@ export const InteractiveGridCanvasView: React.FC<
       if (!raw) return;
       pushUndoSnapshot('Teks Auto-Grid');
 
-      const prevByName = new Map<string, InteractiveNode>();
-      nodes.forEach((n) => prevByName.set(n.name.trim().toLowerCase(), n));
+      const prevByName = new Map<
+        string,
+        { sub?: string; photo?: string; wafat?: boolean; gender?: 'L' | 'P'; memberId?: string }
+      >();
+      nodes.forEach((n) => {
+        prevByName.set(n.name.trim().toLowerCase(), n);
+        if (n.mergedMembers) {
+          n.mergedMembers.forEach((mm) => {
+            prevByName.set(mm.name.trim().toLowerCase(), mm);
+          });
+        }
+      });
+      const trahMemberByName = new Map<string, FamilyMember>();
+      activeTrah.members.forEach((m) => {
+        const key = m.name.trim().toLowerCase();
+        if (!trahMemberByName.has(key)) trahMemberByName.set(key, m);
+      });
+      const pendingMemberGenderSyncs: Array<{ memberId: string; gender: 'L' | 'P' }> = [];
 
       const nextNodes: InteractiveNode[] = [];
       const nextEdges: InteractiveEdge[] = [];
@@ -2203,12 +2706,12 @@ export const InteractiveGridCanvasView: React.FC<
 
             let cleanName = rawPersonName;
             let parsedGender: 'L' | 'P' | undefined;
-            if (/\((P|Pr|Perempuan|Wanita|Perp|F)\)/i.test(cleanName)) {
+            if (/\((P|Pr|Perempuan|Wanita|Perp|Cewek|F)\)/i.test(cleanName)) {
               parsedGender = 'P';
-              cleanName = cleanName.replace(/\((P|Pr|Perempuan|Wanita|Perp|F)\)/i, '').trim();
-            } else if (/\((L|Lk|Laki|Laki-laki|Pria|M)\)/i.test(cleanName)) {
+              cleanName = cleanName.replace(/\((P|Pr|Perempuan|Wanita|Perp|Cewek|F)\)/i, '').trim();
+            } else if (/\((L|Lk|Laki|Laki-laki|Pria|Cowok|M)\)/i.test(cleanName)) {
               parsedGender = 'L';
-              cleanName = cleanName.replace(/\((L|Lk|Laki|Laki-laki|Pria|M)\)/i, '').trim();
+              cleanName = cleanName.replace(/\((L|Lk|Laki|Laki-laki|Pria|Cowok|M)\)/i, '').trim();
             }
 
             const colIdx = itemIndex % maxCols;
@@ -2224,19 +2727,40 @@ export const InteractiveGridCanvasView: React.FC<
             const posY = startY + rowIdx * rowHeight + actualRowOffset * 130;
 
             const prev = prevByName.get(cleanName.toLowerCase());
+            const matchedTrahMember =
+              (prev?.memberId
+                ? activeTrah.members.find((m) => m.id === prev.memberId)
+                : undefined) || trahMemberByName.get(cleanName.toLowerCase());
+
+            const resolvedGender =
+              parsedGender ?? matchedTrahMember?.gender ?? prev?.gender;
+            if (
+              matchedTrahMember &&
+              parsedGender &&
+              matchedTrahMember.gender !== parsedGender
+            ) {
+              pendingMemberGenderSyncs.push({
+                memberId: matchedTrahMember.id,
+                gender: parsedGender,
+              });
+            }
 
             nextNodes.push({
               id,
               name: cleanName,
               sub:
                 prev?.sub ||
-                (rowIdx === 0 ? 'Leluhur Inti' : `Generasi ${rowIdx + 1}`),
+                (matchedTrahMember
+                  ? formatMemberLifeSubtitle(matchedTrahMember)
+                  : rowIdx === 0
+                  ? 'Leluhur Inti'
+                  : `Generasi ${rowIdx + 1}`),
               x: posX,
               y: posY,
-              photo: prev?.photo || '',
-              wafat: prev?.wafat || false,
-              gender: parsedGender ?? prev?.gender,
-              memberId: prev?.memberId,
+              photo: prev?.photo || matchedTrahMember?.photoUrl || '',
+              wafat: prev?.wafat ?? matchedTrahMember?.isDeceased ?? false,
+              gender: resolvedGender,
+              memberId: matchedTrahMember?.id ?? prev?.memberId,
             });
 
             if (pIdx > 0 && firstInGroup) {
@@ -2260,26 +2784,41 @@ export const InteractiveGridCanvasView: React.FC<
       setEdges(nextEdges);
       setSelectedIds([]);
       persistCurrentDesign(nextNodes, nextEdges, raw);
+      if (onSyncMember && pendingMemberGenderSyncs.length > 0) {
+        pendingMemberGenderSyncs.forEach(({ memberId, gender }) =>
+          onSyncMember(memberId, { gender })
+        );
+      }
       showNotification(
         `Auto-Grid menata ${nextNodes.length} kartu ke kertas ${paperDim.label}!`
       );
     },
-    [quickText, nodes, boardWidth, paperDim.label, persistCurrentDesign, pushUndoSnapshot, showNotification]
+    [quickText, nodes, activeTrah.members, boardWidth, paperDim.label, persistCurrentDesign, pushUndoSnapshot, onSyncMember, showNotification]
   );
 
   // =========================================================================
   // SMART REKOMENDASI TATA LETAK BERBASIS DATA TABEL (ANTI-SILANG)
   // =========================================================================
   const smartAnalysis = useMemo(
-    () => analyzeTrahForSmartLayout(activeTrah.members),
-    [activeTrah.members]
+    () => analyzeTrahForSmartLayout(windowedMembers),
+    [windowedMembers]
   );
 
   const handleApplySmartPreset = useCallback(
-    (presetId: SmartPresetId, overrideLockPaper?: boolean) => {
+    (
+      presetId: SmartPresetId,
+      overrideLockPaper?: boolean,
+      overrideMembers?: FamilyMember[],
+      overrideGapMm?: number,
+      overrideModPos?: 'top' | 'center'
+    ) => {
       const preset = SMART_LAYOUT_PRESETS.find((p) => p.id === presetId);
       if (!preset) return;
       pushUndoSnapshot(`Smart: ${preset.title}`);
+
+      const sourceMembers = overrideMembers ?? windowedMembers;
+      const effGapMm = overrideGapMm ?? cardGapMm;
+      const effModPos = overrideModPos ?? modularG12Position;
 
       const keepCurrentPaper =
         overrideLockPaper !== undefined ? overrideLockPaper : lockSelectedPaper;
@@ -2290,7 +2829,7 @@ export const InteractiveGridCanvasView: React.FC<
       let nextPhotoSize = photoFrameSize;
 
       if (!keepCurrentPaper) {
-        nextPaper = smartAnalysis.recommendedPaper;
+        nextPaper = analyzeTrahForSmartLayout(sourceMembers).recommendedPaper;
         setPaperSize(nextPaper);
       }
 
@@ -2308,6 +2847,9 @@ export const InteractiveGridCanvasView: React.FC<
         if (preset.recommendedLineStyle) {
           setLineStyle(preset.recommendedLineStyle);
         }
+        if (preset.recommendedGenGradient) {
+          setGenGradientPalette(preset.recommendedGenGradient as GenGradientPaletteId);
+        }
       }
 
       const targetPaperObj = GRID_PAPER_MAP[nextPaper];
@@ -2319,7 +2861,7 @@ export const InteractiveGridCanvasView: React.FC<
       // Hitung skala kartu/foto otomatis agar kertas pilihan (mis. A3) terisi pas: tidak terlalu kosong & tidak menumpuk
       const nextScale = applyRecommendedStyle
         ? computeOptimalCardScale(
-            activeTrah.members,
+            sourceMembers,
             targetW,
             targetH,
             nextCardMode,
@@ -2340,7 +2882,7 @@ export const InteractiveGridCanvasView: React.FC<
       );
 
       const result = generateSmartLayoutFromTable(
-        activeTrah.members,
+        sourceMembers,
         presetId,
         targetW,
         targetH,
@@ -2349,6 +2891,8 @@ export const InteractiveGridCanvasView: React.FC<
           displayMode: nextCardMode,
           photoSize: nextPhotoSize,
           cardScale: nextScale,
+          cardGapMm: effGapMm,
+          modularG12Position: effModPos,
         }
       );
 
@@ -2363,13 +2907,14 @@ export const InteractiveGridCanvasView: React.FC<
         setShowGenGuides(true);
       }
 
-      const refreshedText = buildQuickTextFromTrah(activeTrah.members);
+      const refreshedText = buildQuickTextFromTrah(sourceMembers);
+      setActivePresetId(presetId);
       setNodes(result.nodes);
       setEdges(result.edges);
       setQuickText(refreshedText);
       setSelectedIds([]);
       setLayoutMode('manual');
-      persistCurrentDesign(result.nodes, result.edges, refreshedText, nextScale);
+      persistCurrentDesign(result.nodes, result.edges, refreshedText, nextScale, presetId);
 
       showNotification(
         `Tata letak "${preset.title}" ditata pas di ${targetPaperObj.label} (Skala Foto ${Math.round(
@@ -2378,7 +2923,9 @@ export const InteractiveGridCanvasView: React.FC<
       );
     },
     [
-      activeTrah.members,
+      windowedMembers,
+      cardGapMm,
+      modularG12Position,
       lockSelectedPaper,
       applyRecommendedStyle,
       paperSize,
@@ -2386,7 +2933,6 @@ export const InteractiveGridCanvasView: React.FC<
       cardDisplayMode,
       photoFrameSize,
       cardScale,
-      smartAnalysis.recommendedPaper,
       persistCurrentDesign,
       pushUndoSnapshot,
       showNotification,
@@ -2396,46 +2942,115 @@ export const InteractiveGridCanvasView: React.FC<
   // Tombol cepat: sesuaikan skala kartu & foto otomatis agar kertas aktif terisi seimbang
   const handleAutoFitCardScale = useCallback(() => {
     pushUndoSnapshot('Pas-kan Skala Kertas');
+    const chosenPreset: SmartPresetId =
+      activePresetId ||
+      (windowedMembers.length > 16 ? 'hierarchy_grid_fill' : 'subtree_vertical');
     const optimal = computeOptimalCardScale(
-      activeTrah.members,
+      windowedMembers,
       boardWidth,
       boardHeight,
       cardDisplayMode,
-      photoFrameSize
+      photoFrameSize,
+      chosenPreset
     );
     setCardScale(optimal);
-    if (activeTrah.members.length > 0) {
-      const sampleDim = getNodeSize(
-        { id: 's', name: 'Nama Anggota', sub: '', x: 0, y: 0, photo: '', wafat: false },
-        cardDisplayMode,
-        photoFrameSize,
-        optimal
-      );
-      const rebuilt = generateSmartLayoutFromTable(
-        activeTrah.members,
-        'hierarchy_grid_fill',
+    if (windowedMembers.length > 0) {
+      const rebuilt = rebuildSmartLayoutPreservingVisuals(
+        windowedMembers,
+        chosenPreset,
+        nodes,
         boardWidth,
         boardHeight,
-        sampleDim
+        cardDisplayMode,
+        photoFrameSize,
+        optimal,
+        cardGapMm,
+        modularG12Position
       );
       setNodes(rebuilt.nodes);
       setEdges(rebuilt.edges);
-      persistCurrentDesign(rebuilt.nodes, rebuilt.edges);
+      persistCurrentDesign(rebuilt.nodes, rebuilt.edges, undefined, optimal, chosenPreset);
     }
     showNotification(
       `Skala kartu & foto disesuaikan ke ${Math.round(optimal * 100)}% agar pas isi ${paperDim.label}!`
     );
   }, [
-    activeTrah.members,
+    activePresetId,
+    windowedMembers,
+    nodes,
     boardWidth,
     boardHeight,
     cardDisplayMode,
     photoFrameSize,
+    cardGapMm,
+    modularG12Position,
     paperDim.label,
+    rebuildSmartLayoutPreservingVisuals,
     persistCurrentDesign,
     pushUndoSnapshot,
     showNotification,
   ]);
+
+  // Terapkan jarak antar card (1-5mm), pasangan menempel (0mm), dan anak lajang (1.5mm)
+  const handleApplyCardGap = useCallback(
+    (nextGapMm: number) => {
+      const clamped = Math.max(1, Math.min(5, nextGapMm));
+      setCardGapMm(clamped);
+      if (windowedMembers.length === 0) return;
+      pushUndoSnapshot(`Ubah Jarak Card (${clamped}mm)`);
+      const chosenPreset: SmartPresetId =
+        activePresetId ||
+        (windowedMembers.length > 16 ? 'hierarchy_grid_fill' : 'subtree_vertical');
+      const rebuilt = rebuildSmartLayoutPreservingVisuals(
+        windowedMembers,
+        chosenPreset,
+        nodes,
+        boardWidth,
+        boardHeight,
+        cardDisplayMode,
+        photoFrameSize,
+        cardScale,
+        clamped,
+        modularG12Position
+      );
+      setNodes(rebuilt.nodes);
+      setEdges(rebuilt.edges);
+      persistCurrentDesign(rebuilt.nodes, rebuilt.edges);
+      showNotification(
+        `Jarak kartu diatur ${clamped}mm (Pasangan menempel 0mm • Lajang 1.5mm)!`
+      );
+    },
+    [
+      windowedMembers,
+      activePresetId,
+      nodes,
+      boardWidth,
+      boardHeight,
+      cardDisplayMode,
+      photoFrameSize,
+      cardScale,
+      modularG12Position,
+      rebuildSmartLayoutPreservingVisuals,
+      persistCurrentDesign,
+      pushUndoSnapshot,
+      showNotification,
+    ]
+  );
+
+  // Terapkan Jendela Fokus Cabang & Kedalaman Generasi (Solusi G20+ Anti-Kecil)
+  const handleApplyFocalBranch = useCallback(
+    (nextFocalId: string, nextDepth: number) => {
+      setFocalRootMemberId(nextFocalId);
+      setMaxVisibleDepth(nextDepth);
+      const nextWin = buildWindowedMembers(activeTrah.members, nextFocalId, nextDepth);
+      if (nextWin.members.length === 0) return;
+      const chosenPreset: SmartPresetId =
+        activePresetId ||
+        (nextWin.members.length > 16 ? 'hierarchy_grid_fill' : 'subtree_vertical');
+      handleApplySmartPreset(chosenPreset, true, nextWin.members);
+    },
+    [activeTrah.members, activePresetId, handleApplySmartPreset]
+  );
 
   // =========================================================================
   // FITUR GROUP / UNGROUP (GABUNGKAN BEBERAPA KARTU)
@@ -2665,12 +3280,14 @@ export const InteractiveGridCanvasView: React.FC<
     const usedIds = new Set(remainingNodes.map((n) => n.id));
     const gapX = 14;
     const gapY = 22;
-    const gm = getMergedGridMetrics(
+    const gm = computeMergedCardMetrics(
       mergedNode.mergedMembers.length,
       cardDisplayMode,
       photoFrameSize,
-      cardScale,
-      mergedNode.mergedCols
+      cardScale * (mergedNode.scaleMultiplier ?? 1),
+      mergedNode.mergedCols,
+      mergedNode.modularSubLayout || 'grid',
+      mergedNode.mergedMembers
     );
     const cols = gm.cols;
 
@@ -2812,6 +3429,37 @@ export const InteractiveGridCanvasView: React.FC<
     const nextNodes = [...others, updatedTarget];
     setNodes(nextNodes);
     persistCurrentDesign(nextNodes, edges);
+  };
+
+  const handleUpdateModularSubLayout = (
+    nodeId: string,
+    subLayout: 'grid' | 'I' | 'L'
+  ) => {
+    const target = nodes.find((n) => n.id === nodeId);
+    if (!target?.mergedMembers || target.mergedMembers.length < 2) return;
+    pushUndoSnapshot(`Ubah Pola Card Modular (${subLayout})`);
+    const updatedTarget: InteractiveNode = {
+      ...target,
+      modularSubLayout: subLayout,
+    };
+    const nextSize = getNodeSize(
+      updatedTarget,
+      cardDisplayMode,
+      photoFrameSize,
+      cardScale
+    );
+    updatedTarget.x = Math.max(
+      16,
+      Math.min(Math.max(16, boardWidth - nextSize.w - 16), updatedTarget.x)
+    );
+    updatedTarget.y = Math.max(
+      58,
+      Math.min(Math.max(58, boardHeight - nextSize.h - 24), updatedTarget.y)
+    );
+    const nextNodes = nodes.map((n) => (n.id === nodeId ? updatedTarget : n));
+    setNodes(nextNodes);
+    persistCurrentDesign(nextNodes, edges);
+    showNotification(`Pola dalam card diubah ke tata letak ${subLayout}!`);
   };
 
   // Hitung kotak pembatas (bounding box) setiap Group agar terlihat jelas di kanvas
@@ -2986,7 +3634,17 @@ export const InteractiveGridCanvasView: React.FC<
   const resetEdgeOffset = (edgeIdx: number) => {
     pushUndoSnapshot('Reset Jalur Garis');
     const nextEdges = edges.map((ed, i) =>
-      i === edgeIdx ? { ...ed, offsetX: undefined, offsetY: undefined } : ed
+      i === edgeIdx
+        ? {
+            ...ed,
+            offsetX: undefined,
+            offsetY: undefined,
+            dotPos: undefined,
+            fromPort: undefined,
+            toPort: undefined,
+            hideDot: undefined,
+          }
+        : ed
     );
     setEdges(nextEdges);
     persistCurrentDesign(nodes, nextEdges);
@@ -2999,11 +3657,47 @@ export const InteractiveGridCanvasView: React.FC<
       ...ed,
       offsetX: undefined,
       offsetY: undefined,
+      dotPos: undefined,
+      fromPort: undefined,
+      toPort: undefined,
+      hideDot: undefined,
     }));
     setEdges(nextEdges);
     setActiveEdgeIdx(null);
     persistCurrentDesign(nodes, nextEdges);
-    showNotification('Semua jalur garis direset ke Auto!');
+    showNotification('Semua jalur garis & dot direset ke Auto!');
+  };
+
+  const handleUpdateActiveEdgeDot = (patch: Partial<InteractiveEdge>) => {
+    if (activeEdgeIdx === null) return;
+    pushUndoSnapshot('Ubah Posisi/Dot Garis');
+    const nextEdges = edges.map((ed, i) =>
+      i === activeEdgeIdx ? { ...ed, ...patch } : ed
+    );
+    setEdges(nextEdges);
+    persistCurrentDesign(nodes, nextEdges);
+  };
+
+  const handleDeleteActiveEdge = () => {
+    if (activeEdgeIdx === null) return;
+    pushUndoSnapshot('Hapus Garis Konektor');
+    const nextEdges = edges.filter((_, i) => i !== activeEdgeIdx);
+    setEdges(nextEdges);
+    setActiveEdgeIdx(null);
+    persistCurrentDesign(nodes, nextEdges);
+    showNotification('Garis konektor dihapus.');
+  };
+
+  const handleToggleAllEdgeDots = (visible: boolean) => {
+    pushUndoSnapshot(visible ? 'Tampilkan Semua Dot' : 'Hapus Semua Dot');
+    setShowLineDots(visible);
+    setShowEndpointDots(visible);
+    const nextEdges = edges.map((ed) => ({ ...ed, hideDot: !visible }));
+    setEdges(nextEdges);
+    persistCurrentDesign(nodes, nextEdges);
+    showNotification(
+      visible ? 'Semua dot garis ditampilkan.' : 'Semua dot garis disembunyikan/dihapus.'
+    );
   };
 
   const startNodeInteraction = (
@@ -3561,10 +4255,27 @@ export const InteractiveGridCanvasView: React.FC<
     }
     const selSet = new Set(selectedIds);
     const syncedMemberIds: string[] = [];
+    const linkedSpouseUpdates = new Map<string, 'L' | 'P'>();
+    if (patch.gender) {
+      edges.forEach((e) => {
+        if (e.type !== 'couple') return;
+        if (selSet.has(e.from) && !selSet.has(e.to)) {
+          linkedSpouseUpdates.set(e.to, patch.gender === 'L' ? 'P' : 'L');
+        } else if (selSet.has(e.to) && !selSet.has(e.from)) {
+          linkedSpouseUpdates.set(e.from, patch.gender === 'L' ? 'P' : 'L');
+        }
+      });
+    }
+
     const nextNodes = nodes.map((n) => {
-      if (!selSet.has(n.id)) return n;
-      if (n.memberId) syncedMemberIds.push(n.memberId);
-      return { ...n, ...patch };
+      if (selSet.has(n.id)) {
+        if (n.memberId) syncedMemberIds.push(n.memberId);
+        return { ...n, ...patch };
+      }
+      if (!n.memberId && linkedSpouseUpdates.has(n.id)) {
+        return { ...n, gender: linkedSpouseUpdates.get(n.id) };
+      }
+      return n;
     });
     setNodes(nextNodes);
     persistCurrentDesign(nextNodes, edges);
@@ -3588,6 +4299,27 @@ export const InteractiveGridCanvasView: React.FC<
       if (patch.wafat !== undefined) memberPatch.isDeceased = patch.wafat;
       if (patch.photo !== undefined) memberPatch.photoUrl = patch.photo;
       syncedMemberIds.forEach((mId) => onSyncMember(mId, memberPatch));
+    }
+  };
+
+  const handleToggleMergedMemberGender = (mergedNodeId: string, mmIndex: number) => {
+    pushUndoSnapshot('Ubah Gender Anggota Gabungan');
+    let syncedMemberId: string | undefined;
+    let nextGender: 'L' | 'P' = 'L';
+    const nextNodes = nodes.map((n) => {
+      if (n.id !== mergedNodeId || !n.mergedMembers) return n;
+      const updatedMerged = n.mergedMembers.map((mm, idx) => {
+        if (idx !== mmIndex) return mm;
+        nextGender = mm.gender === 'P' ? 'L' : 'P';
+        syncedMemberId = mm.memberId;
+        return { ...mm, gender: nextGender };
+      });
+      return { ...n, mergedMembers: updatedMerged };
+    });
+    setNodes(nextNodes);
+    persistCurrentDesign(nextNodes, edges);
+    if (syncedMemberId && onSyncMember) {
+      onSyncMember(syncedMemberId, { gender: nextGender });
     }
   };
 
@@ -3736,36 +4468,37 @@ export const InteractiveGridCanvasView: React.FC<
               type="button"
               onClick={() => {
                 setLayoutMode('auto');
-                if (activeTrah.members.length > 0) {
+                if (windowedMembers.length > 0) {
                   pushUndoSnapshot('Tata Letak Auto');
+                  const chosenPreset =
+                    activePresetId ||
+                    (lockSelectedPaper && windowedMembers.length > 16
+                      ? 'hierarchy_grid_fill'
+                      : smartAnalysis.topPresetId);
                   const optScale = computeOptimalCardScale(
-                    activeTrah.members,
+                    windowedMembers,
                     boardWidth,
                     boardHeight,
-                    cardDisplayMode,
-                    photoFrameSize
-                  );
-                  setCardScale(optScale);
-                  const sampleDim = getNodeSize(
-                    { id: 's', name: 'Nama Anggota', sub: '', x: 0, y: 0, photo: '', wafat: false },
                     cardDisplayMode,
                     photoFrameSize,
-                    optScale
+                    chosenPreset
                   );
-                  const chosenPreset =
-                    lockSelectedPaper && activeTrah.members.length > 16
-                      ? 'hierarchy_grid_fill'
-                      : smartAnalysis.topPresetId;
-                  const rebuilt = generateSmartLayoutFromTable(
-                    activeTrah.members,
+                  setCardScale(optScale);
+                  const rebuilt = rebuildSmartLayoutPreservingVisuals(
+                    windowedMembers,
                     chosenPreset,
+                    nodes,
                     boardWidth,
                     boardHeight,
-                    sampleDim
+                    cardDisplayMode,
+                    photoFrameSize,
+                    optScale,
+                    cardGapMm,
+                    modularG12Position
                   );
                   setNodes(rebuilt.nodes);
                   setEdges(rebuilt.edges);
-                  persistCurrentDesign(rebuilt.nodes, rebuilt.edges);
+                  persistCurrentDesign(rebuilt.nodes, rebuilt.edges, undefined, optScale, chosenPreset);
                   showNotification(
                     `Tata letak otomatis dirapikan pas di ${paperDim.label} (Foto ${Math.round(
                       optScale * 100
@@ -4067,14 +4800,15 @@ export const InteractiveGridCanvasView: React.FC<
                             : 'bg-stone-50 border-stone-300 text-stone-900'
                         }`}
                       >
-                        <option value="full">Lengkap</option>
-                        <option value="name_only">Nama Saja</option>
+                        <option value="full">Lengkap (1mm Foto+Thn+Kota)</option>
+                        <option value="photo_name">Foto + Nama</option>
+                        <option value="name_only">Nama Lengkap Saja</option>
                         <option value="photo_only">Foto Saja</option>
                       </select>
                     </div>
 
                     <div>
-                      <label className="text-[10px] opacity-75 block mb-0.5">Ukuran Foto:</label>
+                      <label className="text-[10px] opacity-75 block mb-0.5">Rasio / Ukuran Foto:</label>
                       <select
                         value={photoFrameSize}
                         disabled={cardDisplayMode === 'name_only'}
@@ -4085,13 +4819,47 @@ export const InteractiveGridCanvasView: React.FC<
                             : 'bg-stone-50 border-stone-300 text-emerald-900'
                         }`}
                       >
-                        <option value="bulat">Bulat</option>
+                        <option value="kotak">Kotak 1:1</option>
+                        <option value="bulat">Bulat 1:1</option>
                         <option value="2x3">Pas Foto 2×3</option>
                         <option value="3x4">Pas Foto 3×4</option>
                         <option value="4x6">Pas Foto 4×6</option>
                       </select>
                     </div>
                   </div>
+
+                  {/* Bentuk Bingkai Foto: Kotak, Bulat, Segi 6 (Jarak ke tepi card 1mm) */}
+                  {cardDisplayMode !== 'name_only' && (
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span className="text-[10px] opacity-80 font-semibold shrink-0">
+                        Bentuk Foto (1mm):
+                      </span>
+                      <div className="grid grid-cols-3 gap-1 flex-1">
+                        {(
+                          [
+                            { id: 'kotak' as const, label: 'Kotak' },
+                            { id: 'bulat' as const, label: 'Bulat' },
+                            { id: 'segi6' as const, label: 'Segi 6' },
+                          ] as const
+                        ).map((sh) => (
+                          <button
+                            key={sh.id}
+                            type="button"
+                            onClick={() => setPhotoShape(sh.id)}
+                            className={`py-1 px-1.5 rounded-lg border text-[10px] font-bold transition ${
+                              photoShape === sh.id
+                                ? 'bg-amber-500 text-slate-950 border-amber-400'
+                                : isDark
+                                ? 'bg-[#0f172a] border-slate-700 text-slate-300 hover:border-amber-400'
+                                : 'bg-stone-50 border-stone-300 text-stone-700'
+                            }`}
+                          >
+                            {sh.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Pengatur Ukuran / Skala Foto & Kartu agar tidak kosong atau menumpuk */}
                   <div className="p-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 space-y-1.5">
@@ -4135,9 +4903,77 @@ export const InteractiveGridCanvasView: React.FC<
                         +
                       </button>
                     </div>
-                    <p className="text-[9.5px] opacity-75">
-                      Geser ke kanan untuk perbesar foto jika kertas terasa kosong, atau ke kiri jika kartu menumpuk.
-                    </p>
+
+                    {/* Jarak Antar Card Presisi mm */}
+                    <div className="pt-1.5 border-t border-emerald-500/20 space-y-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[10px] font-bold text-amber-300">
+                          Jarak Antar Card: {cardGapMm} mm
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleApplyCardGap(cardGapMm)}
+                          className="px-2 py-0.5 rounded-md bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-[9.5px]"
+                        >
+                          Terapkan Jarak
+                        </button>
+                      </div>
+                      <input
+                        type="range"
+                        min={1}
+                        max={5}
+                        step={0.5}
+                        value={cardGapMm}
+                        onChange={(e) => setCardGapMm(Number(e.target.value))}
+                        className="w-full accent-amber-400 cursor-pointer"
+                      />
+                      <p className="text-[9px] opacity-80 leading-tight">
+                        Pasangan menempel (0mm) • Anak/Cucu lajang rapat 1–2mm • Jarak umum {cardGapMm}mm.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Gradasi Warna Generasi: Tua/Gelap (G1) -> Muda/Cerah (G5+) */}
+                  <div className="p-2 rounded-xl border border-sky-500/30 bg-sky-500/10 space-y-1.5">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[10.5px] font-extrabold text-sky-300">
+                        Gradasi Warna Generasi (Card &amp; Garis)
+                      </span>
+                    </div>
+                    <select
+                      value={genGradientPalette}
+                      onChange={(e) =>
+                        setGenGradientPalette(e.target.value as GenGradientPaletteId)
+                      }
+                      className={`w-full px-2 py-1 rounded-lg text-[11px] font-bold border outline-hidden cursor-pointer ${
+                        isDark
+                          ? 'bg-[#0f172a] border-slate-700 text-white'
+                          : 'bg-stone-50 border-stone-300 text-stone-900'
+                      }`}
+                    >
+                      <option value="none">Polos / Ikuti Tema Kanvas</option>
+                      <option value="royal_emerald">Zamrud Tua (G1) ➔ Mint Cerah (G5+)</option>
+                      <option value="ocean_blue">Biru Samudra (G1) ➔ Langit Cerah (G5+)</option>
+                      <option value="amber_earth">Coklat Emas (G1) ➔ Krem Cerah (G5+)</option>
+                      <option value="violet_dusk">Ungu Tua (G1) ➔ Lavender Cerah (G5+)</option>
+                    </select>
+                    {genGradientPalette !== 'none' && (
+                      <div className="flex items-center gap-1 pt-0.5">
+                        {GEN_GRADIENT_PALETTES[genGradientPalette].stops.map((st, gIdx) => (
+                          <div
+                            key={`grad-prev-${gIdx}`}
+                            className="flex-1 h-4 rounded border flex items-center justify-center text-[8px] font-black"
+                            style={{
+                              backgroundColor: st.bg,
+                              borderColor: st.border,
+                              color: isLightHexColor(st.bg) ? '#0f172a' : '#f8fafc',
+                            }}
+                          >
+                            G{gIdx + 1}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-1.5">
@@ -4327,24 +5163,52 @@ export const InteractiveGridCanvasView: React.FC<
                       <input
                         type="checkbox"
                         checked={showLineDots}
-                        onChange={(e) => setShowLineDots(e.target.checked)}
+                        onChange={(e) => {
+                          const v = e.target.checked;
+                          setShowLineDots(v);
+                          if (v) {
+                            setEdges((prev) => prev.map((ed) => ({ ...ed, hideDot: false })));
+                          }
+                        }}
                         className="accent-amber-400"
                       />
                       <span>
-                        Tampilkan titik (dot) geser jalur garis 4 arah
+                        Tampilkan dot tengah (geser posisi &amp; jalur 4 arah)
                       </span>
                     </label>
-                    <div className="flex items-center justify-between gap-2 pt-0.5">
-                      <span className="text-[9.5px] opacity-75">
-                        Seret dot di garis ke atas/bawah/kiri/kanan • Klik 2× reset
+                    <label className="flex items-center gap-2 cursor-pointer text-[10.5px]">
+                      <input
+                        type="checkbox"
+                        checked={showEndpointDots}
+                        onChange={(e) => setShowEndpointDots(e.target.checked)}
+                        className="accent-emerald-400"
+                      />
+                      <span>
+                        Tampilkan dot ujung sambungan di tepi card
                       </span>
-                      <button
-                        type="button"
-                        onClick={resetAllEdgeOffsets}
-                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[9.5px] font-bold text-sky-300 shrink-0"
-                      >
-                        Reset Garis
-                      </button>
+                    </label>
+                    <div className="flex items-center justify-between gap-1.5 pt-0.5 flex-wrap">
+                      <span className="text-[9px] opacity-75">
+                        Ketuk garis / dot untuk pindah posisi dot atau hapus dot
+                      </span>
+                      <div className="flex items-center gap-1 ml-auto">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleToggleAllEdgeDots(!(showLineDots || showEndpointDots))
+                          }
+                          className="px-2 py-0.5 rounded bg-rose-950/70 hover:bg-rose-900 border border-rose-500/40 text-[9.5px] font-bold text-rose-200 shrink-0"
+                        >
+                          {showLineDots || showEndpointDots ? 'Hapus Semua Dot' : 'Munculkan Dot'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={resetAllEdgeOffsets}
+                          className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[9.5px] font-bold text-sky-300 shrink-0"
+                        >
+                          Reset Garis
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -4857,20 +5721,96 @@ export const InteractiveGridCanvasView: React.FC<
                   </div>
                 </div>
 
+                {/* Jendela Fokus Cabang & Kedalaman Generasi (Solusi G1 s/d G20+ Anti-Kecil) */}
+                <div className="p-2 rounded-xl border border-amber-500/35 bg-amber-500/10 space-y-1.5">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[10.5px] font-extrabold text-amber-300">
+                      Fokus Cabang &amp; Generasi (s/d G20+)
+                    </span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-black/30 text-amber-200">
+                      Total: {windowedData.maxRawGen + 1} Gen
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <div>
+                      <label className="text-[9.5px] opacity-75 block mb-0.5">Fokus Dari Tokoh:</label>
+                      <select
+                        value={focalRootMemberId}
+                        onChange={(e) => handleApplyFocalBranch(e.target.value, maxVisibleDepth)}
+                        className={`w-full px-1.5 py-1 rounded-lg text-[10.5px] font-bold border outline-hidden cursor-pointer ${
+                          isDark
+                            ? 'bg-[#0f172a] border-slate-700 text-white'
+                            : 'bg-stone-50 border-stone-300 text-stone-900'
+                        }`}
+                      >
+                        <option value="all">Semua (Dari G1)</option>
+                        {[...activeTrah.members]
+                          .sort(
+                            (a, b) =>
+                              (a.generationLevel ?? 0) - (b.generationLevel ?? 0) ||
+                              (a.orderIndex ?? 0) - (b.orderIndex ?? 0)
+                          )
+                          .map((m) => (
+                            <option key={`focal-${m.id}`} value={m.id}>
+                              G{(m.generationLevel ?? 0) + 1} • {m.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9.5px] opacity-75 block mb-0.5">Kedalaman Tampil:</label>
+                      <select
+                        value={maxVisibleDepth}
+                        onChange={(e) =>
+                          handleApplyFocalBranch(focalRootMemberId, Number(e.target.value))
+                        }
+                        className={`w-full px-1.5 py-1 rounded-lg text-[10.5px] font-bold border outline-hidden cursor-pointer ${
+                          isDark
+                            ? 'bg-[#0f172a] border-slate-700 text-emerald-300'
+                            : 'bg-stone-50 border-stone-300 text-emerald-900'
+                        }`}
+                      >
+                        <option value={0}>Semua Generasi</option>
+                        <option value={4}>4 Generasi (Besar)</option>
+                        <option value={5}>5 Generasi (Ideal)</option>
+                        <option value={6}>6 Generasi</option>
+                      </select>
+                    </div>
+                  </div>
+                  {(focalRootMemberId !== 'all' || maxVisibleDepth > 0) && (
+                    <div className="flex items-center justify-between gap-1 text-[9.5px] text-emerald-300">
+                      <span className="truncate">
+                        Tampil {windowedMembers.length} dari {activeTrah.members.length} anggota
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleApplyFocalBranch('all', 0)}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-600 text-white font-bold shrink-0"
+                      >
+                        Tampilkan Semua
+                      </button>
+                    </div>
+                  )}
+                  <p className="text-[9px] opacity-75 leading-snug">
+                    Agar kartu tidak mengecil saat trah mencapai G10–G20, fokuskan 4–5 generasi dari tokoh cabang (data asli tabel &amp; buku tetap utuh).
+                  </p>
+                </div>
+
                 {/* Filter Kategori Pilihan Tata Letak Smart */}
                 <div className="space-y-2">
-                  <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-black/25 border border-slate-700/60">
+                  <div className="flex flex-wrap gap-1 p-1 rounded-xl bg-black/25 border border-slate-700/60">
                     {[
                       { id: 'all' as const, label: `Semua (${SMART_LAYOUT_PRESETS.length})` },
-                      { id: 'kotak9' as const, label: 'Kotak 9 Baris' },
+                      { id: 'kotak9' as const, label: 'Kotak 9' },
                       { id: 'orbit' as const, label: 'Orbit 1–5' },
+                      { id: 'modular' as const, label: 'Modular I/L' },
                       { id: 'klasik' as const, label: 'Klasik' },
                     ].map((tab) => (
                       <button
                         key={tab.id}
                         type="button"
                         onClick={() => setSmartCategoryFilter(tab.id)}
-                        className={`py-1 px-1.5 rounded-lg text-[9.5px] font-extrabold whitespace-nowrap transition ${
+                        className={`flex-1 py-1 px-1.5 rounded-lg text-[9.5px] font-extrabold whitespace-nowrap transition ${
                           smartCategoryFilter === tab.id
                             ? 'bg-emerald-500 text-slate-950 shadow-xs'
                             : 'text-slate-300 hover:bg-white/10'
@@ -4880,6 +5820,69 @@ export const InteractiveGridCanvasView: React.FC<
                       </button>
                     ))}
                   </div>
+
+                  {/* Opsi Posisi G1-G2 untuk Mode Modular */}
+                  {(smartCategoryFilter === 'modular' ||
+                    activePresetId === 'modular_g3_I' ||
+                    activePresetId === 'modular_g3_L') && (
+                    <div className="p-2 rounded-xl border border-emerald-500/35 bg-emerald-500/10 flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-emerald-300">
+                        Posisi G1–G2 Besar:
+                      </span>
+                      <div className="flex rounded-lg overflow-hidden border border-slate-600 text-[10px] font-bold">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setModularG12Position('top');
+                            if (
+                              activePresetId === 'modular_g3_I' ||
+                              activePresetId === 'modular_g3_L'
+                            ) {
+                              handleApplySmartPreset(
+                                activePresetId,
+                                true,
+                                undefined,
+                                undefined,
+                                'top'
+                              );
+                            }
+                          }}
+                          className={`px-2 py-0.5 ${
+                            modularG12Position === 'top'
+                              ? 'bg-amber-400 text-slate-950'
+                              : 'opacity-75'
+                          }`}
+                        >
+                          Atas
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setModularG12Position('center');
+                            if (
+                              activePresetId === 'modular_g3_I' ||
+                              activePresetId === 'modular_g3_L'
+                            ) {
+                              handleApplySmartPreset(
+                                activePresetId,
+                                true,
+                                undefined,
+                                undefined,
+                                'center'
+                              );
+                            }
+                          }}
+                          className={`px-2 py-0.5 ${
+                            modularG12Position === 'center'
+                              ? 'bg-amber-400 text-slate-950'
+                              : 'opacity-75'
+                          }`}
+                        >
+                          Tengah
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="space-y-1.5">
                     {SMART_LAYOUT_PRESETS.filter(
@@ -4895,6 +5898,8 @@ export const InteractiveGridCanvasView: React.FC<
                           ? CircleDot
                           : preset.id === 'orbit_elips_gabung'
                           ? Disc
+                          : preset.id === 'modular_g3_I' || preset.id === 'modular_g3_L'
+                          ? Layers
                           : preset.id === 'hierarchy_grid_fill'
                           ? LayoutGrid
                           : preset.id === 'subtree_vertical'
@@ -4925,6 +5930,8 @@ export const InteractiveGridCanvasView: React.FC<
                                 ? 'bg-sky-500/15 border-sky-400/40 text-sky-400'
                                 : preset.category === 'kotak9'
                                 ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-400'
+                                : preset.category === 'modular'
+                                ? 'bg-purple-500/15 border-purple-400/40 text-purple-300'
                                 : 'bg-amber-500/15 border-amber-400/40 text-amber-400'
                             }`}
                           >
@@ -4943,6 +5950,8 @@ export const InteractiveGridCanvasView: React.FC<
                                     ? 'bg-sky-500/20 text-sky-300'
                                     : preset.category === 'kotak9'
                                     ? 'bg-emerald-500/20 text-emerald-300'
+                                    : preset.category === 'modular'
+                                    ? 'bg-purple-500/20 text-purple-300'
                                     : 'bg-slate-700/60 text-slate-300'
                                 }`}
                               >
@@ -5199,6 +6208,34 @@ export const InteractiveGridCanvasView: React.FC<
 
                     <div>
                       <label className="text-[10px] font-bold opacity-75 block mb-1">
+                        Pola Tata Letak Dalam Card (Modular)
+                      </label>
+                      <div className="grid grid-cols-3 gap-1 mb-2">
+                        {(
+                          [
+                            { id: 'grid' as const, label: 'Grid Rapi' },
+                            { id: 'I' as const, label: 'Pola I (Turun)' },
+                            { id: 'L' as const, label: 'Pola L (Siku)' },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() =>
+                              handleUpdateModularSubLayout(primarySelectedNode.id, opt.id)
+                            }
+                            className={`py-1 rounded-lg border text-[10px] font-bold ${
+                              (primarySelectedNode.modularSubLayout || 'grid') === opt.id
+                                ? 'bg-purple-500 text-white border-purple-400'
+                                : 'border-slate-600 opacity-80'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <label className="text-[10px] font-bold opacity-75 block mb-1">
                         Susunan Kolom Foto di Dalam Card
                       </label>
                       <div className="grid grid-cols-4 gap-1">
@@ -5228,18 +6265,34 @@ export const InteractiveGridCanvasView: React.FC<
 
                     <div className="space-y-1">
                       <span className="text-[10px] font-bold opacity-75 block">
-                        Anggota Tergabung:
+                        Anggota Tergabung (Klik L/P untuk ubah gender &amp; sinkronkan):
                       </span>
-                      <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
+                      <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
                         {primarySelectedNode.mergedMembers.map((mm, mIdx) => (
                           <div
                             key={`${mm.originalNodeId}_${mIdx}`}
-                            className="flex items-center gap-2 px-2 py-1 rounded-lg bg-black/20 border border-slate-700/50 text-[10.5px]"
+                            className="flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-black/20 border border-slate-700/50 text-[10.5px]"
                           >
-                            <span className="font-mono text-amber-400 font-bold">
-                              {mIdx + 1}.
-                            </span>
-                            <span className="truncate font-semibold">{mm.name}</span>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="font-mono text-amber-400 font-bold shrink-0">
+                                {mIdx + 1}.
+                              </span>
+                              <span className="truncate font-semibold">{mm.name}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleToggleMergedMemberGender(primarySelectedNode.id, mIdx)
+                              }
+                              title="Klik untuk ubah Pria (L) / Wanita (P)"
+                              className={`shrink-0 px-1.5 py-0.5 rounded border text-[9.5px] font-black transition ${
+                                mm.gender === 'P'
+                                  ? 'bg-rose-500/90 text-white border-rose-400'
+                                  : 'bg-sky-500/90 text-slate-950 border-sky-400'
+                              }`}
+                            >
+                              {mm.gender === 'P' ? '👩 P' : '👨 L'}
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -5278,6 +6331,22 @@ export const InteractiveGridCanvasView: React.FC<
                 ) : (
                   primarySelectedNode && (
                     <div className="space-y-2.5 text-xs">
+                      {primarySelectedNode.memberId && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleApplyFocalBranch(
+                              primarySelectedNode.memberId!,
+                              maxVisibleDepth || 5
+                            )
+                          }
+                          className="w-full py-1.5 px-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/50 text-amber-300 font-extrabold text-[11px] flex items-center justify-center gap-1.5"
+                          title="Jadikan tokoh ini puncak G1 tampilan kanvas agar cabang keturunannya tampil besar & jelas"
+                        >
+                          <Maximize2 className="w-3.5 h-3.5" />
+                          <span>Fokuskan Cabang Ini ke Kanvas</span>
+                        </button>
+                      )}
                       <div>
                         <label className="text-[10px] font-bold opacity-75 block mb-1">
                           Nama Lengkap
@@ -5639,7 +6708,7 @@ export const InteractiveGridCanvasView: React.FC<
                 />
               )}
 
-              {/* SVG Garis Konektor Real-Time (Auto-Hindar Kartu + Jalur 4-Arah + Layer Anti-Tertutup) */}
+              {/* SVG Garis Konektor Real-Time (Auto-Hindar Kartu + Gradasi Generasi + Kontrol Dot) */}
               {(() => {
                 const obstacleBoxes: NodeObstacleBox[] = nodes.map((n) => {
                   const sz = getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale);
@@ -5658,7 +6727,9 @@ export const InteractiveGridCanvasView: React.FC<
                       edge.type,
                       cardDisplayMode,
                       photoFrameSize,
-                      cardScale
+                      cardScale,
+                      edge.fromPort,
+                      edge.toPort
                     );
                     const route = buildConnectorRoute(
                       pts,
@@ -5666,16 +6737,44 @@ export const InteractiveGridCanvasView: React.FC<
                       edge,
                       obstacleBoxes
                     );
+                    const g1Style = getGenGradientStyle(
+                      genGradientPalette,
+                      n1.genLevel ?? 0
+                    );
+                    const g2Style = getGenGradientStyle(
+                      genGradientPalette,
+                      n2.genLevel ?? (n1.genLevel ?? 0) + 1
+                    );
                     const resolvedChildColor =
                       childLineColor ||
+                      g1Style?.line ||
                       (isDark || bgStyle !== '' ? '#38bdf8' : '#0284c7');
                     const resolvedCoupleColor = coupleLineColor || '#f59e0b';
                     const lineColor =
                       edge.type === 'couple'
                         ? resolvedCoupleColor
                         : resolvedChildColor;
+                    const canUseGrad =
+                      edge.type === 'child' &&
+                      genGradientPalette !== 'none' &&
+                      !childLineColor &&
+                      !!g1Style &&
+                      !!g2Style &&
+                      (Math.abs(pts.a.x - pts.b.x) > 1 ||
+                        Math.abs(pts.a.y - pts.b.y) > 1);
+                    const gradId = `edge-grad-${idx}`;
 
-                    return { idx, edge, pts, route, lineColor };
+                    return {
+                      idx,
+                      edge,
+                      pts,
+                      route,
+                      lineColor,
+                      gradFrom: g1Style?.line || lineColor,
+                      gradTo: g2Style?.line || lineColor,
+                      canUseGrad,
+                      gradId,
+                    };
                   })
                   .filter(Boolean) as Array<{
                   idx: number;
@@ -5683,6 +6782,10 @@ export const InteractiveGridCanvasView: React.FC<
                   pts: ReturnType<typeof getSmartPorts>;
                   route: ReturnType<typeof buildConnectorRoute>;
                   lineColor: string;
+                  gradFrom: string;
+                  gradTo: string;
+                  canUseGrad: boolean;
+                  gradId: string;
                 }>;
 
                 const isPcbStyle = lineStyle === 'pcb90' || lineStyle === 'pcb45';
@@ -5697,78 +6800,149 @@ export const InteractiveGridCanvasView: React.FC<
                         linesOnTop ? 'z-[22]' : 'z-[3]'
                       }`}
                     >
-                      {computedEdges.map(({ idx, edge, pts, route, lineColor }) => {
-                        const isActiveEdge = activeEdgeIdx === idx;
-                        return (
-                          <g key={`edge-${idx}`}>
-                            {/* Halo lembut saat garis tampil di atas kartu agar tetap terbaca bersih */}
-                            {linesOnTop && (
+                      <defs>
+                        {computedEdges.map((ce) =>
+                          ce.canUseGrad ? (
+                            <linearGradient
+                              key={`def-${ce.gradId}`}
+                              id={ce.gradId}
+                              gradientUnits="userSpaceOnUse"
+                              x1={ce.pts.a.x}
+                              y1={ce.pts.a.y}
+                              x2={ce.pts.b.x}
+                              y2={ce.pts.b.y}
+                            >
+                              <stop offset="0%" stopColor={ce.gradFrom} />
+                              <stop offset="100%" stopColor={ce.gradTo} />
+                            </linearGradient>
+                          ) : null
+                        )}
+                      </defs>
+
+                      {computedEdges.map(
+                        ({
+                          idx,
+                          edge,
+                          pts,
+                          route,
+                          lineColor,
+                          gradFrom,
+                          gradTo,
+                          canUseGrad,
+                          gradId,
+                        }) => {
+                          const isActiveEdge = activeEdgeIdx === idx;
+                          const strokePaint = isActiveEdge
+                            ? '#f59e0b'
+                            : canUseGrad
+                            ? `url(#${gradId})`
+                            : lineColor;
+                          return (
+                            <g key={`edge-${idx}`}>
+                              {/* Halo lembut saat garis tampil di atas kartu agar tetap terbaca bersih */}
+                              {linesOnTop && (
+                                <path
+                                  d={route.d}
+                                  stroke={
+                                    isDark
+                                      ? 'rgba(15,23,42,0.75)'
+                                      : 'rgba(255,255,255,0.8)'
+                                  }
+                                  strokeWidth={lineThickness + 3}
+                                  strokeLinecap="round"
+                                  strokeLinejoin={
+                                    lineStyle === 'pcb90' ? 'miter' : 'round'
+                                  }
+                                  fill="none"
+                                />
+                              )}
                               <path
                                 d={route.d}
-                                stroke={isDark ? 'rgba(15,23,42,0.75)' : 'rgba(255,255,255,0.8)'}
-                                strokeWidth={lineThickness + 3}
+                                stroke={strokePaint}
+                                strokeWidth={
+                                  isActiveEdge ? lineThickness + 1.2 : lineThickness
+                                }
+                                strokeDasharray={
+                                  edge.type === 'couple' ? '6,4' : undefined
+                                }
                                 strokeLinecap="round"
-                                strokeLinejoin={lineStyle === 'pcb90' ? 'miter' : 'round'}
+                                strokeLinejoin={
+                                  lineStyle === 'pcb90' ? 'miter' : 'round'
+                                }
+                                strokeOpacity={linesOnTop ? 0.92 : 1}
                                 fill="none"
                               />
-                            )}
-                            <path
-                              d={route.d}
-                              stroke={isActiveEdge ? '#f59e0b' : lineColor}
-                              strokeWidth={isActiveEdge ? lineThickness + 1 : lineThickness}
-                              strokeDasharray={
-                                edge.type === 'couple' ? '6,4' : undefined
-                              }
-                              strokeLinecap="round"
-                              strokeLinejoin={
-                                lineStyle === 'pcb90' ? 'miter' : 'round'
-                              }
-                              strokeOpacity={linesOnTop ? 0.92 : 1}
-                              fill="none"
-                            />
-                            {isPcbStyle ? (
-                              <>
-                                <circle
-                                  cx={pts.a.x}
-                                  cy={pts.a.y}
-                                  r={4.5}
-                                  fill={isDark ? '#0f172a' : '#ffffff'}
-                                  stroke={lineColor}
-                                  strokeWidth={1.8}
-                                />
-                                <circle
-                                  cx={pts.a.x}
-                                  cy={pts.a.y}
-                                  r={1.7}
-                                  fill={lineColor}
-                                />
-                                <circle
-                                  cx={pts.b.x}
-                                  cy={pts.b.y}
-                                  r={4.5}
-                                  fill={isDark ? '#0f172a' : '#ffffff'}
-                                  stroke={lineColor}
-                                  strokeWidth={1.8}
-                                />
-                                <circle
-                                  cx={pts.b.x}
-                                  cy={pts.b.y}
-                                  r={1.7}
-                                  fill={lineColor}
-                                />
-                              </>
-                            ) : (
-                              <>
-                                <circle cx={pts.a.x} cy={pts.a.y} r={3.5} fill={lineColor} />
-                                <circle cx={pts.b.x} cy={pts.b.y} r={3.5} fill={lineColor} />
-                              </>
-                            )}
-                          </g>
-                        );
-                      })}
+                              {/* Area klik transparan agar garis tetap bisa dipilih meski dot dihapus */}
+                              <path
+                                d={route.d}
+                                stroke="transparent"
+                                strokeWidth={Math.max(14, lineThickness + 10)}
+                                fill="none"
+                                className="pointer-events-auto cursor-pointer print:hidden"
+                                onMouseDown={(e) => {
+                                  e.stopPropagation();
+                                  setActiveEdgeIdx(idx);
+                                }}
+                                onTouchStart={(e) => {
+                                  e.stopPropagation();
+                                  setActiveEdgeIdx(idx);
+                                }}
+                              />
+                              {showEndpointDots &&
+                                (isPcbStyle ? (
+                                  <>
+                                    <circle
+                                      cx={pts.a.x}
+                                      cy={pts.a.y}
+                                      r={4.5}
+                                      fill={isDark ? '#0f172a' : '#ffffff'}
+                                      stroke={canUseGrad ? gradFrom : lineColor}
+                                      strokeWidth={1.8}
+                                    />
+                                    <circle
+                                      cx={pts.a.x}
+                                      cy={pts.a.y}
+                                      r={1.7}
+                                      fill={canUseGrad ? gradFrom : lineColor}
+                                    />
+                                    <circle
+                                      cx={pts.b.x}
+                                      cy={pts.b.y}
+                                      r={4.5}
+                                      fill={isDark ? '#0f172a' : '#ffffff'}
+                                      stroke={canUseGrad ? gradTo : lineColor}
+                                      strokeWidth={1.8}
+                                    />
+                                    <circle
+                                      cx={pts.b.x}
+                                      cy={pts.b.y}
+                                      r={1.7}
+                                      fill={canUseGrad ? gradTo : lineColor}
+                                    />
+                                  </>
+                                ) : (
+                                  <>
+                                    <circle
+                                      cx={pts.a.x}
+                                      cy={pts.a.y}
+                                      r={3.5}
+                                      fill={canUseGrad ? gradFrom : lineColor}
+                                    />
+                                    <circle
+                                      cx={pts.b.x}
+                                      cy={pts.b.y}
+                                      r={3.5}
+                                      fill={canUseGrad ? gradTo : lineColor}
+                                    />
+                                  </>
+                                ))}
+                            </g>
+                          );
+                        }
+                      )}
                     </svg>
 
-                    {/* Layer Dot Handle Interaktif (Selalu mudah digeser Atas/Bawah/Kiri/Kanan walau melintasi kartu) */}
+                    {/* Layer Dot Handle Interaktif (Geser Atas/Bawah/Kiri/Kanan, Ubah Posisi, atau Sembunyikan Dot) */}
                     {(showLineDots || activeEdgeIdx !== null) && (
                       <svg
                         width={boardWidth}
@@ -5777,11 +6951,16 @@ export const InteractiveGridCanvasView: React.FC<
                       >
                         {computedEdges.map(({ idx, edge, route, lineColor }) => {
                           const isVisible =
-                            showLineDots ||
-                            activeEdgeIdx === idx ||
-                            route.isCustomOffset;
+                            !edge.hideDot &&
+                            (showLineDots ||
+                              activeEdgeIdx === idx ||
+                              route.isCustomOffset);
                           if (!isVisible) return null;
-                          if (edge.type === 'couple' && !route.isCustomOffset && activeEdgeIdx !== idx) {
+                          if (
+                            edge.type === 'couple' &&
+                            !route.isCustomOffset &&
+                            activeEdgeIdx !== idx
+                          ) {
                             return null;
                           }
                           const isActive = activeEdgeIdx === idx;
@@ -5798,7 +6977,7 @@ export const InteractiveGridCanvasView: React.FC<
                               }}
                             >
                               <title>
-                                Seret titik ke Atas / Bawah / Kiri / Kanan untuk belokkan garis • Klik 2× untuk reset Auto
+                                Klik untuk ubah posisi dot (25%/50%/75%) atau hapus dot • Seret untuk belokkan garis • Klik 2× reset Auto
                               </title>
                               {/* Area sentuh luas tak terlihat */}
                               <circle cx={hx} cy={hy} r={13} fill="transparent" />
@@ -5823,7 +7002,11 @@ export const InteractiveGridCanvasView: React.FC<
                                 cx={hx}
                                 cy={hy}
                                 r={2}
-                                fill={isActive || route.isCustomOffset ? '#0f172a' : lineColor}
+                                fill={
+                                  isActive || route.isCustomOffset
+                                    ? '#0f172a'
+                                    : lineColor
+                                }
                               />
                             </g>
                           );
@@ -5834,7 +7017,7 @@ export const InteractiveGridCanvasView: React.FC<
                 );
               })()}
 
-              {/* Kartu Anggota Keluarga */}
+              {/* Kartu Anggota Keluarga & Modular Card-in-Card (Kotak/Bulat/Segi-6, Jarak 1mm, Pola I/L) */}
               {nodes.map((node) => {
                 const isSelected = selectedIds.includes(node.id);
                 const isConnectSource = connectFromId === node.id;
@@ -5848,16 +7031,96 @@ export const InteractiveGridCanvasView: React.FC<
                   moveUnlockedIds.length > 0 ? moveUnlockedIds : [node.id];
                 const nudgeStep = snapToGrid ? SNAP_SIZE : 10;
 
+                const effScale = cardScale * (node.scaleMultiplier ?? 1);
                 const size = getNodeSize(node, cardDisplayMode, photoFrameSize, cardScale);
-                const pDim = getScaledPhotoDim(photoFrameSize, cardScale);
-                const scaledNamePx = Math.max(8, Math.round(12.5 * cardScale));
-                const scaledSubPx = Math.max(7, Math.round(10 * cardScale));
+                const pDim = getScaledPhotoDim(photoFrameSize, effScale);
+                const scaledNamePx = Math.max(8, Math.round(12 * effScale));
+                const scaledSubPx = Math.max(7, Math.round(9.5 * effScale));
 
-                const effectiveBg = node.customBgColor || cardBgColor;
-                const effectiveBorder = node.customBorderColor || cardBorderColor;
+                const genStyle = getGenGradientStyle(
+                  genGradientPalette,
+                  node.genLevel ?? 0
+                );
+                const effectiveBg =
+                  node.customBgColor || cardBgColor || genStyle?.bg || '';
+                const effectiveBorder =
+                  node.customBorderColor || cardBorderColor || genStyle?.border || '';
                 const isCardLight = effectiveBg
                   ? isLightHexColor(effectiveBg)
                   : !isDark;
+
+                const resolvedShape: GridPhotoShape =
+                  photoFrameSize === 'bulat' ? 'bulat' : photoShape;
+
+                const renderPhotoFrame = (
+                  photoUrl: string,
+                  altName: string,
+                  w: number,
+                  h: number,
+                  borderHex?: string,
+                  extraMarginClass = ''
+                ) => {
+                  const frameBorderCol =
+                    borderHex ||
+                    effectiveBorder ||
+                    (isCardLight ? '#cbd5e1' : '#475569');
+                  const innerBgClass = isCardLight
+                    ? 'bg-stone-100 text-amber-700'
+                    : 'bg-[#0f172a] text-amber-400';
+
+                  if (resolvedShape === 'segi6') {
+                    return (
+                      <div
+                        style={{
+                          width: `${w}px`,
+                          height: `${h}px`,
+                          clipPath: HEXAGON_CLIP_PATH,
+                          backgroundColor: frameBorderCol,
+                          padding: '2px',
+                        }}
+                        className={`shrink-0 flex items-center justify-center ${extraMarginClass}`}
+                      >
+                        <div
+                          style={{ clipPath: HEXAGON_CLIP_PATH }}
+                          className={`w-full h-full overflow-hidden flex items-center justify-center font-extrabold text-xs ${innerBgClass}`}
+                        >
+                          {photoUrl ? (
+                            <img
+                              src={photoUrl}
+                              alt={altName}
+                              className="w-full h-full object-cover pointer-events-none"
+                            />
+                          ) : (
+                            <span>{getInitials(altName)}</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div
+                      style={{
+                        width: `${w}px`,
+                        height: `${h}px`,
+                        borderColor: frameBorderCol,
+                      }}
+                      className={`overflow-hidden flex items-center justify-center font-extrabold text-xs border-2 shrink-0 ${innerBgClass} ${
+                        resolvedShape === 'bulat' ? 'rounded-full' : 'rounded-md'
+                      } ${extraMarginClass}`}
+                    >
+                      {photoUrl ? (
+                        <img
+                          src={photoUrl}
+                          alt={altName}
+                          className="w-full h-full object-cover pointer-events-none"
+                        />
+                      ) : (
+                        <span>{getInitials(altName)}</span>
+                      )}
+                    </div>
+                  );
+                };
 
                 const cardCustomStyle: React.CSSProperties = {
                   left: `${node.x}px`,
@@ -5878,11 +7141,7 @@ export const InteractiveGridCanvasView: React.FC<
                     onClick={(e) => e.stopPropagation()}
                     style={cardCustomStyle}
                     className={`group absolute rounded-xl border-2 flex flex-col items-center justify-center text-center shadow-lg transition-shadow select-none ${
-                      cardDisplayMode === 'photo_only'
-                        ? 'p-1'
-                        : cardDisplayMode === 'name_only'
-                        ? 'px-2 py-1'
-                        : 'p-1.5'
+                      cardDisplayMode === 'name_only' ? 'px-2 py-1' : 'p-[4px]'
                     } ${
                       layoutMode === 'manual'
                         ? isUnlocked || !safeHoldMove
@@ -6079,15 +7338,124 @@ export const InteractiveGridCanvasView: React.FC<
                     {node.mergedMembers && node.mergedMembers.length >= 2 ? (
                       (() => {
                         const mList = node.mergedMembers;
-                        const gm = getMergedGridMetrics(
+                        const modLayout = node.modularSubLayout || 'grid';
+                        const gm = computeMergedCardMetrics(
                           mList.length,
                           cardDisplayMode,
                           photoFrameSize,
-                          cardScale,
-                          node.mergedCols
+                          effScale,
+                          node.mergedCols,
+                          modLayout,
+                          mList
                         );
-                        const cellNamePx = Math.max(7.5, Math.round(10.5 * cardScale));
-                        const cellSubPx = Math.max(6.5, Math.round(8.5 * cardScale));
+                        const cellNamePx = Math.max(7.5, Math.round(10 * effScale));
+                        const cellSubPx = Math.max(6.5, Math.round(8 * effScale));
+                        const subPhotoW = Math.max(24, Math.round(pDim.w * 0.88));
+                        const subPhotoH = Math.max(24, Math.round(pDim.h * 0.88));
+
+                        const renderSubCard = (
+                          mm: MergedCardMember,
+                          mIdx: number,
+                          widthPx?: number
+                        ) => {
+                          const subGen = getGenGradientStyle(
+                            genGradientPalette,
+                            mm.genLevel ?? node.genLevel ?? 0
+                          );
+                          const subBg =
+                            mm.customBgColor || subGen?.bg || undefined;
+                          const subBorder =
+                            mm.customBorderColor || subGen?.border || undefined;
+                          const subIsLight = subBg
+                            ? isLightHexColor(subBg)
+                            : isCardLight;
+
+                          return (
+                            <div
+                              key={`${mm.originalNodeId}_${mIdx}`}
+                              style={{
+                                ...(widthPx ? { width: `${widthPx}px` } : {}),
+                                ...(subBg ? { backgroundColor: subBg } : {}),
+                                ...(subBorder ? { borderColor: subBorder } : {}),
+                              }}
+                              className={`flex flex-col items-center justify-start rounded-lg border ${
+                                cardDisplayMode === 'photo_only'
+                                  ? 'p-[3px]'
+                                  : 'p-[4px]'
+                              } ${
+                                !subBg
+                                  ? isCardLight
+                                    ? 'bg-stone-100/85 border-stone-300/80'
+                                    : 'bg-slate-900/65 border-slate-700/80'
+                                  : ''
+                              } ${subIsLight ? 'text-slate-900' : 'text-slate-100'} ${
+                                mm.wafat ? 'border-dashed opacity-90' : ''
+                              }`}
+                            >
+                              {cardDisplayMode !== 'name_only' &&
+                                renderPhotoFrame(
+                                  mm.photo,
+                                  mm.name,
+                                  subPhotoW,
+                                  subPhotoH,
+                                  subBorder,
+                                  cardDisplayMode === 'full' ||
+                                    cardDisplayMode === 'photo_name'
+                                    ? 'mb-0.5'
+                                    : ''
+                                )}
+
+                              {cardDisplayMode !== 'photo_only' && (
+                                <div
+                                  style={{ fontSize: `${cellNamePx}px` }}
+                                  className="font-bold leading-tight text-center break-words whitespace-normal w-full"
+                                >
+                                  {mm.gender && (
+                                    <span className="mr-0.5">
+                                      {mm.gender === 'P' ? '👩' : '👨'}
+                                    </span>
+                                  )}
+                                  {mm.name}
+                                </div>
+                              )}
+
+                              {cardDisplayMode === 'full' && mm.sub && (
+                                <div
+                                  style={{ fontSize: `${cellSubPx}px` }}
+                                  className={`mt-0.5 leading-tight text-center break-words w-full opacity-80 ${
+                                    subIsLight ? 'text-slate-600' : 'text-slate-300'
+                                  }`}
+                                >
+                                  {mm.sub}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        };
+
+                        // Kelompokkan pasangan menempel (0mm) saat mode modular I / L
+                        const pairGroupItems = (items: MergedCardMember[]) => {
+                          const used = new Set<number>();
+                          const units: MergedCardMember[][] = [];
+                          items.forEach((item, i) => {
+                            if (used.has(i)) return;
+                            used.add(i);
+                            const mates: MergedCardMember[] = [item];
+                            items.forEach((other, j) => {
+                              if (used.has(j)) return;
+                              if (
+                                (item.memberId && other.isSpouseOf === item.memberId) ||
+                                (other.memberId && item.isSpouseOf === other.memberId)
+                              ) {
+                                used.add(j);
+                                mates.push(other);
+                              }
+                            });
+                            units.push(mates);
+                          });
+                          return units;
+                        };
+
                         return (
                           <div className="w-full h-full flex flex-col items-center justify-center">
                             {isSelected && (
@@ -6111,7 +7479,7 @@ export const InteractiveGridCanvasView: React.FC<
                               <div
                                 style={{
                                   height: `${gm.headerH}px`,
-                                  fontSize: `${Math.max(8, Math.round(10.5 * cardScale))}px`,
+                                  fontSize: `${Math.max(8, Math.round(10 * effScale))}px`,
                                 }}
                                 className="w-full flex items-center justify-between gap-1 px-1 mb-1 border-b border-amber-500/30 font-extrabold truncate"
                               >
@@ -6119,159 +7487,222 @@ export const InteractiveGridCanvasView: React.FC<
                                   {node.name}
                                 </span>
                                 <span className="shrink-0 px-1 rounded bg-amber-500/20 text-amber-300 text-[8.5px] font-black">
-                                  {mList.length} Foto
+                                  {modLayout === 'I'
+                                    ? 'Pola I'
+                                    : modLayout === 'L'
+                                    ? 'Pola L'
+                                    : `${mList.length} Foto`}
                                 </span>
                               </div>
                             )}
 
-                            <div
-                              style={{
-                                display: 'grid',
-                                gridTemplateColumns: `repeat(${gm.cols}, minmax(0, 1fr))`,
-                                gap: `${gm.gap}px`,
-                                width: '100%',
-                              }}
-                              className="items-stretch justify-items-center"
-                            >
-                              {mList.map((mm, mIdx) => (
-                                <div
-                                  key={`${mm.originalNodeId}_${mIdx}`}
-                                  className={`w-full flex flex-col items-center justify-start rounded-lg ${
-                                    cardDisplayMode === 'photo_only'
-                                      ? ''
-                                      : isCardLight
-                                      ? 'bg-stone-100/80 border border-stone-300/80 p-1'
-                                      : 'bg-slate-900/65 border border-slate-700/80 p-1'
-                                  } ${mm.wafat ? 'border-dashed opacity-90' : ''}`}
-                                >
-                                  {cardDisplayMode !== 'name_only' && (
+                            {modLayout === 'I' ? (
+                              (() => {
+                                const byDepth = new Map<number, MergedCardMember[]>();
+                                mList.forEach((mm) => {
+                                  const d = mm.depthInModule ?? 0;
+                                  if (!byDepth.has(d)) byDepth.set(d, []);
+                                  byDepth.get(d)!.push(mm);
+                                });
+                                const sortedDepths = Array.from(byDepth.keys()).sort(
+                                  (a, b) => a - b
+                                );
+                                return (
+                                  <div className="w-full flex flex-col items-center">
+                                    {sortedDepths.map((dKey, rowIdx) => {
+                                      const units = pairGroupItems(byDepth.get(dKey) || []);
+                                      return (
+                                        <React.Fragment key={`modI-row-${dKey}`}>
+                                          {rowIdx > 0 && (
+                                            <div
+                                              style={{
+                                                backgroundColor:
+                                                  genStyle?.line || '#38bdf8',
+                                              }}
+                                              className="w-0.5 h-2 opacity-75"
+                                            />
+                                          )}
+                                          <div
+                                            style={{ gap: `${gm.gap}px` }}
+                                            className="w-full flex flex-wrap items-stretch justify-center"
+                                          >
+                                            {units.map((u, uIdx) =>
+                                              u.length > 1 ? (
+                                                <div
+                                                  key={`unit-${dKey}-${uIdx}`}
+                                                  className="flex items-stretch gap-0 rounded-lg ring-1 ring-amber-400/40"
+                                                >
+                                                  {u.map((subM, sIdx) =>
+                                                    renderSubCard(
+                                                      subM,
+                                                      sIdx,
+                                                      gm.cellW
+                                                    )
+                                                  )}
+                                                </div>
+                                              ) : (
+                                                renderSubCard(
+                                                  u[0],
+                                                  uIdx,
+                                                  gm.cellW
+                                                )
+                                              )
+                                            )}
+                                          </div>
+                                        </React.Fragment>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              })()
+                            ) : modLayout === 'L' ? (
+                              (() => {
+                                const headItems = mList.filter(
+                                  (mm) => (mm.depthInModule ?? 0) === 0
+                                );
+                                const restItems = mList.filter(
+                                  (mm) => (mm.depthInModule ?? 0) > 0
+                                );
+                                const rightArmCount = Math.min(
+                                  2,
+                                  Math.ceil(restItems.length / 2)
+                                );
+                                const rightArm = restItems.slice(0, rightArmCount);
+                                const downArm = restItems.slice(rightArmCount);
+                                return (
+                                  <div
+                                    style={{ gap: `${gm.gap}px` }}
+                                    className="w-full flex flex-col items-start"
+                                  >
+                                    {/* Lengan Atas L: Kepala G3 (+Pasangan menempel) di kiri + cabang awal di kanan */}
                                     <div
-                                      style={{
-                                        width: `${pDim.w}px`,
-                                        height: `${pDim.h}px`,
-                                      }}
-                                      className={`overflow-hidden flex items-center justify-center font-extrabold text-xs border shrink-0 ${
-                                        isDark
-                                          ? 'bg-[#0f172a] border-slate-600 text-amber-400'
-                                          : 'bg-stone-100 border-stone-300 text-amber-700'
-                                      } ${
-                                        photoFrameSize === 'bulat'
-                                          ? 'rounded-full'
-                                          : 'rounded-md'
-                                      } ${cardDisplayMode === 'full' ? 'mb-0.5' : ''}`}
+                                      style={{ gap: `${gm.gap}px` }}
+                                      className="w-full flex flex-wrap items-stretch justify-start"
                                     >
-                                      {mm.photo ? (
-                                        <img
-                                          src={mm.photo}
-                                          alt={mm.name}
-                                          className="w-full h-full object-cover pointer-events-none"
-                                        />
-                                      ) : (
-                                        <span>{getInitials(mm.name)}</span>
+                                      <div className="flex items-stretch gap-0 rounded-lg ring-1 ring-amber-400/50">
+                                        {(headItems.length > 0
+                                          ? headItems
+                                          : mList.slice(0, 1)
+                                        ).map((hm, hIdx) =>
+                                          renderSubCard(hm, hIdx, gm.cellW)
+                                        )}
+                                      </div>
+                                      {rightArm.map((rm, rIdx) =>
+                                        renderSubCard(rm, rIdx, gm.cellW)
                                       )}
                                     </div>
-                                  )}
-
-                                  {cardDisplayMode !== 'photo_only' && (
-                                    <div
-                                      style={{ fontSize: `${cellNamePx}px` }}
-                                      className="font-bold leading-tight text-center break-words w-full line-clamp-2"
-                                    >
-                                      {mm.gender && (
-                                        <span className="mr-0.5">
-                                          {mm.gender === 'P' ? '👩' : '👨'}
-                                        </span>
-                                      )}
-                                      {mm.name}
-                                    </div>
-                                  )}
-
-                                  {cardDisplayMode === 'full' && mm.sub && (
-                                    <div
-                                      style={{ fontSize: `${cellSubPx}px` }}
-                                      className={`leading-tight text-center truncate w-full opacity-75 ${
-                                        isCardLight ? 'text-slate-600' : 'text-slate-400'
-                                      }`}
-                                    >
-                                      {mm.sub}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
+                                    {/* Lengan Turun L: Cucu/Cicit berbaris sejajar sisi kiri */}
+                                    {downArm.length > 0 && (
+                                      <div
+                                        style={{
+                                          gap: `${gm.gap}px`,
+                                          borderColor:
+                                            genStyle?.line || 'rgba(56,189,248,0.55)',
+                                        }}
+                                        className="w-full pl-2 ml-2 border-l-2 flex flex-wrap items-stretch justify-start"
+                                      >
+                                        {pairGroupItems(downArm).map((u, uIdx) =>
+                                          u.length > 1 ? (
+                                            <div
+                                              key={`l-unit-${uIdx}`}
+                                              className="flex items-stretch gap-0 rounded-lg ring-1 ring-amber-400/35"
+                                            >
+                                              {u.map((subM, sIdx) =>
+                                                renderSubCard(subM, sIdx, gm.cellW)
+                                              )}
+                                            </div>
+                                          ) : (
+                                            renderSubCard(u[0], uIdx, gm.cellW)
+                                          )
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()
+                            ) : (
+                              <div
+                                style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: `repeat(${gm.cols}, minmax(0, 1fr))`,
+                                  gap: `${gm.gap}px`,
+                                  width: '100%',
+                                }}
+                                className="items-stretch justify-items-center"
+                              >
+                                {mList.map((mm, mIdx) =>
+                                  renderSubCard(mm, mIdx)
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })()
                     ) : (
                       <>
-                        {/* Mode Card: Seukuran Foto Saja (2x3 / 3x4 / 4x6 / Bulat) */}
-                        {cardDisplayMode === 'photo_only' && (
-                          <div
-                            style={{ width: `${pDim.w}px`, height: `${pDim.h}px` }}
-                            className={`overflow-hidden flex items-center justify-center font-extrabold text-sm border relative ${
-                              isDark
-                                ? 'bg-[#0f172a] border-slate-600 text-amber-400'
-                                : 'bg-stone-100 border-stone-300 text-amber-700'
-                            } ${photoFrameSize === 'bulat' ? 'rounded-full' : 'rounded-lg'}`}
-                          >
-                            {node.photo ? (
-                              <img
-                                src={node.photo}
-                                alt={node.name}
-                                className="w-full h-full object-cover pointer-events-none"
-                              />
-                            ) : (
-                              <span>{getInitials(node.name)}</span>
+                        {/* Mode Card: Foto Saja (Kotak / Bulat / Segi-6, jarak 1mm) */}
+                        {cardDisplayMode === 'photo_only' &&
+                          renderPhotoFrame(
+                            node.photo,
+                            node.name,
+                            pDim.w,
+                            pDim.h
+                          )}
+
+                        {/* Mode Card: Foto + Nama Lengkap */}
+                        {cardDisplayMode === 'photo_name' && (
+                          <>
+                            {renderPhotoFrame(
+                              node.photo,
+                              node.name,
+                              pDim.w,
+                              pDim.h,
+                              undefined,
+                              'mb-0.5'
                             )}
-                          </div>
+                            <div
+                              style={{ fontSize: `${scaledNamePx}px` }}
+                              className="font-bold leading-tight break-words whitespace-normal w-full"
+                            >
+                              {node.gender && (
+                                <span className="mr-0.5">
+                                  {node.gender === 'P' ? '👩' : '👨'}
+                                </span>
+                              )}
+                              {node.name}
+                            </div>
+                          </>
                         )}
 
-                        {/* Mode Card: Nama Saja */}
+                        {/* Mode Card: Nama Lengkap Saja */}
                         {cardDisplayMode === 'name_only' && (
                           <div
                             style={{ fontSize: `${scaledNamePx}px` }}
-                            className="font-extrabold leading-tight truncate w-full flex items-center justify-center gap-1"
+                            className="font-extrabold leading-snug break-words whitespace-normal w-full text-center"
                           >
                             {node.gender && (
-                              <span className="shrink-0 opacity-90">
+                              <span className="mr-0.5 opacity-90">
                                 {node.gender === 'P' ? '👩' : '👨'}
                               </span>
                             )}
-                            <span className="truncate">{node.name}</span>
+                            <span>{node.name}</span>
                           </div>
                         )}
 
-                        {/* Mode Card: Lengkap (Foto + Nama + Keterangan) */}
+                        {/* Mode Card: Lengkap (Foto 1mm + Nama Lengkap + Tahun Lahir/Wafat - Kota) */}
                         {cardDisplayMode === 'full' && (
                           <>
-                            <div
-                              style={{
-                                width: `${pDim.w}px`,
-                                height: `${pDim.h}px`,
-                              }}
-                              className={`mb-1 overflow-hidden flex items-center justify-center font-extrabold text-sm border-2 shrink-0 ${
-                                isDark
-                                  ? 'bg-[#0f172a] border-slate-600 text-amber-400'
-                                  : 'bg-stone-100 border-stone-300 text-amber-600'
-                              } ${
-                                photoFrameSize === 'bulat'
-                                  ? 'rounded-full'
-                                  : 'rounded-lg'
-                              }`}
-                            >
-                              {node.photo ? (
-                                <img
-                                  src={node.photo}
-                                  alt={node.name}
-                                  className="w-full h-full object-cover pointer-events-none"
-                                />
-                              ) : (
-                                <span>{getInitials(node.name)}</span>
-                              )}
-                            </div>
+                            {renderPhotoFrame(
+                              node.photo,
+                              node.name,
+                              pDim.w,
+                              pDim.h,
+                              undefined,
+                              'mb-0.5'
+                            )}
                             <div
                               style={{ fontSize: `${scaledNamePx}px` }}
-                              className="font-bold leading-tight break-words w-full"
+                              className="font-bold leading-tight break-words whitespace-normal w-full"
                             >
                               {node.gender && (
                                 <span className="mr-0.5">
@@ -6283,9 +7714,9 @@ export const InteractiveGridCanvasView: React.FC<
                             {node.sub && (
                               <div
                                 style={{ fontSize: `${scaledSubPx}px` }}
-                                className={`mt-0.5 leading-tight ${
-                                  (node.customBgColor || cardBgColor)
-                                    ? isLightHexColor(node.customBgColor || cardBgColor)
+                                className={`mt-0.5 leading-tight break-words w-full ${
+                                  effectiveBg
+                                    ? isCardLight
                                       ? 'text-slate-600'
                                       : 'text-slate-300'
                                     : isDark
@@ -6660,6 +8091,118 @@ export const InteractiveGridCanvasView: React.FC<
             </button>
           )}
         </div>
+
+        {/* 3b. Kontrol Melayang Garis & Dot (Ubah Posisi Dot / Port Keluar-Masuk / Hapus Dot) */}
+        {activeEdgeIdx !== null && edges[activeEdgeIdx] && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="absolute top-2.5 left-1/2 -translate-x-1/2 z-40 flex flex-wrap items-center justify-center gap-1.5 rounded-2xl bg-stone-900/95 border border-amber-500/40 text-white px-2.5 py-1.5 backdrop-blur-md shadow-xl print:hidden max-w-[92vw]"
+          >
+            <span className="text-[10px] font-black text-amber-300 px-1">
+              Garis #{activeEdgeIdx + 1}
+            </span>
+
+            <div className="flex items-center gap-0.5 bg-stone-800 rounded-lg p-0.5">
+              <span className="text-[9px] text-stone-400 px-1">Dot:</span>
+              {([0.25, 0.5, 0.75] as const).map((pos) => {
+                const curPos = edges[activeEdgeIdx].dotPos ?? 0.5;
+                const activePos = Math.abs(curPos - pos) < 0.05;
+                return (
+                  <button
+                    key={pos}
+                    type="button"
+                    onClick={() => handleUpdateActiveEdgeDot({ dotPos: pos })}
+                    className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold ${
+                      activePos
+                        ? 'bg-amber-500 text-stone-950'
+                        : 'text-stone-300 hover:bg-stone-700'
+                    }`}
+                  >
+                    {Math.round(pos * 100)}%
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center gap-1 text-[9.5px]">
+              <span className="text-stone-400">Keluar:</span>
+              <select
+                value={edges[activeEdgeIdx].fromPort || 'auto'}
+                onChange={(e) =>
+                  handleUpdateActiveEdgeDot({
+                    fromPort: e.target.value as EdgePortSide,
+                  })
+                }
+                className="bg-stone-800 border border-stone-700 rounded px-1 py-0.5 text-[9.5px] font-bold text-sky-300 outline-hidden"
+              >
+                <option value="auto">Auto</option>
+                <option value="bottom">Bawah</option>
+                <option value="top">Atas</option>
+                <option value="left">Kiri</option>
+                <option value="right">Kanan</option>
+              </select>
+              <span className="text-stone-400">Masuk:</span>
+              <select
+                value={edges[activeEdgeIdx].toPort || 'auto'}
+                onChange={(e) =>
+                  handleUpdateActiveEdgeDot({
+                    toPort: e.target.value as EdgePortSide,
+                  })
+                }
+                className="bg-stone-800 border border-stone-700 rounded px-1 py-0.5 text-[9.5px] font-bold text-emerald-300 outline-hidden"
+              >
+                <option value="auto">Auto</option>
+                <option value="top">Atas</option>
+                <option value="bottom">Bawah</option>
+                <option value="left">Kiri</option>
+                <option value="right">Kanan</option>
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                handleUpdateActiveEdgeDot({
+                  hideDot: !edges[activeEdgeIdx].hideDot,
+                })
+              }
+              className={`px-2 py-0.5 rounded-lg text-[9.5px] font-bold ${
+                edges[activeEdgeIdx].hideDot
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-stone-800 text-amber-300 hover:bg-stone-700'
+              }`}
+              title="Hapus atau tampilkan titik dot pada garis ini"
+            >
+              {edges[activeEdgeIdx].hideDot ? 'Tampilkan Dot' : 'Hapus Dot'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => resetEdgeOffset(activeEdgeIdx)}
+              className="px-2 py-0.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 text-[9.5px] font-bold"
+            >
+              Reset
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDeleteActiveEdge}
+              className="px-2 py-0.5 rounded-lg bg-rose-600/25 hover:bg-rose-600/40 text-rose-300 text-[9.5px] font-bold"
+              title="Hapus garis konektor ini"
+            >
+              Hapus Garis
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveEdgeIdx(null)}
+              className="p-1 rounded-lg bg-stone-800 text-stone-400 hover:text-white"
+              title="Tutup Kontrol Garis"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
 
         {/* 4. Dock Kontekstual Melayang saat Kartu Dipilih (Normal & Mode Leluasa) */}
         {selectedIds.length > 0 && (

@@ -13,24 +13,50 @@ import type {
 } from './InteractiveGridCanvasView';
 
 export type SmartPresetId =
+  | 'kotak_9_baris'
+  | 'kotak_9_baris_g45_gabung'
+  | 'orbit_elips_1_5'
+  | 'orbit_elips_gabung'
+  | 'modular_g3_I'
+  | 'modular_g3_L'
   | 'hierarchy_grid_fill'
   | 'subtree_vertical'
   | 'subtree_horizontal'
   | 'family_cluster'
-  | 'heritage_showcase'
-  | 'kotak_9_baris'
-  | 'kotak_9_baris_g45_gabung'
-  | 'orbit_elips_1_5'
-  | 'orbit_elips_gabung';
+  | 'heritage_showcase';
 
 export type GuideOverlayMode = 'gen_bands' | 'grid_9_rows' | 'orbit_rings';
+
+export const MM_TO_PX = 3.78; // 1mm pada 96 DPI ≈ 3.78px
+
+export function formatMemberLifeSubtitle(m: FamilyMember): string {
+  const yearPart =
+    m.birthYear && m.deathYear
+      ? `${m.birthYear}–${m.deathYear}`
+      : m.birthYear && m.isDeceased
+      ? `${m.birthYear}–Wafat`
+      : m.birthYear
+      ? `L. ${m.birthYear}`
+      : m.isDeceased
+      ? 'Wafat'
+      : '';
+  let cityPart = (m.city || '').trim();
+  if (!cityPart && m.notes) {
+    const match = m.notes.match(/(?:kota|domisili|asal|tinggal)\s*[:\-]\s*([^,;\n]+)/i);
+    if (match?.[1]) cityPart = match[1].trim();
+  }
+  if (yearPart && cityPart) return `${yearPart} • ${cityPart}`;
+  if (yearPart) return yearPart;
+  if (cityPart) return cityPart;
+  return m.callName || `Gen ${(m.generationLevel ?? 0) + 1}`;
+}
 
 export interface SmartLayoutPreset {
   id: SmartPresetId;
   title: string;
   subtitle: string;
   badge: string;
-  category: 'kotak9' | 'orbit' | 'klasik';
+  category: 'kotak9' | 'orbit' | 'modular' | 'klasik';
   description: string;
   recommendedTheme: CanvasTheme;
   recommendedBg: CanvasBackground;
@@ -39,6 +65,7 @@ export interface SmartLayoutPreset {
   recommendedPhotoSize: PhotoFrameSize;
   recommendedLineStyle?: ConnectorLineStyle;
   recommendedGuideMode?: GuideOverlayMode;
+  recommendedGenGradient?: string;
 }
 
 export interface SmartAnalysisSummary {
@@ -50,6 +77,7 @@ export interface SmartAnalysisSummary {
 }
 
 const BASE_PHOTO_DIMS: Record<PhotoFrameSize, { w: number; h: number }> = {
+  kotak: { w: 58, h: 58 },
   bulat: { w: 56, h: 56 },
   '2x3': { w: 56, h: 84 },
   '3x4': { w: 66, h: 88 },
@@ -61,22 +89,29 @@ export function getBaseCardSizeForScale(
   photoSize: PhotoFrameSize,
   scale = 1
 ): { w: number; h: number } {
-  const p = BASE_PHOTO_DIMS[photoSize];
+  const p = BASE_PHOTO_DIMS[photoSize] || BASE_PHOTO_DIMS['3x4'];
   if (displayMode === 'photo_only') {
     return {
-      w: Math.round((p.w + 10) * scale),
-      h: Math.round((p.h + 10) * scale),
+      w: Math.round((p.w + 8) * scale),
+      h: Math.round((p.h + 8) * scale),
+    };
+  }
+  if (displayMode === 'photo_name') {
+    return {
+      w: Math.round(Math.max(106, p.w + 16) * scale),
+      h: Math.round((p.h + 30) * scale),
     };
   }
   if (displayMode === 'name_only') {
     return {
-      w: Math.round(126 * scale),
-      h: Math.round(38 * scale),
+      w: Math.round(138 * scale),
+      h: Math.round(42 * scale),
     };
   }
+  // 'full': jarak card-ke-foto 1mm (~4px) + nama + tahun lahir/wafat - kota
   return {
-    w: Math.round(Math.max(145, p.w + 36) * scale),
-    h: Math.round((p.h + 52) * scale),
+    w: Math.round(Math.max(142, p.w + 26) * scale),
+    h: Math.round((p.h + 50) * scale),
   };
 }
 
@@ -85,7 +120,9 @@ export function computeMergedCardMetrics(
   displayMode: CardDisplayMode,
   photoSize: PhotoFrameSize,
   cardScale = 1,
-  customCols?: number
+  customCols?: number,
+  modularSubLayout: 'grid' | 'I' | 'L' = 'grid',
+  membersMeta?: MergedCardMember[]
 ): {
   cols: number;
   rows: number;
@@ -98,6 +135,84 @@ export function computeMergedCardMetrics(
   w: number;
   h: number;
 } {
+  const pDim = BASE_PHOTO_DIMS[photoSize] || BASE_PHOTO_DIMS['3x4'];
+  // Jarak sub-card rapat 1–2mm (~6px)
+  const gap = Math.max(4, Math.round(6 * cardScale));
+  const padX = Math.max(4, Math.round(6 * cardScale));
+  const padY = Math.max(4, Math.round(6 * cardScale));
+
+  let cellW: number;
+  let cellH: number;
+  let headerH: number;
+  if (displayMode === 'photo_only') {
+    cellW = Math.max(28, Math.round((pDim.w + 6) * cardScale));
+    cellH = Math.max(28, Math.round((pDim.h + 6) * cardScale));
+    headerH = 0;
+  } else if (displayMode === 'photo_name') {
+    cellW = Math.max(64, Math.round(Math.max(82, pDim.w + 16) * cardScale));
+    cellH = Math.max(48, Math.round((pDim.h + 28) * cardScale));
+    headerH = Math.max(16, Math.round(20 * cardScale));
+  } else if (displayMode === 'name_only') {
+    cellW = Math.max(76, Math.round(114 * cardScale));
+    cellH = Math.max(26, Math.round(32 * cardScale));
+    headerH = Math.max(16, Math.round(20 * cardScale));
+  } else {
+    cellW = Math.max(76, Math.round(Math.max(100, pDim.w + 26) * cardScale));
+    cellH = Math.max(58, Math.round((pDim.h + 46) * cardScale));
+    headerH = Math.max(18, Math.round(22 * cardScale));
+  }
+
+  if (modularSubLayout === 'I' && membersMeta && membersMeta.length >= 2) {
+    // Pola I: Kepala (depth 0 + pasangannya) di baris atas, lalu generasi di bawah tersusun berbaris ke bawah
+    const depthBuckets = new Map<number, number>();
+    membersMeta.forEach((mm) => {
+      const d = mm.depthInModule ?? 0;
+      depthBuckets.set(d, (depthBuckets.get(d) || 0) + 1);
+    });
+    const maxRowCount = Math.max(
+      1,
+      ...Array.from(depthBuckets.values()).map((cnt) => Math.min(customCols || 3, cnt))
+    );
+    let totalSubRows = 0;
+    depthBuckets.forEach((cnt) => {
+      totalSubRows += Math.max(1, Math.ceil(cnt / maxRowCount));
+    });
+    return {
+      cols: maxRowCount,
+      rows: totalSubRows,
+      cellW,
+      cellH,
+      gap,
+      padX,
+      padY,
+      headerH,
+      w: maxRowCount * cellW + Math.max(0, maxRowCount - 1) * gap + padX * 2,
+      h: headerH + totalSubRows * cellH + Math.max(0, totalSubRows - 1) * gap + padY * 2 + 4,
+    };
+  }
+
+  if (modularSubLayout === 'L' && membersMeta && membersMeta.length >= 2) {
+    // Pola L: Kepala di kiri-atas, lengan kanan menampung cabang atas, lengan bawah menampung keturunan turun membentuk siku L
+    const headCount = Math.max(1, membersMeta.filter((m) => (m.depthInModule ?? 0) === 0).length);
+    const restCount = Math.max(0, membersMeta.length - headCount);
+    const rightArmCols = Math.min(3, Math.max(1, Math.ceil(restCount / 2)));
+    const totalCols = Math.max(headCount + 1, Math.min(4, headCount + rightArmCols));
+    const downCount = Math.max(1, restCount - rightArmCols);
+    const totalRows = 1 + Math.ceil(downCount / Math.min(2, totalCols));
+    return {
+      cols: totalCols,
+      rows: totalRows,
+      cellW,
+      cellH,
+      gap,
+      padX,
+      padY,
+      headerH,
+      w: totalCols * cellW + Math.max(0, totalCols - 1) * gap + padX * 2,
+      h: headerH + totalRows * cellH + Math.max(0, totalRows - 1) * gap + padY * 2 + 4,
+    };
+  }
+
   const defaultCols =
     membersCount <= 2
       ? 2
@@ -110,49 +225,7 @@ export function computeMergedCardMetrics(
       : 4;
   const cols = Math.max(1, Math.min(membersCount, customCols || defaultCols));
   const rows = Math.max(1, Math.ceil(membersCount / cols));
-  const pDim = BASE_PHOTO_DIMS[photoSize];
-  const gap = Math.max(4, Math.round((displayMode === 'photo_only' ? 6 : 8) * cardScale));
-  const padX = Math.max(6, Math.round(10 * cardScale));
-  const padY = Math.max(6, Math.round(10 * cardScale));
 
-  if (displayMode === 'photo_only') {
-    const cellW = Math.max(28, Math.round(pDim.w * cardScale));
-    const cellH = Math.max(28, Math.round(pDim.h * cardScale));
-    return {
-      cols,
-      rows,
-      cellW,
-      cellH,
-      gap,
-      padX,
-      padY,
-      headerH: 0,
-      w: cols * cellW + (cols - 1) * gap + padX * 2,
-      h: rows * cellH + (rows - 1) * gap + padY * 2,
-    };
-  }
-
-  if (displayMode === 'name_only') {
-    const cellW = Math.max(76, Math.round(114 * cardScale));
-    const cellH = Math.max(22, Math.round(28 * cardScale));
-    const headerH = Math.max(16, Math.round(20 * cardScale));
-    return {
-      cols,
-      rows,
-      cellW,
-      cellH,
-      gap,
-      padX,
-      padY,
-      headerH,
-      w: cols * cellW + (cols - 1) * gap + padX * 2,
-      h: headerH + rows * cellH + (rows - 1) * gap + padY * 2,
-    };
-  }
-
-  const cellW = Math.max(76, Math.round(Math.max(98, pDim.w + 28) * cardScale));
-  const cellH = Math.max(58, Math.round((pDim.h + 46) * cardScale));
-  const headerH = Math.max(18, Math.round(24 * cardScale));
   return {
     cols,
     rows,
@@ -280,13 +353,47 @@ export function analyzeTrahForSmartLayout(
 
 export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
   {
+    id: 'modular_g3_I',
+    title: 'Modular Card G3 Pola I (G1–G2 Besar)',
+    subtitle: 'G1–G2 Besar di Atas/Tengah • Card G3 Bungkus Anak–Cucu Vertikal (1.5mm)',
+    badge: 'Modular I',
+    category: 'modular',
+    description:
+      'Menampilkan G1–G2 berukuran lebih besar di atas/tengah, sementara tiap G3 menjadi Card Modular yang merangkum sub-card anak & cucu tersusun lurus ke bawah berjarak 1–2mm sesuai garis keturunan.',
+    recommendedTheme: 'dark',
+    recommendedBg: '',
+    recommendedOrientation: 'landscape',
+    recommendedCardMode: 'full',
+    recommendedPhotoSize: '2x3',
+    recommendedLineStyle: 'pcb90',
+    recommendedGuideMode: 'gen_bands',
+    recommendedGenGradient: 'royal_emerald',
+  },
+  {
+    id: 'modular_g3_L',
+    title: 'Modular Card G3 Pola L (Siku Anak–Cucu)',
+    subtitle: 'G1–G2 Besar • Card G3 Membentuk Siku L Anak–Cucu Menempel (1.5mm)',
+    badge: 'Modular L',
+    category: 'modular',
+    description:
+      'G1–G2 tampil lebih besar sebagai pusat trah, lalu setiap cabang G3 menjadi Card Modular berbentuk siku L yang menyatukan sub-card anak & cucu berjarak 1–2mm dengan pasangan menempel.',
+    recommendedTheme: 'dark',
+    recommendedBg: '',
+    recommendedOrientation: 'landscape',
+    recommendedCardMode: 'full',
+    recommendedPhotoSize: '2x3',
+    recommendedLineStyle: 'pcb45',
+    recommendedGuideMode: 'gen_bands',
+    recommendedGenGradient: 'ocean_blue',
+  },
+  {
     id: 'kotak_9_baris',
-    title: 'Kotak 9 Baris Simetris (G1–G2 Pusat Tengah)',
-    subtitle: 'Baris 5 = G1–G2 • Baris 4 & 6 = G3 (1–4 / 5–8) • Baris 3 & 7 = G4 • Baris 1,2,8,9 = G5',
+    title: 'Kotak 9 Baris Simetris (Gradasi G1➔G5)',
+    subtitle: 'Baris 5 = G1–G2 • Baris 4 & 6 = G3 • Baris 3 & 7 = G4 • Baris 1,2,8,9 = G5',
     badge: '9 Baris',
     category: 'kotak9',
     description:
-      'Konsep kotak 9 baris: G1–G2 berada di baris ke-5 (tengah), G3 anak ke 1–4 naik ke baris ke-4 & anak ke 5–8 turun ke baris ke-6, G4 di baris 3 & 7, lalu G5 di baris 1–2 & 8–9 lurus mengikuti garis keturunan.',
+      'Konsep kotak 9 baris dengan gradasi warna tua di G1–G2 ke muda di G5+: pasangan menempel, saudara belum menikah berjarak 1–2mm, dan garis keturunan mengikuti arah cabang.',
     recommendedTheme: 'dark',
     recommendedBg: '',
     recommendedOrientation: 'landscape',
@@ -294,6 +401,7 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedPhotoSize: '2x3',
     recommendedLineStyle: 'pcb45',
     recommendedGuideMode: 'grid_9_rows',
+    recommendedGenGradient: 'royal_emerald',
   },
   {
     id: 'kotak_9_baris_g45_gabung',
@@ -302,7 +410,7 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     badge: '9 Baris Gabung',
     category: 'kotak9',
     description:
-      'Mempertahankan pusat 9 baris (G1–G2 di tengah, G3 di baris 4 & 6), lalu menggabungkan kartu G4 dan keturunan G5-nya jadi Card Besar berdekatan dengan 1 garis saja agar cabang luar rapi.',
+      'Mempertahankan pusat 9 baris bergradasi warna (G1 tua ➔ G5 muda), lalu menggabungkan kartu G4 dan keturunan G5-nya jadi Card Besar berdekatan dengan 1 garis saja agar cabang luar rapi.',
     recommendedTheme: 'dark',
     recommendedBg: '',
     recommendedOrientation: 'landscape',
@@ -310,15 +418,16 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedPhotoSize: '2x3',
     recommendedLineStyle: 'pcb45',
     recommendedGuideMode: 'grid_9_rows',
+    recommendedGenGradient: 'amber_earth',
   },
   {
     id: 'orbit_elips_1_5',
-    title: 'Orbit Bulat / Elips 1–5 (Pusat ke Luar)',
-    subtitle: 'Orbit 1 = G1–G2 • Orbit 2 = G3 • Orbit 3–4 = G4 • Orbit 5 = G5+',
+    title: 'Orbit Bulat / Elips 1–5 (Gradasi Pusat➔Luar)',
+    subtitle: 'Orbit 1 = G1–G2 Tua • Orbit 2 = G3 • Orbit 3–4 = G4 • Orbit 5 = G5 Cerah',
     badge: 'Orbit 1–5',
     category: 'orbit',
     description:
-      'Tata letak lingkaran/elips memancar dari pusat ke luar: G1–G2 di Orbit 1 pusat, G3 di Orbit 2, G4 di Orbit 3–4, dan G5 di Orbit 5 terluar—setiap cabang ditempatkan di sudut terdekat induknya.',
+      'Tata letak lingkaran/elips memancar dari pusat warna tua (G1–G2) ke orbit luar cerah (G5+): pasangan menempel, jarak 1–5mm, setiap cabang ditempatkan di sudut terdekat induknya.',
     recommendedTheme: 'dark',
     recommendedBg: 'bg-galaksi',
     recommendedOrientation: 'landscape',
@@ -326,6 +435,7 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedPhotoSize: 'bulat',
     recommendedLineStyle: 'straight',
     recommendedGuideMode: 'orbit_rings',
+    recommendedGenGradient: 'ocean_blue',
   },
   {
     id: 'orbit_elips_gabung',
@@ -334,7 +444,7 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     badge: 'Orbit Gabung',
     category: 'orbit',
     description:
-      'Lingkaran/elips terpusat (G1–G2 Orbit 1, G3 Orbit 2) dengan cabang G4–G5 terluar digabung jadi 1 Card Besar per garis keturunan di Orbit 3–5 sehingga garis sangat ringkas & mudah dibaca.',
+      'Lingkaran/elips terpusat bergradasi warna (G1–G2 tua di Orbit 1, G3 Orbit 2) dengan cabang G4–G5 terluar digabung jadi 1 Card Besar per garis keturunan di Orbit 3–5.',
     recommendedTheme: 'dark',
     recommendedBg: 'bg-galaksi',
     recommendedOrientation: 'landscape',
@@ -342,6 +452,7 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedPhotoSize: 'bulat',
     recommendedLineStyle: 'curved',
     recommendedGuideMode: 'orbit_rings',
+    recommendedGenGradient: 'violet_dusk',
   },
   {
     id: 'hierarchy_grid_fill',
@@ -479,6 +590,8 @@ export function generateSmartLayoutFromTable(
     displayMode?: CardDisplayMode;
     photoSize?: PhotoFrameSize;
     cardScale?: number;
+    cardGapMm?: number;
+    modularG12Position?: 'top' | 'center';
   }
 ): { nodes: InteractiveNode[]; edges: InteractiveEdge[] } {
   if (!members || members.length === 0) {
@@ -488,6 +601,8 @@ export function generateSmartLayoutFromTable(
   const displayMode: CardDisplayMode = options?.displayMode ?? 'full';
   const photoSize: PhotoFrameSize = options?.photoSize ?? '3x4';
   const cardScale: number = options?.cardScale ?? 1;
+  const cardGapMm: number = Math.max(1, Math.min(5, options?.cardGapMm ?? 2.5));
+  const modularG12Position: 'top' | 'center' = options?.modularG12Position ?? 'top';
 
   const { roots, childrenMap } = buildHierarchyFromMembers(members);
   const nodes: InteractiveNode[] = [];
@@ -499,9 +614,11 @@ export function generateSmartLayoutFromTable(
   const bottomSafeMargin = 88;
   const usableH = Math.max(240, boardHeight - topSafeY - bottomSafeMargin);
 
-  const coupleGap = Math.max(6, Math.round(cardW * 0.08));
-  const compactSiblingGap = Math.max(12, Math.round(cardW * 0.14));
-  const compactRowGap = Math.max(40, Math.min(72, Math.round(cardH * 0.42)));
+  // Pasangan menempel rapat (0mm), saudara belum menikah 1.5mm (~6px), umum 1–5mm
+  const coupleGap = 0;
+  const unmarriedGapPx = Math.max(4, Math.round(1.5 * MM_TO_PX));
+  const compactSiblingGap = Math.max(4, Math.round(cardGapMm * MM_TO_PX));
+  const compactRowGap = Math.max(26, Math.min(64, Math.round(cardH * 0.34)));
 
   // -------------------------------------------------------------------------
   // HELPER BERSAMA: POHON RANTING KOMPAK (PARENT TERPUSAT TEPAT DI ATAS ANAK)
@@ -540,13 +657,15 @@ export function generateSmartLayoutFromTable(
       const allKidsAreSingleLeaves =
         measuredKids.length > opts.wrapLeafSiblingsMaxCols &&
         measuredKids.every((k) => k.children.length === 0);
+      const anyKidHasSpouse = measuredKids.some((k) => k.spouses.length > 0);
+      const kidGapX = anyKidHasSpouse ? compactSiblingGap : unmarriedGapPx;
 
       if (allKidsAreSingleLeaves) {
         const leafCols = Math.max(2, Math.min(opts.wrapLeafSiblingsMaxCols, measuredKids.length));
         const leafRows = Math.ceil(measuredKids.length / leafCols);
         const maxChildUnitW = Math.max(...measuredKids.map((k) => k.unitW));
-        const gridW = leafCols * maxChildUnitW + (leafCols - 1) * compactSiblingGap;
-        const gridH = leafRows * cardH + (leafRows - 1) * Math.max(22, Math.round(cardH * 0.25));
+        const gridW = leafCols * maxChildUnitW + (leafCols - 1) * kidGapX;
+        const gridH = leafRows * cardH + (leafRows - 1) * Math.max(12, unmarriedGapPx + 4);
         const blockW = Math.max(unitW, gridW);
         const blockH = cardH + opts.rowStepY + gridH;
         return {
@@ -566,7 +685,7 @@ export function generateSmartLayoutFromTable(
       const kidsTotalW =
         measuredKids.length > 0
           ? measuredKids.reduce((s, ch) => s + ch.blockW, 0) +
-            (measuredKids.length - 1) * compactSiblingGap
+            (measuredKids.length - 1) * kidGapX
           : 0;
       const kidsMaxH =
         measuredKids.length > 0 ? Math.max(...measuredKids.map((ch) => ch.blockH)) : 0;
@@ -629,9 +748,7 @@ export function generateSmartLayoutFromTable(
       nodes.push({
         id: primaryId,
         name: m.name,
-        sub:
-          m.callName ||
-          (block.depth === 0 ? 'Leluhur Utama' : `Generasi ${block.depth + 1}`),
+        sub: formatMemberLifeSubtitle(m),
         x: Math.round(unitStartX),
         y: Math.round(topY),
         photo: m.photoUrl || '',
@@ -671,28 +788,31 @@ export function generateSmartLayoutFromTable(
 
       const childTopY = topY + cardH + opts.rowStepY;
 
+      const anyKidHasSpouse = block.children.some((k) => k.spouses.length > 0);
+      const kidGapX = anyKidHasSpouse ? compactSiblingGap : unmarriedGapPx;
+
       if (block.isLeafGrid) {
         const maxChildUnitW = Math.max(...block.children.map((k) => k.unitW));
         const gridTotalW =
-          block.leafCols * maxChildUnitW + (block.leafCols - 1) * compactSiblingGap;
+          block.leafCols * maxChildUnitW + (block.leafCols - 1) * kidGapX;
         const gridStartX = leftX + (block.blockW - gridTotalW) / 2;
-        const subRowStepY = cardH + Math.max(22, Math.round(cardH * 0.25));
+        const subRowStepY = cardH + Math.max(12, unmarriedGapPx + 4);
 
         block.children.forEach((ch, idx) => {
           const col = idx % block.leafCols;
           const r = Math.floor(idx / block.leafCols);
-          const cellLeftX = gridStartX + col * (maxChildUnitW + compactSiblingGap);
+          const cellLeftX = gridStartX + col * (maxChildUnitW + kidGapX);
           const cellCenteredX = cellLeftX + (maxChildUnitW - ch.unitW) / 2;
           placeBlock(ch, cellCenteredX, childTopY + r * subRowStepY, primaryId);
         });
       } else {
         const kidsTotalW =
           block.children.reduce((s, ch) => s + ch.blockW, 0) +
-          (block.children.length - 1) * compactSiblingGap;
+          (block.children.length - 1) * kidGapX;
         let childX = leftX + (block.blockW - kidsTotalW) / 2;
         block.children.forEach((ch) => {
           placeBlock(ch, childX, childTopY, primaryId);
-          childX += ch.blockW + compactSiblingGap;
+          childX += ch.blockW + kidGapX;
         });
       }
     };
@@ -893,6 +1013,322 @@ export function generateSmartLayoutFromTable(
   }
 
   // -------------------------------------------------------------------------
+  // MODE MODULAR G3 POLA I / L (G1–G2 BESAR DI ATAS/TENGAH + CARD G3 BUNGKUS ANAK–CUCU)
+  // -------------------------------------------------------------------------
+  if (presetId === 'modular_g3_I' || presetId === 'modular_g3_L') {
+    const modularLayout: 'I' | 'L' = presetId === 'modular_g3_L' ? 'L' : 'I';
+    const bigScaleMult = 1.32;
+    const bigW = Math.round(cardW * bigScaleMult);
+    const bigH = Math.round(cardH * bigScaleMult);
+    const leftM = 28;
+    const rightM = 28;
+    const usableW = Math.max(320, boardWidth - leftM - rightM);
+
+    interface ModNode {
+      member: FamilyMember;
+      depth: number;
+      children: ModNode[];
+    }
+    const seen = new Set<string>();
+    const buildMod = (m: FamilyMember, depth: number): ModNode => {
+      seen.add(m.id);
+      const kids = (childrenMap.get(m.id) || [])
+        .filter((k) => !seen.has(k.id))
+        .map((k) => buildMod(k, depth + 1));
+      return { member: m, depth, children: kids };
+    };
+
+    const modRoots: ModNode[] = [];
+    roots.forEach((r) => {
+      if (!seen.has(r.id)) modRoots.push(buildMod(r, r.generationLevel ?? 0));
+    });
+    members.forEach((m) => {
+      if (!seen.has(m.id)) modRoots.push(buildMod(m, m.generationLevel ?? 0));
+    });
+
+    // Kumpulkan G1, G2, dan kepala G3 (depth === 2 atau anak terakhir sebelum cabang)
+    const g1List: ModNode[] = [];
+    const g2List: { node: ModNode; parentId: string | null }[] = [];
+    const g3Heads: { node: ModNode; parentId: string | null }[] = [];
+
+    const walkTop = (mn: ModNode, parentId: string | null) => {
+      if (mn.depth === 0) {
+        g1List.push(mn);
+        mn.children.forEach((c) => walkTop(c, mn.member.id));
+      } else if (mn.depth === 1) {
+        g2List.push({ node: mn, parentId });
+        mn.children.forEach((c) => walkTop(c, mn.member.id));
+      } else if (mn.depth === 2) {
+        g3Heads.push({ node: mn, parentId });
+      } else {
+        g3Heads.push({ node: mn, parentId });
+      }
+    };
+    modRoots.forEach((r) => walkTop(r, null));
+
+    const collectModularSubtree = (head: ModNode): {
+      members: MergedCardMember[];
+      snapshotEdges: InteractiveEdge[];
+    } => {
+      const list: MergedCardMember[] = [];
+      const snapEdges: InteractiveEdge[] = [];
+      const walkSub = (cur: ModNode, subDepth: number, parentRef: string | null) => {
+        const cm = cur.member;
+        const cid = `n_${cm.id}`;
+        list.push({
+          originalNodeId: cid,
+          memberId: cm.id,
+          name: cm.name,
+          sub: formatMemberLifeSubtitle(cm),
+          photo: cm.photoUrl || '',
+          wafat: cm.isDeceased,
+          gender: cm.gender,
+          genLevel: cur.depth,
+          parentMemberId: parentRef || undefined,
+          depthInModule: subDepth,
+          relX: 0,
+          relY: 0,
+        });
+        if (parentRef) {
+          snapEdges.push({ from: `n_${parentRef}`, to: cid, type: 'child' });
+        }
+        (cm.spouses || []).forEach((sp, sIdx) => {
+          const spId = `n_${cm.id}_sp_${sIdx + 1}`;
+          list.push({
+            originalNodeId: spId,
+            name: sp.name,
+            sub: sp.status === 'cerai_mati' ? 'Pasangan (Wafat)' : 'Pasangan',
+            photo: '',
+            wafat: sp.status === 'cerai_mati',
+            gender: cm.gender === 'L' ? 'P' : cm.gender === 'P' ? 'L' : undefined,
+            genLevel: cur.depth,
+            isSpouseOf: cm.id,
+            depthInModule: subDepth,
+            relX: 0,
+            relY: 0,
+          });
+          snapEdges.push({ from: cid, to: spId, type: 'couple' });
+        });
+        cur.children.forEach((ch) => walkSub(ch, subDepth + 1, cm.id));
+      };
+      walkSub(head, 0, null);
+      return { members: list, snapshotEdges: snapEdges };
+    };
+
+    const g3Boxes = g3Heads.map(({ node: head, parentId }) => {
+      const sub = collectModularSubtree(head);
+      if (sub.members.length >= 2) {
+        const metrics = computeMergedCardMetrics(
+          sub.members.length,
+          displayMode,
+          photoSize,
+          cardScale,
+          undefined,
+          modularLayout,
+          sub.members
+        );
+        return {
+          isMerged: true,
+          head,
+          parentId,
+          members: sub.members,
+          snapshotEdges: sub.snapshotEdges,
+          w: metrics.w,
+          h: metrics.h,
+        };
+      }
+      return {
+        isMerged: false,
+        head,
+        parentId,
+        members: sub.members,
+        snapshotEdges: sub.snapshotEdges,
+        w: cardW,
+        h: cardH,
+      };
+    });
+
+    const moduleGapX = Math.max(unmarriedGapPx, Math.round(cardGapMm * MM_TO_PX));
+    const bandGapY = Math.max(24, Math.round(cardGapMm * MM_TO_PX * 2.4));
+
+    const placeBigUnit = (m: FamilyMember, centerX: number, topY: number, parentNodeId: string | null, depth: number) => {
+      const spCount = m.spouses?.length || 0;
+      const totalUnitW = bigW + spCount * bigW;
+      let startX = centerX - totalUnitW / 2;
+      const primaryId = `n_${m.id}`;
+      nodes.push({
+        id: primaryId,
+        name: m.name,
+        sub: formatMemberLifeSubtitle(m),
+        x: Math.round(startX),
+        y: Math.round(topY),
+        photo: m.photoUrl || '',
+        wafat: m.isDeceased,
+        gender: m.gender,
+        memberId: m.id,
+        genLevel: m.generationLevel ?? depth,
+        scaleMultiplier: bigScaleMult,
+      });
+      if (parentNodeId) {
+        edges.push({ from: parentNodeId, to: primaryId, type: 'child' });
+      }
+      (m.spouses || []).forEach((sp, sIdx) => {
+        const spId = `n_${m.id}_sp_${sIdx + 1}`;
+        nodes.push({
+          id: spId,
+          name: sp.name,
+          sub: sp.status === 'cerai_mati' ? 'Pasangan (Wafat)' : 'Pasangan',
+          x: Math.round(startX + (sIdx + 1) * bigW),
+          y: Math.round(topY),
+          photo: '',
+          wafat: sp.status === 'cerai_mati',
+          gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
+          genLevel: m.generationLevel ?? depth,
+          scaleMultiplier: bigScaleMult,
+        });
+        edges.push({ from: primaryId, to: spId, type: 'couple' });
+      });
+      return primaryId;
+    };
+
+    const g1RowH = g1List.length > 0 ? bigH : 0;
+    const g2RowH = g2List.length > 0 ? bigH : 0;
+
+    // Bagi g3Boxes ke 1 baris (mode Atas) atau 2 sayap atas+bawah (mode Tengah)
+    const placeG3Row = (boxes: typeof g3Boxes, startY: number) => {
+      if (boxes.length === 0) return startY;
+      // Wrap jika lebar melebihi usableW
+      const rowsG3: typeof g3Boxes[] = [];
+      let curR: typeof g3Boxes = [];
+      let curW = 0;
+      boxes.forEach((bx) => {
+        const addW = curR.length === 0 ? bx.w : curW + moduleGapX + bx.w;
+        if (curR.length > 0 && addW > usableW) {
+          rowsG3.push(curR);
+          curR = [bx];
+          curW = bx.w;
+        } else {
+          curR.push(bx);
+          curW = addW;
+        }
+      });
+      if (curR.length > 0) rowsG3.push(curR);
+
+      let curY = startY;
+      rowsG3.forEach((rowItems) => {
+        const totalRowW =
+          rowItems.reduce((s, it) => s + it.w, 0) +
+          Math.max(0, rowItems.length - 1) * moduleGapX;
+        let curX = leftM + Math.max(0, (usableW - totalRowW) / 2);
+        const maxRowH = Math.max(...rowItems.map((it) => it.h));
+
+        rowItems.forEach((item) => {
+          const m = item.head.member;
+          const pNodeId = item.parentId ? `n_${item.parentId}` : null;
+          if (item.isMerged) {
+            const modId = `mod_g3_${m.id}`;
+            nodes.push({
+              id: modId,
+              name: `Cabang ${m.name}`,
+              sub: `G3 Modular (${item.members.length} Org)`,
+              x: Math.round(curX),
+              y: Math.round(curY),
+              photo: m.photoUrl || '',
+              wafat: item.members.every((x) => x.wafat),
+              genLevel: m.generationLevel ?? 2,
+              mergedMembers: item.members,
+              mergedEdgesSnapshot: item.snapshotEdges,
+              modularSubLayout: modularLayout,
+              modularHeadMemberId: m.id,
+            });
+            if (pNodeId) {
+              edges.push({ from: pNodeId, to: modId, type: 'child' });
+            }
+          } else {
+            const cid = `n_${m.id}`;
+            nodes.push({
+              id: cid,
+              name: m.name,
+              sub: formatMemberLifeSubtitle(m),
+              x: Math.round(curX),
+              y: Math.round(curY),
+              photo: m.photoUrl || '',
+              wafat: m.isDeceased,
+              gender: m.gender,
+              memberId: m.id,
+              genLevel: m.generationLevel ?? 2,
+            });
+            if (pNodeId) {
+              edges.push({ from: pNodeId, to: cid, type: 'child' });
+            }
+          }
+          curX += item.w + moduleGapX;
+        });
+        curY += maxRowH + bandGapY;
+      });
+      return curY;
+    };
+
+    const g1UnitsW =
+      g1List.reduce((s, r) => s + (1 + (r.member.spouses?.length || 0)) * bigW, 0) +
+      Math.max(0, g1List.length - 1) * 24;
+    const g2UnitsW =
+      g2List.reduce((s, r) => s + (1 + (r.node.member.spouses?.length || 0)) * bigW, 0) +
+      Math.max(0, g2List.length - 1) * 18;
+
+    if (modularG12Position === 'center' && g3Boxes.length >= 2) {
+      const splitIdx = Math.ceil(g3Boxes.length / 2);
+      const upperG3 = g3Boxes.slice(0, splitIdx);
+      const lowerG3 = g3Boxes.slice(splitIdx);
+      let cursorY = topSafeY;
+      cursorY = placeG3Row(upperG3, cursorY);
+
+      if (g1List.length > 0) {
+        let gx = leftM + Math.max(0, (usableW - g1UnitsW) / 2);
+        g1List.forEach((g1) => {
+          const uw = (1 + (g1.member.spouses?.length || 0)) * bigW;
+          placeBigUnit(g1.member, gx + uw / 2, cursorY, null, 0);
+          gx += uw + 24;
+        });
+        cursorY += g1RowH + bandGapY;
+      }
+      if (g2List.length > 0) {
+        let gx = leftM + Math.max(0, (usableW - g2UnitsW) / 2);
+        g2List.forEach(({ node: g2, parentId }) => {
+          const uw = (1 + (g2.member.spouses?.length || 0)) * bigW;
+          placeBigUnit(g2.member, gx + uw / 2, cursorY, parentId ? `n_${parentId}` : null, 1);
+          gx += uw + 18;
+        });
+        cursorY += g2RowH + bandGapY;
+      }
+      placeG3Row(lowerG3, cursorY);
+    } else {
+      let cursorY = topSafeY;
+      if (g1List.length > 0) {
+        let gx = leftM + Math.max(0, (usableW - g1UnitsW) / 2);
+        g1List.forEach((g1) => {
+          const uw = (1 + (g1.member.spouses?.length || 0)) * bigW;
+          placeBigUnit(g1.member, gx + uw / 2, cursorY, null, 0);
+          gx += uw + 24;
+        });
+        cursorY += g1RowH + bandGapY;
+      }
+      if (g2List.length > 0) {
+        let gx = leftM + Math.max(0, (usableW - g2UnitsW) / 2);
+        g2List.forEach(({ node: g2, parentId }) => {
+          const uw = (1 + (g2.member.spouses?.length || 0)) * bigW;
+          placeBigUnit(g2.member, gx + uw / 2, cursorY, parentId ? `n_${parentId}` : null, 1);
+          gx += uw + 18;
+        });
+        cursorY += g2RowH + bandGapY;
+      }
+      placeG3Row(g3Boxes, cursorY);
+    }
+
+    return { nodes, edges };
+  }
+
+  // -------------------------------------------------------------------------
   // MODE BARU 1 & 2: KONSEP KOTAK 9 BARIS (SIMETRIS & OPSIONAL GABUNG G4–G5)
   // Row 5 = G1 & G2; Row 4 = G3 (1..4); Row 6 = G3 (5..8);
   // Row 3 & 7 = G4; Row 1,2 & 8,9 = G5 (sesuai garis keturunan induk)
@@ -1061,7 +1497,7 @@ export function generateSmartLayoutFromTable(
       const primaryNode: InteractiveNode = {
         id: primaryId,
         name: m.name,
-        sub: m.callName || labelGen,
+        sub: formatMemberLifeSubtitle(m),
         x: Math.round(tm.desiredX - cardW / 2),
         y: rowY(rowHint),
         photo: m.photoUrl || '',
@@ -1128,7 +1564,7 @@ export function generateSmartLayoutFromTable(
           originalNodeId: cid,
           memberId: cm.id,
           name: cm.name,
-          sub: cm.callName || `Gen ${cur.depth + 1}`,
+          sub: formatMemberLifeSubtitle(cm),
           photo: cm.photoUrl || '',
           wafat: cm.isDeceased,
           gender: cm.gender,
@@ -1216,7 +1652,7 @@ export function generateSmartLayoutFromTable(
             originalNodeId: cid,
             memberId: g4.member.id,
             name: g4.member.name,
-            sub: g4.member.callName || 'Gen 4',
+            sub: formatMemberLifeSubtitle(g4.member),
             photo: g4.member.photoUrl || '',
             wafat: g4.member.isDeceased,
             gender: g4.member.gender,
@@ -1295,7 +1731,8 @@ export function generateSmartLayoutFromTable(
       );
       if (list.length === 0) continue;
 
-      const minGap = 10;
+      const hasAnySpousesInRow = list.some((it) => it.node.id.includes('_sp_'));
+      const minGap = hasAnySpousesInRow ? compactSiblingGap : unmarriedGapPx;
       const totalWidths = list.reduce((s, it) => s + it.w, 0);
       const maxAllowSpan = usableW;
       const effGap =
@@ -1309,12 +1746,14 @@ export function generateSmartLayoutFromTable(
             )
           : minGap;
 
-      // Mulai dari posisi ideal lalu dorong maju/mundur supaya tidak saling menimpa
+      // Mulai dari posisi ideal lalu dorong maju/mundur supaya tidak saling menimpa; pasangan tetap menempel (0mm)
       const xs = list.map((it) =>
         Math.max(leftMargin, Math.min(boardWidth - rightMargin - it.w, it.desiredCenterX - it.w / 2))
       );
       for (let i = 1; i < list.length; i++) {
-        const minNext = xs[i - 1] + list[i - 1].w + effGap;
+        const isGluedSpouse = list[i].node.id.startsWith(`${list[i - 1].node.id}_sp_`);
+        const pairGap = isGluedSpouse ? 0 : effGap;
+        const minNext = xs[i - 1] + list[i - 1].w + pairGap;
         if (xs[i] < minNext) xs[i] = minNext;
       }
       const rightEdge = xs[list.length - 1] + list[list.length - 1].w;
@@ -1323,7 +1762,9 @@ export function generateSmartLayoutFromTable(
         let shift = rightEdge - maxRight;
         xs[list.length - 1] -= shift;
         for (let i = list.length - 2; i >= 0; i--) {
-          const maxCur = xs[i + 1] - effGap - list[i].w;
+          const isGluedSpouse = list[i + 1].node.id.startsWith(`${list[i].node.id}_sp_`);
+          const pairGap = isGluedSpouse ? 0 : effGap;
+          const maxCur = xs[i + 1] - pairGap - list[i].w;
           if (xs[i] > maxCur) xs[i] = maxCur;
           if (xs[i] < leftMargin) xs[i] = leftMargin;
         }
