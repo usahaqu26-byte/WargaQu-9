@@ -340,7 +340,7 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
                 <h1 className="text-base font-bold text-white tracking-wide flex items-center gap-1.5 leading-none">
                   ChatQu
                   <span className="text-[9px] font-semibold bg-sky-500/20 text-sky-300 border border-sky-500/30 px-1.5 py-0.5 rounded-full">
-                    RT 03
+                    Warga
                   </span>
                 </h1>
                 <p className="text-[10px] text-sky-200/70 mt-0.5 truncate">Komunikasi & Koordinasi Warga</p>
@@ -376,7 +376,7 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
               <HelpCircle className="w-4 h-4" />
             </button>
             <button
-              onClick={() => showNotification('Menu: Setelan Notifikasi RT 03')}
+              onClick={() => showNotification('Menu: Setelan Notifikasi ChatQu')}
               className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white transition"
               title="Opsi Lainnya"
             >
@@ -814,7 +814,7 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
                   STATUS DARURAT RESMI WARGA
                 </div>
                 <p className="text-[11px] leading-relaxed">
-                  Pesan di ruangan ini disiarkan secara prioritas ke ponsel seluruh warga Blok A dan tim siskamling RT 03.
+                  Pesan di ruangan ini disiarkan secara prioritas ke ponsel seluruh anggota lingkungan dan tim jaga warga.
                 </p>
               </div>
             )}
@@ -1139,7 +1139,7 @@ export const ChatQuView: React.FC<ChatQuViewProps> = ({
             <div className="w-24 h-24 rounded-full bg-sky-500/20 border-2 border-sky-400 mx-auto flex items-center justify-center text-sky-400 text-3xl animate-pulse shadow-xl shadow-sky-500/20">
               {showCallModal === 'video' ? <Video className="w-10 h-10" /> : <Phone className="w-10 h-10" />}
             </div>
-            <h3 className="text-lg font-bold text-white mt-4">{activeRoom?.title || 'Pengurus RT 03'}</h3>
+            <h3 className="text-lg font-bold text-white mt-4">{activeRoom?.title || 'Grup Warga'}</h3>
             <p className="text-xs text-sky-300 animate-pulse">
               {showCallModal === 'video' ? 'Menghubungkan Panggilan Video HD...' : 'Memanggil Suara Voip WargaQu...'}
             </p>

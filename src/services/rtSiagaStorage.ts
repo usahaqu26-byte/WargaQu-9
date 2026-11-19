@@ -339,147 +339,7 @@ function getScopedActiveIdKey(scopeKey: string): string {
   return `wargaqu_rt_active_id_v3_${scopeKey}`;
 }
 
-const DEFAULT_ARCHIVES: HistoricalArchiveYear[] = [
-  {
-    id: 'arc-2024',
-    year: 2024,
-    totalIncome: 24800000,
-    totalExpense: 18450000,
-    endingBalance: 9650000,
-    note: 'Rekap tutup buku tahun 2024 (perbaikan selokan & pos ronda)',
-    source: 'Manual',
-  },
-  {
-    id: 'arc-2025',
-    year: 2025,
-    totalIncome: 26400000,
-    totalExpense: 23630000,
-    endingBalance: 12420000,
-    note: 'Saldo akhir 31 Des 2025 dipindahkan sebagai Saldo Awal 2026',
-    source: 'Manual',
-  },
-];
-
-const DEFAULT_INVITATIONS: CommunityInvitation[] = [
-  {
-    id: 'inv-1',
-    eventType: 'Rapat Warga',
-    title: 'Rapat Koordinasi Tutup Buku & Anggaran 2026',
-    dateTime: 'Sabtu, 14 Nov 2026 · 19:30 WIB',
-    location: 'Balai Warga RT 03',
-    targetAudience: 'Seluruh Kepala Keluarga (Blok A - C)',
-    agenda: '1. Laporan Kas & Arsip 2025  2. Penetapan Iuran 2026  3. Aktivasi SiagaQu',
-    senderName: 'Bpk. Bambang Sutrisno (Ketua)',
-    createdAt: 'Hari ini · 09:00',
-    rsvps: {
-      'warga-bambang': {
-        memberId: 'warga-bambang',
-        name: 'Bambang Sutrisno',
-        block: 'Blok A No. 01',
-        status: 'hadir',
-      },
-      'warga-sri': {
-        memberId: 'warga-sri',
-        name: 'Sri Wahyuni',
-        block: 'Blok B No. 04',
-        status: 'hadir',
-      },
-    },
-  },
-  {
-    id: 'inv-2',
-    eventType: 'Kerja Bakti',
-    title: 'Undangan Kerja Bakti & Bersih Saluran Air',
-    dateTime: 'Minggu, 15 Nov 2026 · 07:30 WIB',
-    location: 'Sepanjang Gang Blok A - Blok C',
-    targetAudience: 'Perwakilan 1 orang tiap rumah',
-    agenda: 'Pembersihan gorong-gorong antisipasi musim hujan dan perapian ranting pohon.',
-    senderName: 'Bpk. Joko Purnomo (Koord. Kebersihan)',
-    createdAt: 'Kemarin · 16:20',
-    rsvps: {
-      'warga-bambang': {
-        memberId: 'warga-bambang',
-        name: 'Bambang Sutrisno',
-        block: 'Blok A No. 01',
-        status: 'hadir',
-      },
-    },
-  },
-];
-
-const DEFAULT_FORUM_POSTS: ForumPost[] = [
-  {
-    id: 'post-1',
-    category: 'jadwal',
-    title: 'Kerja Bakti Saluran Air & Pemangkasan Dahan Blok A-C',
-    content: 'Mohon kehadiran minimal 1 perwakilan rumah membawa alat kebersihan seadanya. Konsumsi teh hangat & kue disediakan di Balai Warga.',
-    authorName: 'Bpk. Bambang Sutrisno',
-    authorRole: 'Ketua',
-    createdAt: 'Hari ini · 08:15',
-    scheduleDate: 'Minggu, 07:30 WIB',
-    scheduleLocation: 'Balai Warga & Selokan Blok A-C',
-    attendeeIds: ['warga-bambang', 'warga-sri'],
-    upvoterIds: ['warga-bambang', 'warga-sri'],
-    comments: [
-      {
-        id: 'c-1',
-        author: 'Ibu Sri Wahyuni',
-        authorBlock: 'Blok B No. 04',
-        text: 'Siap, konsumsi gorengan dan air mineral sudah kami koordinasikan.',
-        time: '08:40',
-      },
-    ],
-  },
-  {
-    id: 'post-2',
-    category: 'jadwal',
-    title: 'Jadwal Ronda Siskamling Pekan Ini (22:00 - 04:00 WIB)',
-    content: 'Senin: Bpk. Bambang & Hendriana | Selasa: Bpk. Dedi, Joko & Anton | Rabu: Bpk. Agus, Wawan & Rudi. Harap lapor di pos jika berhalangan.',
-    authorName: 'Bpk. Dedi Suryadi',
-    authorRole: 'Koordinator Keamanan',
-    createdAt: 'Kemarin · 19:00',
-    scheduleDate: 'Setiap Malam · 22:00 WIB',
-    scheduleLocation: 'Pos Ronda Utama',
-    attendeeIds: ['warga-bambang'],
-    upvoterIds: ['warga-bambang'],
-    comments: [],
-  },
-  {
-    id: 'post-3',
-    category: 'aspirasi',
-    title: 'Lampu Penerangan Jalan Gang Blok B Mati 2 Titik',
-    content: 'Lampu tiang dekat rumah Blok B No. 07 dan pojok taman bermain mati sejak dua malam lalu sehingga agak gelap saat malam.',
-    authorName: 'Hendriana',
-    authorRole: 'Warga Blok A No. 12',
-    createdAt: '2 hari lalu',
-    aspirationStatus: 'Diproses',
-    upvoterIds: ['warga-hendriana', 'warga-sri', 'warga-bambang'],
-    comments: [
-      {
-        id: 'c-2',
-        author: 'Bpk. Joko Purnomo',
-        authorBlock: 'Koordinator Kebersihan',
-        text: 'Sudah dicek, bohlam LED pengganti sudah dibeli dari kas dan dipasang sore ini.',
-        time: 'Kemarin',
-      },
-    ],
-  },
-  {
-    id: 'post-4',
-    category: 'polling',
-    title: 'Musyawarah: Tambah 2 Unit CCTV di Portal Selatan?',
-    content: 'Estimasi biaya Rp 1.400.000 diambil dari saldo kas warga tanpa menaikkan iuran bulanan. Bagaimana pendapat warga?',
-    authorName: 'Pengurus Lingkungan',
-    authorRole: 'Musyawarah Warga',
-    createdAt: '3 hari lalu',
-    upvoterIds: ['warga-bambang'],
-    pollOptions: [
-      { id: 'opt-1', label: 'Setuju, pasang bulan ini', voterIds: ['warga-bambang', 'warga-sri'] },
-      { id: 'opt-2', label: 'Tunda, bahas saat rapat warga', voterIds: [] },
-    ],
-    comments: [],
-  },
-];
+// Data komunitas RT/Paguyuban mulai bersih ([]), terisi hanya dari input pengurus/warga atau undangan komunitas.
 
 function buildInitialPayments(paidThroughMonth: number, amount: number): Record<string, MonthlyPaymentRecord> {
   const map: Record<string, MonthlyPaymentRecord> = {};
@@ -533,26 +393,6 @@ function buildPaymentsFromMonths(
   return map;
 }
 
-const DEFAULT_PROFILE: PaguyubanProfile = {
-  id: 'comm-rt03-rw05',
-  orgType: 'RT',
-  orgName: 'RT 03 / RW 05',
-  areaName: 'Perumahan Harmoni Sukamaju',
-  monthlyDuesAmount: 50000,
-  duesBreakdown: {
-    keamanan: 25000,
-    sampah: 15000,
-    kas: 10000,
-  },
-  year: 2026,
-  pengurusPin: '0305',
-  inviteCode: 'WQR-RT03-0305',
-  termStartDate: '2024-01-01',
-  termEndDate: '2026-12-31',
-  gracePeriodDays: 14,
-  skNumber: 'SK-03/RW05/I/2024',
-};
-
 const DEFAULT_OFFICERS: RtOfficerAccount[] = [];
 
 const EMPTY_NEUTRAL_PROFILE: PaguyubanProfile = {
@@ -569,209 +409,6 @@ const EMPTY_NEUTRAL_PROFILE: PaguyubanProfile = {
   pengurusPin: '0000',
 };
 
-const DEFAULT_COORDINATORS: CoordinatorMember[] = [
-  {
-    id: 'coord-1',
-    role: 'Ketua RT / Paguyuban',
-    division: 'Pimpinan & Pengesahan',
-    name: 'Bpk. Bambang Sutrisno',
-    phone: '0812-3456-7890',
-    canVerifySiaga: true,
-  },
-  {
-    id: 'coord-2',
-    role: 'Koordinator Keamanan & SiagaQu',
-    division: 'Siskamling & Verifikasi Darurat',
-    name: 'Bpk. Dedi Suryadi',
-    phone: '0819-7788-9900',
-    canVerifySiaga: true,
-  },
-  {
-    id: 'coord-3',
-    role: 'Bendahara',
-    division: 'Iuran & Transparansi Kas',
-    name: 'Ibu Sri Wahyuni',
-    phone: '0821-4455-6677',
-    canVerifySiaga: false,
-  },
-  {
-    id: 'coord-4',
-    role: 'Sekretaris',
-    division: 'Administrasi & Surat Warga',
-    name: 'Bpk. Agus Permana',
-    phone: '0813-8899-1122',
-    canVerifySiaga: false,
-  },
-  {
-    id: 'coord-5',
-    role: 'Koordinator Kebersihan',
-    division: 'Sampah & Lingkungan',
-    name: 'Bpk. Joko Purnomo',
-    phone: '0857-1234-5678',
-    canVerifySiaga: false,
-  },
-];
-
-const DEFAULT_MEMBERS: WargaMember[] = [
-  {
-    id: 'warga-hendriana',
-    wargaId: 'WQ-RT03-012',
-    name: 'Hendriana',
-    block: 'Blok A No. 12',
-    phone: '0812-8800-1212',
-    residentType: 'Tetap',
-    isCurrentUser: true,
-    claimStatus: 'claimed',
-    claimCode: 'RT03-A12-1212',
-    claimedAt: '05 Jan 2026',
-    siagaStatus: 'pending',
-    siagaRequested: false,
-    falseAlarmCount: 0,
-    monthlyPayments: buildInitialPayments(9, 50000),
-  },
-  {
-    id: 'warga-bambang',
-    wargaId: 'WQ-RT03-001',
-    name: 'Bambang Sutrisno',
-    block: 'Blok A No. 01',
-    phone: '0812-3456-7890',
-    residentType: 'Tetap',
-    claimStatus: 'claimed',
-    claimCode: 'RT03-A01-7890',
-    claimedAt: '02 Jan 2026',
-    siagaStatus: 'active',
-    siagaVerifiedBy: 'Koordinator Keamanan',
-    siagaVerifiedAt: '10 Jan 2026',
-    falseAlarmCount: 0,
-    monthlyPayments: buildInitialPayments(10, 50000),
-  },
-  {
-    id: 'warga-sri',
-    wargaId: 'WQ-RT03-005',
-    name: 'Sri Wahyuni',
-    block: 'Blok B No. 04',
-    phone: '0821-4455-6677',
-    residentType: 'Tetap',
-    claimStatus: 'claimed',
-    claimCode: 'RT03-B04-6677',
-    claimedAt: '03 Jan 2026',
-    siagaStatus: 'active',
-    siagaVerifiedBy: 'Ketua RT 03',
-    siagaVerifiedAt: '12 Jan 2026',
-    falseAlarmCount: 0,
-    monthlyPayments: buildInitialPayments(10, 50000),
-  },
-  {
-    id: 'warga-agus-excel',
-    wargaId: 'WQ-RT03-015',
-    name: 'Agus Wijaya',
-    block: 'Blok B No. 09',
-    phone: '0813-2244-5588',
-    residentType: 'Tetap',
-    claimStatus: 'unclaimed',
-    claimCode: 'RT03-B09-5588',
-    priorArrears: 100000,
-    priorArrearsNote: 'Sisa iuran Nov-Des 2025',
-    siagaStatus: 'pending',
-    siagaRequested: false,
-    falseAlarmCount: 0,
-    monthlyPayments: buildInitialPayments(8, 50000),
-  },
-  {
-    id: 'warga-ratna-excel',
-    wargaId: 'WQ-RT03-017',
-    name: 'Ratna Dewi',
-    block: 'Blok C No. 03',
-    phone: '0852-9090-3344',
-    residentType: 'Kontrak',
-    claimStatus: 'invited',
-    claimCode: 'RT03-C03-3344',
-    invitedAt: '10 Nov 2026',
-    siagaStatus: 'pending',
-    siagaRequested: false,
-    falseAlarmCount: 0,
-    monthlyPayments: buildInitialPayments(10, 50000),
-  },
-  {
-    id: 'warga-rudi',
-    wargaId: 'WQ-RT03-019',
-    name: 'Rudi Hartono',
-    block: 'Blok C No. 08',
-    phone: '0856-7711-2233',
-    residentType: 'Kontrak',
-    claimStatus: 'claimed',
-    claimCode: 'RT03-C08-2233',
-    claimedAt: '15 Jan 2026',
-    siagaStatus: 'suspended',
-    suspendReason: 'Laporan palsu sirine darurat (28 Okt)',
-    falseAlarmCount: 2,
-    monthlyPayments: buildInitialPayments(7, 50000),
-  },
-];
-
-const DEFAULT_TRANSACTIONS: KasTransaction[] = [
-  {
-    id: 'kas-1',
-    type: 'masuk',
-    category: 'Iuran Warga',
-    title: 'Iuran Kebersihan & Keamanan (46 KK Okt)',
-    amount: 2300000,
-    date: '05 Okt 2026',
-    recordedBy: 'Ibu Sri Wahyuni (Bendahara)',
-  },
-  {
-    id: 'kas-2',
-    type: 'keluar',
-    category: 'Gaji Keamanan',
-    title: 'Gaji 2 Petugas Keamanan / Satpam Malam',
-    amount: 1400000,
-    date: '06 Okt 2026',
-    recordedBy: 'Ibu Sri Wahyuni (Bendahara)',
-  },
-  {
-    id: 'kas-3',
-    type: 'keluar',
-    category: 'Petugas Sampah',
-    title: 'Honor Petugas Angkut Sampah Lingkungan',
-    amount: 650000,
-    date: '08 Okt 2026',
-    recordedBy: 'Ibu Sri Wahyuni (Bendahara)',
-  },
-  {
-    id: 'kas-4',
-    type: 'keluar',
-    category: 'Listrik & Pos Ronda',
-    title: 'Token Listrik Pos Ronda & Lampu Gang',
-    amount: 220000,
-    date: '12 Okt 2026',
-    recordedBy: 'Bpk. Dedi Suryadi',
-  },
-  {
-    id: 'kas-5',
-    type: 'masuk',
-    category: 'Donasi / Kas',
-    title: 'Saldo Kas Awal Tahun & Donasi Warga',
-    amount: 12420000,
-    date: '01 Okt 2026',
-    recordedBy: 'Ibu Sri Wahyuni (Bendahara)',
-  },
-];
-
-const DEFAULT_AUDIT_LOGS: SiagaAuditLog[] = [
-  {
-    id: 'LOG-INIT',
-    timestamp: '19:45',
-    date: '28 Okt',
-    category: 'Maling / Kejahatan',
-    mode: 'Simulasi',
-    reporterId: 'warga-hendriana',
-    reporterName: 'Hendriana',
-    reporterBlock: 'Blok A No. 12',
-    location: 'RT 03 / RW 05 - Blok A No. 12',
-    transcript: '"Simulasi respon pos ronda terkoordinasi lancar di pos utama RT 03."',
-    auditStatus: 'valid',
-  },
-];
 
 function emitSync() {
   if (typeof window !== 'undefined') {
@@ -801,27 +438,29 @@ function normalizeMembersList(raw: WargaMember[], orgName: string): WargaMember[
   }));
 }
 
-function buildOwnerSeedWorkspace(): RtCommunityWorkspace {
+function migrateLegacyWorkspace(): RtCommunityWorkspace | null {
   const legacyProfile = safeRead<PaguyubanProfile | null>(LEGACY_KEYS.PROFILE, null);
-  const profile: PaguyubanProfile = legacyProfile
-    ? { ...DEFAULT_PROFILE, ...legacyProfile, id: legacyProfile.id || DEFAULT_PROFILE.id }
-    : { ...DEFAULT_PROFILE };
-
-  const coordinators = safeRead(LEGACY_KEYS.COORDINATORS, DEFAULT_COORDINATORS);
+  if (!legacyProfile) return null;
+  const profile: PaguyubanProfile = {
+    ...EMPTY_NEUTRAL_PROFILE,
+    ...legacyProfile,
+    id: legacyProfile.id || `comm-${Date.now()}`,
+  };
+  const coordinators = safeRead<CoordinatorMember[]>(LEGACY_KEYS.COORDINATORS, []);
   const members = normalizeMembersList(
-    safeRead(LEGACY_KEYS.MEMBERS, DEFAULT_MEMBERS),
+    safeRead<WargaMember[]>(LEGACY_KEYS.MEMBERS, []),
     profile.orgName
   );
-  const transactions = safeRead(LEGACY_KEYS.TRANSACTIONS, DEFAULT_TRANSACTIONS);
-  const auditLogs = safeRead(LEGACY_KEYS.AUDIT_LOGS, DEFAULT_AUDIT_LOGS);
-  const forumPosts = safeRead(LEGACY_KEYS.FORUM_POSTS, DEFAULT_FORUM_POSTS);
+  const transactions = safeRead<KasTransaction[]>(LEGACY_KEYS.TRANSACTIONS, []);
+  const auditLogs = safeRead<SiagaAuditLog[]>(LEGACY_KEYS.AUDIT_LOGS, []);
+  const forumPosts = safeRead<ForumPost[]>(LEGACY_KEYS.FORUM_POSTS, []);
   const guestReports = safeRead(LEGACY_KEYS.GUEST_REPORTS, []);
-  const archives = safeRead(LEGACY_KEYS.ARCHIVES, DEFAULT_ARCHIVES);
-  const invitations = safeRead(LEGACY_KEYS.INVITATIONS, DEFAULT_INVITATIONS);
+  const archives = safeRead<HistoricalArchiveYear[]>(LEGACY_KEYS.ARCHIVES, []);
+  const invitations = safeRead<CommunityInvitation[]>(LEGACY_KEYS.INVITATIONS, []);
 
   return {
-    id: profile.id || 'comm-rt03-rw05',
-    joinedVia: 'owner_seed',
+    id: profile.id || `comm-${Date.now()}`,
+    joinedVia: 'created',
     joinedAt: new Date().toISOString(),
     profile,
     coordinators,
@@ -853,11 +492,11 @@ function loadScopedWorkspaces(): RtCommunityWorkspace[] {
     // ignore
   }
 
-  // Migrasi hanya jika data legacy asli benar-benar pernah disimpan sebelumnya; jika baru, mulai bersih ([]).
   if (isOwner) {
     try {
-      if (localStorage.getItem(LEGACY_KEYS.PROFILE)) {
-        const migrated = [buildOwnerSeedWorkspace()];
+      const legacy = migrateLegacyWorkspace();
+      if (legacy) {
+        const migrated = [legacy];
         localStorage.setItem(key, JSON.stringify(migrated));
         localStorage.setItem(getScopedActiveIdKey(scopeKey), migrated[0].id);
         return migrated;
@@ -1500,14 +1139,6 @@ export const RtSiagaStorage = {
     const remaining = list.filter(w => w.id !== communityId);
     const nextActive = remaining[0]?.id || '';
     saveScopedWorkspaces(remaining, nextActive);
-  },
-
-  reloadOwnerDefaultCommunity() {
-    if (!this.isOwnerAccount()) return;
-    const seed = buildOwnerSeedWorkspace();
-    const current = loadScopedWorkspaces();
-    const filtered = current.filter(w => w.id !== seed.id);
-    saveScopedWorkspaces([seed, ...filtered], seed.id);
   },
 
   encodeCommunityInvite(ws: RtCommunityWorkspace, inviterName: string, targetMember?: WargaMember): string {

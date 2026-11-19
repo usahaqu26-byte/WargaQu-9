@@ -82,7 +82,6 @@ export interface LocationPreset {
 
 const LOCATION_PRESETS: LocationPreset[] = [
   { name: 'Kuningan, Jawa Barat (Pusat Kota)', desc: 'Kabupaten Kuningan', coords: [-6.9765, 108.4835] },
-  { name: 'Perumahan Warga RT 03 / RW 05', desc: 'Area WargaQu Harmoni', coords: [-6.9742, 108.4862] },
   { name: 'Jakarta Pusat (Monas & Sekitar)', desc: 'DKI Jakarta', coords: [-6.1754, 106.8272] },
   { name: 'Bandung (Alun-Alun / Dago)', desc: 'Kota Bandung', coords: [-6.9215, 107.607] },
   { name: 'Yogyakarta (Malioboro / Tugu)', desc: 'DI Yogyakarta', coords: [-7.7928, 110.3658] },
@@ -286,7 +285,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
 
   const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
   const [isGpsAcquiring, setIsGpsAcquiring] = useState<boolean>(false);
-  const [gpsSourceLabel, setGpsSourceLabel] = useState<string>('Tersimpan / RT 03 Kuningan');
+  const [gpsSourceLabel, setGpsSourceLabel] = useState<string>('Koordinat Awal (Aktifkan GPS)');
   const [showGpsModal, setShowGpsModal] = useState<boolean>(false);
   const [manualLatInput, setManualLatInput] = useState<string>('');
   const [manualLngInput, setManualLngInput] = useState<string>('');
@@ -366,22 +365,58 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
     return lapaks.find(l => l.isMyLapak) || lapaks[0];
   }, [lapaks]);
 
+  const [selectedLapak, setSelectedLapak] = useState<LapakItem | null>(null);
+
   useEffect(() => {
-    const handleRemoteAreaOrder = (evt: Event) => {
+    const handleRemoteAreaRelay = (evt: Event) => {
       const detail = (evt as CustomEvent<RelayIncomingEvent>).detail;
-      if (!detail || detail.eventName !== 'order:areaqu' || !detail.payload || typeof detail.payload !== 'object') {
+      if (!detail || !detail.payload || typeof detail.payload !== 'object') return;
+
+      if (detail.eventName === 'order:areaqu') {
+        const p = detail.payload as { order?: AreaOrderItem };
+        const incomingOrder = p.order;
+        if (!incomingOrder?.id) return;
+        if (myLapak && incomingOrder.lapakId !== myLapak.id) return;
+        setOrders(prev => (prev.some(o => o.id === incomingOrder.id) ? prev : [incomingOrder, ...prev]));
         return;
       }
-      const p = detail.payload as { order?: AreaOrderItem };
-      const incomingOrder = p.order;
-      if (!incomingOrder?.id) return;
-      if (myLapak && incomingOrder.lapakId !== myLapak.id) return;
 
-      setOrders(prev => (prev.some(o => o.id === incomingOrder.id) ? prev : [incomingOrder, ...prev]));
+      if (detail.eventName === 'areaqu:lapak_sync') {
+        const p = detail.payload as { lapak?: LapakItem };
+        const incomingLapak = p.lapak;
+        if (!incomingLapak?.id || incomingLapak.id === myLapak?.id) return;
+        setLapaks(prev => {
+          const exists = prev.some(l => l.id === incomingLapak.id);
+          if (exists) {
+            return prev.map(l => (l.id === incomingLapak.id ? { ...incomingLapak, isMyLapak: false } : l));
+          }
+          return [{ ...incomingLapak, isMyLapak: false }, ...prev];
+        });
+        return;
+      }
+
+      if (detail.eventName === 'areaqu:chat') {
+        const p = detail.payload as {
+          lapakId?: string;
+          senderRole?: 'user' | 'merchant';
+          text?: string;
+          time?: string;
+        };
+        if (!p.text || !p.lapakId) return;
+        if (selectedLapak && p.lapakId !== selectedLapak.id) return;
+        setChatMessages(prev => [
+          ...prev,
+          {
+            sender: p.senderRole === 'merchant' ? 'merchant' : 'user',
+            text: p.text!,
+            time: p.time || new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+          },
+        ]);
+      }
     };
-    window.addEventListener(REALTIME_RELAY_EVENT, handleRemoteAreaOrder);
-    return () => window.removeEventListener(REALTIME_RELAY_EVENT, handleRemoteAreaOrder);
-  }, [myLapak?.id]);
+    window.addEventListener(REALTIME_RELAY_EVENT, handleRemoteAreaRelay);
+    return () => window.removeEventListener(REALTIME_RELAY_EVENT, handleRemoteAreaRelay);
+  }, [myLapak?.id, selectedLapak?.id]);
 
   // ---------------------------------------------------------------------------
   // 5. MAP INSTANCE & LEAFLET REFS
@@ -402,7 +437,6 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
   const [selectedRadius, setSelectedRadius] = useState<number>(1000);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedLapak, setSelectedLapak] = useState<LapakItem | null>(null);
 
   // Modals
   const [showKatalogModal, setShowKatalogModal] = useState<boolean>(false);
@@ -858,7 +892,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
       setActiveTab('identitas');
       return;
     }
-    const shareText = `Lapak AreaQu WargaQu\n${myLapak.avatarIcon} ${myLapak.name}\nPemilik: ${myLapak.ownerName} (${myLapak.rtRw || 'RT 03'})\nStatus: ${myLapak.status.toUpperCase()}\nLokasi: ${myLapak.address} (${myLapak.lat.toFixed(5)}, ${myLapak.lng.toFixed(5)})\nKatalog: ${myLapak.catalog.length} menu siap pesan.`;
+    const shareText = `Lapak AreaQu WargaQu\n${myLapak.avatarIcon} ${myLapak.name}\nPemilik: ${myLapak.ownerName}${myLapak.rtRw ? ` (${myLapak.rtRw})` : ''}\nStatus: ${myLapak.status.toUpperCase()}\nLokasi: ${myLapak.address} (${myLapak.lat.toFixed(5)}, ${myLapak.lng.toFixed(5)})\nKatalog: ${myLapak.catalog.length} menu siap pesan.`;
     if (navigator.clipboard) {
       try {
         await navigator.clipboard.writeText(shareText);
@@ -995,22 +1029,25 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
 
   const handleSendChatMessage = () => {
     if (!chatInputText.trim()) return;
+    const msgTime = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    const text = chatInputText.trim();
     const userMsg = {
       sender: 'user' as const,
-      text: chatInputText.trim(),
-      time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+      text,
+      time: msgTime
     };
     setChatMessages(prev => [...prev, userMsg]);
     setChatInputText('');
 
-    setTimeout(() => {
-      const merchantReply = {
-        sender: 'merchant' as const,
-        text: `Baik ${consumerIdentity.fullName || 'Kak'}! Pesan sudah kami terima di ${selectedLapak?.name}. Akan segera kami proses.`,
-        time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
-      };
-      setChatMessages(prev => [...prev, merchantReply]);
-    }, 900);
+    if (selectedLapak) {
+      RealtimeRelayService.publish(RealtimeRelayService.getRtChannel(), 'areaqu:chat', {
+        lapakId: selectedLapak.id,
+        senderRole: selectedLapak.isMyLapak ? 'merchant' : 'user',
+        senderName: consumerIdentity.fullName || 'Warga',
+        text,
+        time: msgTime,
+      });
+    }
   };
 
   const activeCatalog = selectedLapak?.catalog || [];
@@ -1142,7 +1179,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
       ...consumerIdentity,
       fullName: gateName.trim(),
       phone: gatePhone.trim(),
-      rtRw: gateRtRw.trim() || 'RT 03 / RW 05',
+      rtRw: gateRtRw.trim() || 'Lingkungan Warga',
       addressDetail: gateAddress.trim(),
       landmark: gateLandmark.trim(),
       isVerified: true,
@@ -1342,8 +1379,8 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
                 <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
                   <ShieldCheck className="w-4 h-4 shrink-0" />
                   <span>
-                    {selectedLapak.isVerifiedWarga !== false ? 'Pedagang Terverifikasi' : 'Lapak Warga'} ·{' '}
-                    {selectedLapak.rtRw || 'RT 03 / RW 05'}
+                    {selectedLapak.isVerifiedWarga !== false ? 'Pedagang Terverifikasi' : 'Lapak Warga'}
+                    {selectedLapak.rtRw ? ` · ${selectedLapak.rtRw}` : ''}
                   </span>
                 </div>
                 <div className="flex items-center gap-1">
@@ -1521,7 +1558,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
                       <div className="min-w-0">
                         <h3 className="text-xs font-bold text-slate-900 truncate">{lapak.name}</h3>
                         <p className="text-[11px] text-slate-600 truncate">
-                          {lapak.ownerName} · {lapak.rtRw || 'RT 03 / RW 05'}
+                          {lapak.ownerName}{lapak.rtRw ? ` · ${lapak.rtRw}` : ''}
                         </p>
                         <div className="text-[11px] text-slate-500 mt-0.5">
                           <span className="font-semibold text-emerald-700">
@@ -1621,7 +1658,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
                       <div className="flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
                         <BadgeCheck className="w-3.5 h-3.5 shrink-0" />
                         <span className="truncate">
-                          {myLapak.ownerName} · {myLapak.rtRw || 'RT 03 / RW 05'}
+                          {myLapak.ownerName}{myLapak.rtRw ? ` · ${myLapak.rtRw}` : ''}
                         </span>
                       </div>
                       <h2 className="text-sm font-extrabold text-slate-900 truncate">
@@ -1949,7 +1986,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
                 <div className="min-w-0">
                   <h3 className="text-xs font-black text-slate-900 truncate">{selectedLapak.name}</h3>
                   <p className="text-[11px] text-slate-500 truncate">
-                    {selectedLapak.ownerName} · {selectedLapak.rtRw || 'RT 03 / RW 05'}
+                    {selectedLapak.ownerName}{selectedLapak.rtRw ? ` · ${selectedLapak.rtRw}` : ''}
                   </p>
                 </div>
               </div>
@@ -2145,7 +2182,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
                 <div className="min-w-0">
                   <h3 className="text-xs font-bold truncate">{selectedLapak.name}</h3>
                   <p className="text-[10px] text-emerald-200 truncate">
-                    {selectedLapak.ownerName} · {selectedLapak.rtRw || 'RT 03'}
+                    {selectedLapak.ownerName}{selectedLapak.rtRw ? ` · ${selectedLapak.rtRw}` : ''}
                   </p>
                 </div>
               </div>
@@ -2409,7 +2446,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
               <div className="min-w-0">
                 <h4 className="text-xs font-black text-slate-900 truncate">{myLapak.name}</h4>
                 <p className="text-[11px] text-slate-600 truncate">
-                  {myLapak.ownerName} · {myLapak.rtRw || 'RT 03 / RW 05'}
+                  {myLapak.ownerName}{myLapak.rtRw ? ` · ${myLapak.rtRw}` : ''}
                 </p>
                 <p className="text-[10px] text-slate-500 truncate">{myLapak.address}</p>
               </div>

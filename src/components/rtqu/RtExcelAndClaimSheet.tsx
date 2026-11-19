@@ -54,7 +54,7 @@ export const RtExcelAndClaimSheet: React.FC<RtExcelAndClaimSheetProps> = ({
   // --- Smart Excel Import State ---
   const [preview, setPreview] = useState<SmartExcelPreview | null>(null);
   const [importMode, setImportMode] = useState<'fresh_2026' | 'merge'>('fresh_2026');
-  const [openingBalanceInput, setOpeningBalanceInput] = useState<string>('12420000');
+  const [openingBalanceInput, setOpeningBalanceInput] = useState<string>('0');
   const [openingNoteInput, setOpeningNoteInput] = useState<string>(
     `Saldo Awal Lembaran Baru ${profile.year}`
   );
@@ -94,7 +94,7 @@ export const RtExcelAndClaimSheet: React.FC<RtExcelAndClaimSheetProps> = ({
     endingBalance: '',
     note: '',
   });
-  const [freshBalance, setFreshBalance] = useState('12420000');
+  const [freshBalance, setFreshBalance] = useState('0');
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -115,14 +115,6 @@ export const RtExcelAndClaimSheet: React.FC<RtExcelAndClaimSheetProps> = ({
     } finally {
       setIsParsing(false);
     }
-  };
-
-  const handleLoadSampleExcel = () => {
-    const sample = RtExcelService.buildSampleSmartPreview(profile);
-    setPreview(sample);
-    setOpeningBalanceInput(String(sample.detectedOpeningBalance));
-    setOpeningNoteInput(sample.detectedOpeningNote);
-    showNotification('Contoh pembacaan pintar Excel 2020–2025 siap ditinjau.');
   };
 
   const handleApplyImport = () => {
@@ -247,14 +239,6 @@ export const RtExcelAndClaimSheet: React.FC<RtExcelAndClaimSheetProps> = ({
             <span>Template</span>
           </button>
         </div>
-
-        <button
-          type="button"
-          onClick={handleLoadSampleExcel}
-          className="w-full py-2 text-[11px] font-bold text-emerald-700 border border-dashed border-emerald-400 rounded-lg hover:bg-emerald-50"
-        >
-          Simulasi Uji: Baca Contoh Excel 2020–2025 → Lembaran Baru {profile.year}
-        </button>
 
         {preview && (
           <div className="border-t border-slate-200 pt-3 space-y-3">

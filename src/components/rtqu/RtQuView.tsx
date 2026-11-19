@@ -1402,20 +1402,6 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
                 </div>
               </div>
             </div>
-
-            {isOwner && (
-              <div className="pt-2 border-t border-slate-200 text-center">
-                <button
-                  onClick={() => {
-                    RtSiagaStorage.reloadOwnerDefaultCommunity();
-                    showNotification('Workspace contoh RT 03 / RW 05 dimuat kembali.');
-                  }}
-                  className="text-[11px] font-bold text-slate-500 hover:text-emerald-700 underline"
-                >
-                  Muat Ulang Data Contoh Owner (RT 03 / RW 05)
-                </button>
-              </div>
-            )}
           </div>
         ) : (
           <>
@@ -3340,36 +3326,51 @@ export const RtQuView: React.FC<RtQuViewProps> = ({
               )}
 
               {/* SHEET: RONDA & AGENDA */}
-              {activeSheet === 'ronda' && (
-                <div className="space-y-3">
-                  <div className="divide-y divide-slate-200">
-                    {[
-                      { hari: 'Senin (22:00 - 04:00)', petugas: 'Bpk. Bambang, Hendriana', status: 'Malam Ini' },
-                      { hari: 'Selasa (22:00 - 04:00)', petugas: 'Bpk. Dedi, Joko, Anton', status: 'Terjadwal' },
-                      { hari: 'Rabu (22:00 - 04:00)', petugas: 'Bpk. Agus, Wawan, Rudi', status: 'Terjadwal' },
-                      { hari: 'Minggu (07:30 WIB)', petugas: 'Gotong Royong Saluran Air Blok A-C', status: 'Kerja Bakti' },
-                    ].map((item, idx) => (
-                      <div key={idx} className="py-3 flex items-center justify-between gap-2">
-                        <div>
-                          <div className="font-bold text-slate-900">{item.hari}</div>
-                          <div className="text-[11px] text-slate-500">{item.petugas}</div>
-                        </div>
-                        <span className="text-[11px] font-bold text-emerald-700 shrink-0">{item.status}</span>
+              {activeSheet === 'ronda' && (() => {
+                const jadwalPosts = forumPosts.filter(p => p.category === 'jadwal');
+                return (
+                  <div className="space-y-3">
+                    {jadwalPosts.length === 0 ? (
+                      <div className="py-6 px-4 text-center rounded-xl border border-dashed border-slate-200 bg-slate-50">
+                        <p className="text-xs font-bold text-slate-700">
+                          Belum ada jadwal ronda / kerja bakti di Forum.
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          Buat posting kategori Jadwal di Forum Komunitas agar muncul otomatis di sini.
+                        </p>
                       </div>
-                    ))}
+                    ) : (
+                      <div className="divide-y divide-slate-200">
+                        {jadwalPosts.map(post => (
+                          <div key={post.id} className="py-3 flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="font-bold text-slate-900 truncate">{post.title}</div>
+                              <div className="text-[11px] text-slate-500 truncate">
+                                {[post.scheduleDate, post.scheduleLocation, post.authorName]
+                                  .filter(Boolean)
+                                  .join(' · ')}
+                              </div>
+                            </div>
+                            <span className="text-[11px] font-bold text-emerald-700 shrink-0">
+                              {(post.attendeeIds?.length || 0)} hadir
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => {
+                        setActiveSheet(null);
+                        setActiveTab('forum');
+                        setForumFilter('jadwal');
+                      }}
+                      className="w-full min-h-[42px] border border-emerald-700 text-emerald-700 rounded-xl font-bold"
+                    >
+                      Buka & Tambah Jadwal di Forum
+                    </button>
                   </div>
-                  <button
-                    onClick={() => {
-                      setActiveSheet(null);
-                      setActiveTab('forum');
-                      setForumFilter('jadwal');
-                    }}
-                    className="w-full min-h-[42px] border border-emerald-700 text-emerald-700 rounded-xl font-bold"
-                  >
-                    Bagikan & Konfirmasi Kehadiran di Forum
-                  </button>
-                </div>
-              )}
+                );
+              })()}
 
               {/* SHEET: BUAT KOMUNITAS BARU (PILIH MANUAL vs SMART IMPORT) */}
               {activeSheet === 'buat_komunitas' && createMethodPick === 'pick' && (

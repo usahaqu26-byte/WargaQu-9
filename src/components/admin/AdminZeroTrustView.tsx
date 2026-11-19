@@ -20,8 +20,15 @@ import {
   Users,
 } from 'lucide-react';
 import { AuthService } from '../../services/authService';
-import { RtSiagaStorage } from '../../services/rtSiagaStorage';
-import { SiagaCircleService } from '../../services/siagaCircleService';
+import { RT_SYNC_EVENT, RtSiagaStorage } from '../../services/rtSiagaStorage';
+import { SIAGA_CIRCLE_SYNC_EVENT, SiagaCircleService } from '../../services/siagaCircleService';
+import {
+  RELAY_STATUS_EVENT,
+  RELAY_TELEMETRY_EVENT,
+  RealtimeRelayService,
+  RelayConnectionState,
+  ServerTelemetryPayload,
+} from '../../services/realtimeRelayService';
 import {
   ZERO_TRUST_SYNC_EVENT,
   ZeroTrustService,
@@ -111,6 +118,13 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
     FirebaseSyncService.isCloudAdmin()
   );
   const [connectingCloudAdmin, setConnectingCloudAdmin] = useState<boolean>(false);
+  const [relayStatus, setRelayStatus] = useState<RelayConnectionState>(() =>
+    RealtimeRelayService.getStatus()
+  );
+  const [serverTelemetry, setServerTelemetry] = useState<ServerTelemetryPayload | null>(() =>
+    RealtimeRelayService.getTelemetry()
+  );
+  const [refreshingLive, setRefreshingLive] = useState<boolean>(false);
 
   // Local editing states
   const [settlementRefInput, setSettlementRefInput] = useState<string>('');
@@ -136,33 +150,69 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
       setGovTick(t => t + 1);
       setCloudAdminConnected(FirebaseSyncService.isCloudAdmin());
     };
+    const onRelayStatus = (ev: Event) => {
+      const next = (ev as CustomEvent<RelayConnectionState>).detail;
+      if (next) setRelayStatus(next);
+    };
+    const onRelayTelemetry = (ev: Event) => {
+      const next = (ev as CustomEvent<ServerTelemetryPayload>).detail;
+      if (next) setServerTelemetry(next);
+    };
+
     window.addEventListener(ZERO_TRUST_SYNC_EVENT, refreshAll);
     window.addEventListener(MONETIZATION_SYNC_EVENT, refreshAll);
     window.addEventListener(SMART_CARE_SYNC_EVENT, refreshAll);
     window.addEventListener(ACCOUNT_GOV_SYNC_EVENT, refreshAll);
     window.addEventListener(FIREBASE_AUTH_SYNC_EVENT, refreshAll);
+    window.addEventListener(RT_SYNC_EVENT, refreshAll);
+    window.addEventListener(SIAGA_CIRCLE_SYNC_EVENT, refreshAll);
+    window.addEventListener(RELAY_STATUS_EVENT, onRelayStatus);
+    window.addEventListener(RELAY_TELEMETRY_EVENT, onRelayTelemetry);
     return () => {
       window.removeEventListener(ZERO_TRUST_SYNC_EVENT, refreshAll);
       window.removeEventListener(MONETIZATION_SYNC_EVENT, refreshAll);
       window.removeEventListener(SMART_CARE_SYNC_EVENT, refreshAll);
       window.removeEventListener(ACCOUNT_GOV_SYNC_EVENT, refreshAll);
       window.removeEventListener(FIREBASE_AUTH_SYNC_EVENT, refreshAll);
+      window.removeEventListener(RT_SYNC_EVENT, refreshAll);
+      window.removeEventListener(SIAGA_CIRCLE_SYNC_EVENT, refreshAll);
+      window.removeEventListener(RELAY_STATUS_EVENT, onRelayStatus);
+      window.removeEventListener(RELAY_TELEMETRY_EVENT, onRelayTelemetry);
     };
   }, []);
 
-  useEffect(() => {
-    if (isUnlocked) {
-      AccountGovernanceService.fetchVolatileServerPresence().catch(() => {});
-      if (cloudAdminConnected) {
-        FirebaseSyncService.fetchAdminCloudSnapshot().catch(() => {});
-      }
+  const syncLiveAdminData = async () => {
+    setRefreshingLive(true);
+    try {
+      const [, health] = await Promise.all([
+        AccountGovernanceService.fetchVolatileServerPresence(),
+        RealtimeRelayService.fetchHealthTelemetry(),
+        cloudAdminConnected
+          ? FirebaseSyncService.fetchAdminCloudSnapshot().catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      if (health) setServerTelemetry(health);
+    } finally {
+      setRefreshingLive(false);
     }
+  };
+
+  useEffect(() => {
+    if (!isUnlocked) return;
+    void syncLiveAdminData();
+    const timer = window.setInterval(() => {
+      void AccountGovernanceService.fetchVolatileServerPresence();
+      void RealtimeRelayService.fetchHealthTelemetry().then(h => {
+        if (h) setServerTelemetry(h);
+      });
+    }, 10000);
+    return () => window.clearInterval(timer);
   }, [isUnlocked, cloudAdminConnected]);
 
   const summary = useMemo(() => MonetizationService.getSummary(), [ledger, rules]);
-  const rtMembers = useMemo(() => RtSiagaStorage.getMembers(), [isUnlocked]);
-  const rtLogs = useMemo(() => RtSiagaStorage.getAuditLogs(), [isUnlocked]);
-  const siagaCircles = useMemo(() => SiagaCircleService.getCircles(), [isUnlocked]);
+  const rtMembers = useMemo(() => RtSiagaStorage.getMembers(), [isUnlocked, govTick]);
+  const rtLogs = useMemo(() => RtSiagaStorage.getAuditLogs(), [isUnlocked, govTick]);
+  const siagaCircles = useMemo(() => SiagaCircleService.getCircles(), [isUnlocked, govTick]);
   const knownAccounts = useMemo(
     () => AccountGovernanceService.getCombinedKnownAccounts(),
     [isUnlocked, govTick]
@@ -471,6 +521,66 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
         {/* ===================================================================== */}
         {activeTab === 'statistik' && (
           <div className="divide-y divide-slate-200">
+            {/* Live Real-Time Relay Telemetry Bar */}
+            <section className="px-4 py-3 bg-slate-900 text-white space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      relayStatus === 'connected'
+                        ? 'bg-emerald-400 animate-pulse'
+                        : relayStatus === 'connecting'
+                        ? 'bg-amber-400 animate-pulse'
+                        : 'bg-rose-500'
+                    }`}
+                  />
+                  <span className="text-[11px] font-bold tracking-wide truncate">
+                    Relay Real-Time:{' '}
+                    {relayStatus === 'connected'
+                      ? 'TERHUBUNG LIVE'
+                      : relayStatus === 'connecting'
+                      ? 'MENGHUBUNGKAN...'
+                      : 'TERPUTUS'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void syncLiveAdminData()}
+                  disabled={refreshingLive}
+                  className="min-h-[28px] px-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-[10px] font-bold text-slate-100 flex items-center gap-1 shrink-0 disabled:opacity-60"
+                >
+                  <RefreshCw className={`w-3 h-3 ${refreshingLive ? 'animate-spin' : ''}`} />
+                  <span>Segarkan</span>
+                </button>
+              </div>
+              <div className="grid grid-cols-4 gap-2 text-center">
+                <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg py-1.5 px-1">
+                  <div className="text-[9px] text-slate-400">Koneksi WS</div>
+                  <div className="text-xs font-extrabold font-mono text-emerald-400 tabular-nums">
+                    {serverTelemetry?.connectedClients ?? 0}
+                  </div>
+                </div>
+                <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg py-1.5 px-1">
+                  <div className="text-[9px] text-slate-400">Channel</div>
+                  <div className="text-xs font-extrabold font-mono text-sky-400 tabular-nums">
+                    {serverTelemetry?.activeChannels ?? 0}
+                  </div>
+                </div>
+                <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg py-1.5 px-1">
+                  <div className="text-[9px] text-slate-400">Presence RAM</div>
+                  <div className="text-xs font-extrabold font-mono text-amber-300 tabular-nums">
+                    {serverTelemetry?.activePresenceRamCount ?? healthMetrics.onlineCount}
+                  </div>
+                </div>
+                <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg py-1.5 px-1">
+                  <div className="text-[9px] text-slate-400">Ruang Kuis</div>
+                  <div className="text-xs font-extrabold font-mono text-violet-300 tabular-nums">
+                    {serverTelemetry?.activeQuizRooms ?? 0}
+                  </div>
+                </div>
+              </div>
+            </section>
+
             <section className="p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
@@ -866,11 +976,11 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
                         type="button"
                         onClick={() => {
                           MonetizationService.revokeUnlock(rule.moduleId);
-                          showNotification('Simulasi kunci modul direset untuk uji bayar.');
+                          showNotification('Hak akses modul pada akun ini dicabut.');
                         }}
                         className="text-amber-700 font-bold hover:underline"
                       >
-                        Reset Kunci Uji
+                        Cabut Akses
                       </button>
                     )}
                   </div>

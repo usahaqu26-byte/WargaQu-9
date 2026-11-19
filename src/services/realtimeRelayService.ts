@@ -19,8 +19,19 @@ export interface RelayIncomingEvent<T = unknown> {
   sentAt: string;
 }
 
+export interface ServerTelemetryPayload {
+  connectedClients: number;
+  activeChannels: number;
+  activePresenceRamCount: number;
+  activeQuizRooms: number;
+  activeTransitTickets: number;
+  uptimeSec: number;
+  sentAt: string;
+}
+
 export const REALTIME_RELAY_EVENT = 'wargaqu-realtime-relay';
 export const RELAY_STATUS_EVENT = 'wargaqu-relay-status';
+export const RELAY_TELEMETRY_EVENT = 'wargaqu-relay-telemetry';
 
 interface QueuedOutbound {
   eventId: string;
@@ -73,9 +84,39 @@ class RealtimeRelayManager {
   private outbox: QueuedOutbound[] = [];
   private started = false;
   private extraChannels = new Set<string>();
+  private lastTelemetry: ServerTelemetryPayload | null = null;
 
   getStatus(): RelayConnectionState {
     return this.status;
+  }
+
+  getTelemetry(): ServerTelemetryPayload | null {
+    return this.lastTelemetry;
+  }
+
+  async fetchHealthTelemetry(): Promise<ServerTelemetryPayload | null> {
+    if (typeof fetch === 'undefined') return this.lastTelemetry;
+    try {
+      const resp = await fetch('/api/relay-health');
+      if (!resp.ok) return this.lastTelemetry;
+      const data = (await resp.json()) as Partial<ServerTelemetryPayload>;
+      const telemetry: ServerTelemetryPayload = {
+        connectedClients: Number(data.connectedClients) || 0,
+        activeChannels: Number(data.activeChannels) || 0,
+        activePresenceRamCount: Number(data.activePresenceRamCount) || 0,
+        activeQuizRooms: Number(data.activeQuizRooms) || 0,
+        activeTransitTickets: Number(data.activeTransitTickets) || 0,
+        uptimeSec: Number(data.uptimeSec) || 0,
+        sentAt: data.sentAt || new Date().toISOString(),
+      };
+      this.lastTelemetry = telemetry;
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(RELAY_TELEMETRY_EVENT, { detail: telemetry }));
+      }
+      return telemetry;
+    } catch {
+      return this.lastTelemetry;
+    }
   }
 
   getRtChannel(): string {
@@ -219,6 +260,13 @@ class RealtimeRelayManager {
             senderDeviceHash: data.senderDeviceHash,
             sentAt: data.sentAt || new Date().toISOString(),
           };
+
+          if (data.eventName === 'admin:telemetry' && data.payload && typeof data.payload === 'object') {
+            this.lastTelemetry = data.payload as ServerTelemetryPayload;
+            window.dispatchEvent(
+              new CustomEvent(RELAY_TELEMETRY_EVENT, { detail: this.lastTelemetry })
+            );
+          }
 
           window.dispatchEvent(new CustomEvent(REALTIME_RELAY_EVENT, { detail }));
         } catch {

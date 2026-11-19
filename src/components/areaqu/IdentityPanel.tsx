@@ -105,7 +105,7 @@ export const IdentityPanel: React.FC<IdentityPanelProps> = ({
       ...mForm,
       ownerName: mForm.ownerName.trim(),
       wargaId: mForm.wargaId.trim() || 'WQ-UMKM-01',
-      rtRw: mForm.rtRw.trim() || 'RT 03 / RW 05',
+      rtRw: mForm.rtRw.trim() || 'Lingkungan Warga',
       lapakName: mForm.lapakName.trim(),
       baseAddress: mForm.baseAddress.trim(),
       phone: mForm.phone.trim(),
@@ -123,7 +123,7 @@ export const IdentityPanel: React.FC<IdentityPanelProps> = ({
       showNotification('Masukkan nama lapak atau akun yang ingin dilaporkan');
       return;
     }
-    showNotification(`Laporan untuk "${reportTarget.trim()}" diteruskan ke Pengurus RT 03`);
+    showNotification(`Laporan untuk "${reportTarget.trim()}" diteruskan ke Pengurus Lingkungan / Admin`);
     setReportTarget('');
   };
 

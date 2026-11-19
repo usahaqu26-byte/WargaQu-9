@@ -59,9 +59,13 @@ import {
   History,
   HelpCircle,
   ScanLine,
+  Trophy,
 } from 'lucide-react';
 import { ModuleOnboardingService } from '../../services/moduleOnboardingService';
 import { InteractiveGridCanvasView } from './InteractiveGridCanvasView';
+import { LeluhurQuizView } from './LeluhurQuizView';
+import { loadQuizRounds, isAlertHandledForRound } from '../../services/leluhurQuiz/quizStorageAndSync';
+import { getRoundTimingSnapshot } from '../../services/leluhurQuiz/quizSchedulerService';
 import {
   LeluhurSettingsView,
   LeluhurAccountProfile,
@@ -524,13 +528,13 @@ async function decodeTrahInviteInputAsync(
 }
 
 const DEFAULT_ACCOUNT_PROFILE: LeluhurAccountProfile = {
-  displayName: 'Ian (Anda)',
-  fullName: 'Ian',
-  email: 'usahaqu26@gmail.com',
+  displayName: '',
+  fullName: '',
+  email: '',
   phone: '',
   domicile: '',
-  kinshipRole: 'Keluarga Inti • Penyusun Trah',
-  bio: 'Pengelola & penyusun silsilah keluarga besar 4 Pilar Trah',
+  kinshipRole: '',
+  bio: '',
   avatarUrl: '',
   defaultPosterYear: String(new Date().getFullYear()),
 };
@@ -540,448 +544,6 @@ const DEFAULT_APP_PREFERENCES: LeluhurAppPreferences = {
   photoShape: 'hexagon',
   showPillarBar: true,
 };
-
-// Data Awal Postingan Medsos TrahBook (Feed Khusus 4 Trah)
-const DEFAULT_TRAH_POSTS: TrahPost[] = [
-  {
-    id: 'post-1',
-    trahId: 'trah-ayah-user',
-    lineageSide: 'ayah_user',
-    authorName: 'Bapak Samud',
-    authorKinship: 'Ayah',
-    authorAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&fit=crop&crop=faces',
-    content: 'Alhamdulillah, terima kasih anak-anak dan saudara sekalian sudah merapikan silsilah Trah Uyut Santa. Semoga tali silaturahmi bani Santa terus tersambung hingga anak cucu kelak. Insya Allah bulan depan kita adakan kumpul arisan keluarga di rumah.',
-    category: 'silaturahmi',
-    likesCount: 14,
-    likedByMe: true,
-    isPinned: true,
-    timestamp: '2 jam lalu',
-    comments: [
-      {
-        id: 'c-1',
-        authorName: 'maman (Sulung)',
-        authorKinship: 'Anak ke-1',
-        text: 'Aamiin Ya Rabbal Alamin Pak, siap merapat dan ajak adik-adik!',
-        timestamp: '1 jam lalu'
-      },
-      {
-        id: 'c-2',
-        authorName: 'Ua dasri',
-        authorKinship: 'Ua',
-        text: 'Mantap Samud, kabari tanggal pastinya biar saya ajak keluarga besar dari desa.',
-        timestamp: '45 menit lalu'
-      }
-    ]
-  },
-  {
-    id: 'post-2',
-    trahId: 'trah-ibu-user',
-    lineageSide: 'ibu_user',
-    authorName: 'Ibu Rohani',
-    authorKinship: 'Ibu',
-    content: 'Kabar gembira untuk keluarga besar Trah Rohani (Uyut Kasan)! Cucu kita baru saja wisuda sarjana di Bandung kemarin. Mohon doa restu dari semua sesepuh dan paman bibi sekalian ya. 🎓🌹',
-    imageUrl: 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=600&fit=crop',
-    category: 'kabar_gembira',
-    likesCount: 22,
-    likedByMe: false,
-    timestamp: '5 jam lalu',
-    comments: [
-      {
-        id: 'c-3',
-        authorName: 'Mang Sobari',
-        authorKinship: 'Paman',
-        text: 'Selamat ya teh Rohani! Bangga sekali melihat generasi penerus keluarga!',
-        timestamp: '3 jam lalu'
-      }
-    ]
-  },
-  {
-    id: 'post-3',
-    trahId: 'trah-ayah-pasangan',
-    lineageSide: 'ayah_pasangan',
-    authorName: 'Bapak Suwandi',
-    authorKinship: 'Ayah Mertua',
-    content: 'Salam kenal untuk besan dan segenap keluarga besar menantu. Sangat senang melihat silsilah keluarga kita kini tersambung 4 pilar. Mari saling jaga kekeluargaan ini.',
-    category: 'silaturahmi',
-    likesCount: 9,
-    likedByMe: false,
-    timestamp: 'Kemarin',
-    comments: []
-  },
-  {
-    id: 'post-4',
-    trahId: 'trah-ayah-user',
-    lineageSide: 'ayah_user',
-    authorName: 'Ian (User)',
-    authorKinship: 'Anak ke-2',
-    content: 'Foto kenangan lama bersama alm. Abah madgani dan Uyut Santa saat kumpul lebaran tahun 2005. Ada yang ingat ini di rumah siapa? Nostalgia sekali melihat foto ini.',
-    imageUrl: 'https://images.unsplash.com/photo-1511895426328-dc8714191300?w=600&fit=crop',
-    category: 'sejarah',
-    likesCount: 18,
-    likedByMe: true,
-    timestamp: '2 hari lalu',
-    comments: [
-      {
-        id: 'c-4',
-        authorName: 'Ua Inoh',
-        authorKinship: 'Ua',
-        text: 'Ya ampun itu di teras rumah paman di Sukabumi! Masih pada imut-imut ya.',
-        timestamp: '1 hari lalu'
-      }
-    ]
-  }
-];
-
-// Default 4 Pilar Trah Keluarga (Ayah & Ibu User, Ayah & Ibu Pasangan)
-const DEFAULT_TRAH_DATA: TrahCategory[] = [
-  {
-    id: 'trah-ayah-user',
-    name: 'TRAH SANTA (Ayah)',
-    description: 'Jalur Ayah Anda: Uyut Santa ➔ Abah madgani ➔ Bapak Samud ➔ Saudara: maman, Ian, Hendri',
-    lineageSide: 'ayah_user',
-    members: [
-      {
-        id: 'st-1',
-        name: 'Santa',
-        callName: 'Uyut Santa',
-        birthYear: '1915',
-        deathYear: '1985',
-        isDeceased: true,
-        photoUrl: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=200&fit=crop&crop=faces',
-        gender: 'L',
-        notes: 'Uyut Leluhur Utama Trah Ayah',
-        parentId: null,
-        generationLevel: 0,
-        orderIndex: 1,
-        spouses: [
-          {
-            id: 'sp-1',
-            name: 'Mak Rukiah',
-            orderIndex: 1,
-            status: 'cerai_mati',
-            notes: 'Istri pertama Uyut Santa (Wafat)'
-          }
-        ]
-      },
-      {
-        id: 'st-2',
-        name: 'madgani',
-        callName: 'Abah madgani',
-        birthYear: '1940',
-        deathYear: '2010',
-        isDeceased: true,
-        photoUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=200&fit=crop&crop=faces',
-        gender: 'L',
-        notes: 'Anak ke-1 Uyut Santa. Memiliki 2 Istri.',
-        parentId: 'st-1',
-        generationLevel: 1,
-        orderIndex: 1,
-        spouses: [
-          {
-            id: 'sp-2a',
-            name: 'Ibu Casmini',
-            orderIndex: 1,
-            status: 'cerai_mati',
-            notes: 'Istri ke-1 (Wafat 1980)'
-          },
-          {
-            id: 'sp-2b',
-            name: 'Ibu Warsih',
-            orderIndex: 2,
-            status: 'menikah',
-            notes: 'Istri ke-2 (Menikah 1982)'
-          }
-        ]
-      },
-      {
-        id: 'st-3',
-        name: 'Inoh',
-        callName: 'Ua Inoh',
-        birthYear: '1943',
-        deathYear: '',
-        isDeceased: false,
-        photoUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200&fit=crop&crop=faces',
-        gender: 'P',
-        notes: 'Anak ke-2 Uyut Santa',
-        parentId: 'st-1',
-        generationLevel: 1,
-        orderIndex: 2,
-        spouses: [
-          {
-            id: 'sp-3',
-            name: 'Pak Sukandi',
-            orderIndex: 1,
-            status: 'cerai_hidup',
-            notes: 'Mantan Suami (Cerai Hidup)'
-          }
-        ]
-      },
-      {
-        id: 'st-4',
-        name: 'Enit',
-        callName: 'Bibi Enit',
-        birthYear: '1947',
-        deathYear: '',
-        isDeceased: false,
-        gender: 'P',
-        notes: 'Anak ke-3 Uyut Santa',
-        parentId: 'st-1',
-        generationLevel: 1,
-        orderIndex: 3
-      },
-      {
-        id: 'st-5',
-        name: 'dasri',
-        callName: 'Ua dasri',
-        birthYear: '1965',
-        deathYear: '',
-        isDeceased: false,
-        gender: 'L',
-        notes: 'Anak ke-1 Abah madgani (dari Istri pertama)',
-        parentId: 'st-2',
-        generationLevel: 2,
-        orderIndex: 1,
-        spouses: [
-          {
-            id: 'sp-5',
-            name: 'Ibu Maryam',
-            orderIndex: 1,
-            status: 'menikah'
-          }
-        ]
-      },
-      {
-        id: 'st-6',
-        name: 'Samud',
-        callName: 'Bapak Samud',
-        birthYear: '1968',
-        deathYear: '',
-        isDeceased: false,
-        photoUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&fit=crop&crop=faces',
-        gender: 'L',
-        notes: 'Anak ke-2 Abah madgani (Ayah Anda)',
-        parentId: 'st-2',
-        generationLevel: 2,
-        orderIndex: 2,
-        spouses: [
-          {
-            id: 'sp-6',
-            name: 'Ibu Rohani',
-            orderIndex: 1,
-            status: 'menikah',
-            notes: 'Ibunda Anda (Taut Silsilah ke Trah Ibu)'
-          }
-        ]
-      },
-      {
-        id: 'st-7',
-        name: 'Ebah',
-        callName: 'Bibi Ebah',
-        birthYear: '1972',
-        deathYear: '',
-        isDeceased: false,
-        gender: 'P',
-        notes: 'Anak ke-3 Abah madgani',
-        parentId: 'st-2',
-        generationLevel: 2,
-        orderIndex: 3
-      },
-      {
-        id: 'st-8',
-        name: 'maman',
-        callName: 'Kakak maman',
-        birthYear: '1995',
-        deathYear: '',
-        isDeceased: false,
-        gender: 'L',
-        notes: 'Anak ke-1 Bapak Samud (Sulung / Kakak)',
-        parentId: 'st-6',
-        generationLevel: 3,
-        orderIndex: 1
-      },
-      {
-        id: 'st-9',
-        name: 'Ian',
-        callName: 'Ian (User)',
-        birthYear: '1998',
-        deathYear: '',
-        isDeceased: false,
-        gender: 'L',
-        notes: 'Anak ke-2 Bapak Samud & Ibu Rohani',
-        parentId: 'st-6',
-        generationLevel: 3,
-        orderIndex: 2
-      },
-      {
-        id: 'st-10',
-        name: 'Hendri',
-        callName: 'Hendri',
-        birthYear: '2003',
-        deathYear: '',
-        isDeceased: false,
-        gender: 'L',
-        notes: 'Anak ke-3 Bapak Samud (Bungsu / Adik)',
-        parentId: 'st-6',
-        generationLevel: 3,
-        orderIndex: 3
-      }
-    ]
-  },
-  {
-    id: 'trah-ibu-user',
-    name: 'TRAH ROHANI (Ibu)',
-    description: 'Jalur Garis Keturunan Ibunda Anda: Uyut Kasan ➔ Kakek Martawi ➔ Ibu Rohani & Saudara',
-    lineageSide: 'ibu_user',
-    members: [
-      {
-        id: 'ti-1',
-        name: 'Kasan',
-        callName: 'Uyut Kasan',
-        birthYear: '1920',
-        deathYear: '1990',
-        isDeceased: true,
-        gender: 'L',
-        notes: 'Leluhur Utama Garis Trah Ibu',
-        parentId: null,
-        generationLevel: 0,
-        orderIndex: 1,
-        spouses: [
-          {
-            id: 'ti-sp1',
-            name: 'Nenek Siti Aminah',
-            orderIndex: 1,
-            status: 'cerai_mati'
-          }
-        ]
-      },
-      {
-        id: 'ti-2',
-        name: 'Martawi',
-        callName: 'Kakek Martawi',
-        birthYear: '1945',
-        deathYear: '2015',
-        isDeceased: true,
-        gender: 'L',
-        notes: 'Kakek dari pihak Ibunda',
-        parentId: 'ti-1',
-        generationLevel: 1,
-        orderIndex: 1,
-        spouses: [
-          {
-            id: 'ti-sp2',
-            name: 'Nenek Fatimah',
-            orderIndex: 1,
-            status: 'menikah'
-          }
-        ]
-      },
-      {
-        id: 'ti-3',
-        name: 'Ibu Rohani',
-        callName: 'Ibu Rohani',
-        birthYear: '1970',
-        deathYear: '',
-        isDeceased: false,
-        gender: 'P',
-        notes: 'Ibunda Anda (Menikah dengan Bapak Samud)',
-        parentId: 'ti-2',
-        generationLevel: 2,
-        orderIndex: 1,
-        spouses: [
-          {
-            id: 'ti-sp3',
-            name: 'Bapak Samud',
-            orderIndex: 1,
-            status: 'menikah'
-          }
-        ]
-      },
-      {
-        id: 'ti-4',
-        name: 'Paman Sobari',
-        callName: 'Mang Sobari',
-        birthYear: '1974',
-        deathYear: '',
-        isDeceased: false,
-        gender: 'L',
-        notes: 'Adik kandung Ibu Rohani',
-        parentId: 'ti-2',
-        generationLevel: 2,
-        orderIndex: 2
-      }
-    ]
-  },
-  {
-    id: 'trah-ayah-pasangan',
-    name: 'TRAH AYAH PASANGAN',
-    description: 'Jalur Garis Keturunan Ayah dari Pasangan (Mertua Laki-laki)',
-    lineageSide: 'ayah_pasangan',
-    linkedSpouseName: 'Pasangan Anda',
-    members: [
-      {
-        id: 'tap-1',
-        name: 'Harun',
-        callName: 'Uyut Harun',
-        birthYear: '1922',
-        deathYear: '1995',
-        isDeceased: true,
-        gender: 'L',
-        notes: 'Leluhur Utama Ayah Pasangan',
-        parentId: null,
-        generationLevel: 0,
-        orderIndex: 1
-      },
-      {
-        id: 'tap-2',
-        name: 'Bapak Suwandi',
-        callName: 'Bapak Mertua Suwandi',
-        birthYear: '1952',
-        deathYear: '',
-        isDeceased: false,
-        gender: 'L',
-        notes: 'Ayah Kandung dari Pasangan Anda',
-        parentId: 'tap-1',
-        generationLevel: 1,
-        orderIndex: 1
-      }
-    ]
-  },
-  {
-    id: 'trah-ibu-pasangan',
-    name: 'TRAH IBU PASANGAN',
-    description: 'Jalur Garis Keturunan Ibu dari Pasangan (Mertua Perempuan)',
-    lineageSide: 'ibu_pasangan',
-    linkedSpouseName: 'Pasangan Anda',
-    members: [
-      {
-        id: 'tip-1',
-        name: 'Dahlan',
-        callName: 'Uyut Dahlan',
-        birthYear: '1925',
-        deathYear: '2000',
-        isDeceased: true,
-        gender: 'L',
-        notes: 'Leluhur Utama Ibu Pasangan',
-        parentId: null,
-        generationLevel: 0,
-        orderIndex: 1
-      },
-      {
-        id: 'tip-2',
-        name: 'Ibu Nurhayati',
-        callName: 'Ibu Mertua Nurhayati',
-        birthYear: '1955',
-        deathYear: '',
-        isDeceased: false,
-        gender: 'P',
-        notes: 'Ibunda Kandung dari Pasangan Anda',
-        parentId: 'tip-1',
-        generationLevel: 1,
-        orderIndex: 1
-      }
-    ]
-  }
-];
 
 export function parseCommaChildren(
   input: string
@@ -1064,19 +626,6 @@ export function getAncestryPath(member: FamilyMember, allMembers: FamilyMember[]
   return chain;
 }
 
-const SANTA_CANONICAL_PARENT_BY_NAME: Record<string, string | null> = {
-  santa: null,
-  madgani: 'santa',
-  inoh: 'santa',
-  enit: 'santa',
-  dasri: 'madgani',
-  samud: 'madgani',
-  ebah: 'madgani',
-  maman: 'samud',
-  ian: 'samud',
-  hendri: 'samud',
-};
-
 export function getDescendantIds(memberId: string, allMembers: FamilyMember[]): Set<string> {
   const descendants = new Set<string>();
   const queue = [memberId];
@@ -1094,7 +643,7 @@ export function getDescendantIds(memberId: string, allMembers: FamilyMember[]): 
 
 export function normalizeTrahMembers(
   rawMembers: FamilyMember[],
-  isSantaTrah = false
+  _legacyFlag = false
 ): { members: FamilyMember[]; repairedCount: number } {
   if (!Array.isArray(rawMembers) || rawMembers.length === 0) {
     return { members: [], repairedCount: 0 };
@@ -1131,36 +680,6 @@ export function normalizeTrahMembers(
   });
 
   const idMap = new Map(members.map((m) => [m.id, m]));
-  const nameToFirstMember = new Map<string, FamilyMember>();
-  members.forEach((m) => {
-    const key = m.name.trim().toLowerCase();
-    if (!nameToFirstMember.has(key)) {
-      nameToFirstMember.set(key, m);
-    }
-  });
-
-  // Perbaikan khusus Trah Santa bila ada relasi parentId terputus / warisan versi lama
-  if (isSantaTrah) {
-    members.forEach((m) => {
-      const key = m.name.trim().toLowerCase();
-      if (!(key in SANTA_CANONICAL_PARENT_BY_NAME)) return;
-      const expectedParentKey = SANTA_CANONICAL_PARENT_BY_NAME[key];
-      const hasValidParent = Boolean(m.parentId && idMap.has(m.parentId));
-
-      if (expectedParentKey === null) {
-        if (m.parentId !== null && !hasValidParent) {
-          m.parentId = null;
-          repairedCount++;
-        }
-      } else if (!hasValidParent) {
-        const expectedParent = nameToFirstMember.get(expectedParentKey);
-        if (expectedParent && expectedParent.id !== m.id) {
-          m.parentId = expectedParent.id;
-          repairedCount++;
-        }
-      }
-    });
-  }
 
   // Bersihkan sisa parentId yang menunjuk ID yang sudah terhapus (dangling)
   members.forEach((m) => {
@@ -1324,10 +843,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         if (Array.isArray(parsed)) {
           return parsed.map((t: TrahCategory) => ({
             ...t,
-            members: normalizeTrahMembers(
-              t.members || [],
-              t.id === 'trah-ayah-user' || t.name?.toUpperCase().includes('SANTA')
-            ).members,
+            members: normalizeTrahMembers(t.members || []).members,
           }));
         }
       }
@@ -1335,89 +851,33 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       console.warn('Gagal membaca scoped trah key:', scopedKey, e);
     }
 
-    // User baru / akun non-pemilik: mulai bersih (0 Trah) sampai membuat sendiri atau menerima undangan
-    if (!scope.isOwner) {
-      try {
-        localStorage.setItem(scopedKey, JSON.stringify([]));
-      } catch {
-        // ignore
-      }
-      return [];
-    }
-
-    // Khusus akun pemilik: migrasi data 4 Trah sebelumnya dari key v4..v1 agar tidak hilang
-    let rawList: TrahCategory[] = [];
-    for (const key of STORAGE_KEYS) {
-      try {
-        const saved = localStorage.getItem(key);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            rawList = parsed;
-            break;
+    if (scope.isOwner) {
+      for (const key of STORAGE_KEYS) {
+        try {
+          const saved = localStorage.getItem(key);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              const normalized = parsed.map((t: TrahCategory) => ({
+                ...t,
+                members: normalizeTrahMembers(t.members || []).members,
+              }));
+              localStorage.setItem(scopedKey, JSON.stringify(normalized));
+              return normalized;
+            }
           }
+        } catch (e) {
+          console.warn('Gagal membaca storage key:', key, e);
         }
-      } catch (e) {
-        console.warn('Gagal membaca storage key:', key, e);
       }
     }
 
-    if (rawList.length === 0) {
-      rawList = DEFAULT_TRAH_DATA;
-    }
-
-    const santaIndex = rawList.findIndex(
-      (t) =>
-        t.id === 'trah-santa' ||
-        t.id === 'trah-ayah-user' ||
-        t.name.toUpperCase().includes('SANTA') ||
-        (Array.isArray(t.members) && t.members.some((m) => m.name.toLowerCase() === 'santa'))
-    );
-
-    let migratedSanta: TrahCategory;
-    if (santaIndex !== -1) {
-      const existing = rawList[santaIndex];
-      const rawMembers = existing.members && existing.members.length > 0 ? existing.members : DEFAULT_TRAH_DATA[0].members;
-      const normalized = normalizeTrahMembers(rawMembers, true);
-      migratedSanta = {
-        ...existing,
-        id: 'trah-ayah-user',
-        name: existing.name.toUpperCase().includes('SANTA')
-          ? existing.name.includes('(Ayah)') ? existing.name : 'TRAH SANTA (Ayah)'
-          : 'TRAH SANTA (Ayah)',
-        description: existing.description || DEFAULT_TRAH_DATA[0].description,
-        lineageSide: 'ayah_user',
-        members: normalized.members
-      };
-    } else {
-      migratedSanta = DEFAULT_TRAH_DATA[0];
-    }
-
-    const otherTrahs = rawList
-      .filter(
-        (t, idx) =>
-          idx !== santaIndex &&
-          t.id !== 'trah-santa' &&
-          t.id !== 'trah-ayah-user' &&
-          !t.name.toUpperCase().includes('SANTA')
-      )
-      .map((t) => ({
-        ...t,
-        members: normalizeTrahMembers(t.members || [], false).members,
-      }));
-
-    const hasIbu = otherTrahs.some((t) => t.lineageSide === 'ibu_user' || t.id === 'trah-ibu-user');
-    if (!hasIbu && DEFAULT_TRAH_DATA[1]) {
-      otherTrahs.push(DEFAULT_TRAH_DATA[1]);
-    }
-
-    const finalList = [migratedSanta, ...otherTrahs];
     try {
-      localStorage.setItem(scopedKey, JSON.stringify(finalList));
-    } catch (e) {
-      console.warn('Gagal menyimpan migrasi trah:', e);
+      localStorage.setItem(scopedKey, JSON.stringify([]));
+    } catch {
+      // ignore
     }
-    return finalList;
+    return [];
   };
 
   const loadPostsForScope = (scope: { email: string; scopeKey: string; isOwner: boolean }): TrahPost[] => {
@@ -1432,20 +892,19 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       console.warn('Gagal membaca scoped posts:', e);
     }
 
-    if (!scope.isOwner) {
-      return [];
+    if (scope.isOwner) {
+      try {
+        const legacy = localStorage.getItem(TRAH_POSTS_STORAGE_KEY);
+        if (legacy) {
+          const parsed = JSON.parse(legacy);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch (e) {
+        console.warn('Gagal membaca trah posts:', e);
+      }
     }
 
-    try {
-      const legacy = localStorage.getItem(TRAH_POSTS_STORAGE_KEY);
-      if (legacy) {
-        const parsed = JSON.parse(legacy);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {
-      console.warn('Gagal membaca trah posts:', e);
-    }
-    return DEFAULT_TRAH_POSTS;
+    return [];
   };
 
   const [trahList, setTrahList] = useState<TrahCategory[]>(() => loadTrahListForScope(accountScope));
@@ -1463,15 +922,23 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
   // Akun Profil & Preferensi Aplikasi (tersimpan otomatis di localStorage)
   const [accountProfile, setAccountProfile] = useState<LeluhurAccountProfile>(() => {
+    const authAcc = AuthService.getAccount();
+    const baseProfile: LeluhurAccountProfile = {
+      ...DEFAULT_ACCOUNT_PROFILE,
+      displayName: authAcc ? AuthService.getDisplayName(authAcc) : '',
+      fullName: authAcc ? AuthService.getDisplayName(authAcc) : '',
+      email: authAcc?.email || '',
+      phone: authAcc?.phone || '',
+    };
     try {
       const saved = localStorage.getItem(ACCOUNT_PROFILE_KEY);
       if (saved) {
-        return { ...DEFAULT_ACCOUNT_PROFILE, ...JSON.parse(saved) };
+        return { ...baseProfile, ...JSON.parse(saved) };
       }
     } catch (e) {
       console.warn('Gagal membaca profil akun:', e);
     }
-    return DEFAULT_ACCOUNT_PROFILE;
+    return baseProfile;
   });
 
   const [appPreferences, setAppPreferences] = useState<LeluhurAppPreferences>(() => {
@@ -1487,8 +954,8 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     return { ...DEFAULT_APP_PREFERENCES, photoShape: legacyShape };
   });
 
-  // Mode Tampilan: 'grid' | 'excel' | 'feed' | 'settings'
-  const [viewMode, setViewMode] = useState<'grid' | 'excel' | 'feed' | 'settings'>(() => {
+  // Mode Tampilan: 'grid' | 'excel' | 'feed' | 'kuis' | 'settings'
+  const [viewMode, setViewMode] = useState<'grid' | 'excel' | 'feed' | 'kuis' | 'settings'>(() => {
     return appPreferences.defaultStartMenu || 'grid';
   });
 
@@ -1998,6 +1465,29 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       window.removeEventListener(REALTIME_RELAY_EVENT_NAME, onRelaySync as EventListener);
     };
   }, [trahList, pendingTrahSync, accountProfile.displayName]);
+
+  // Pemantau Jadwal Kuis Trah Latar Belakang: saat jadwal ronde tiba meski user di tab Grid/Tabel/Medsos, arahkan ke Kuis & bunyikan SiagaQu
+  useEffect(() => {
+    if (trahList.length === 0 || viewMode === 'kuis') return;
+    const active = trahList.find((t) => t.id === activeTrahId) || trahList[0];
+    if (!active) return;
+
+    const checkSchedule = () => {
+      const rounds = loadQuizRounds(accountScope.scopeKey, active.id);
+      const now = Date.now();
+      const dueRound = rounds.find((r) => {
+        const snap = getRoundTimingSnapshot(r, now);
+        return snap.phase === 'live' && !isAlertHandledForRound(r.id);
+      });
+      if (dueRound) {
+        setViewMode('kuis');
+        showNotification(`Waktunya Kuis Trah "${dueRound.title}"! Alert SiagaQu aktif.`);
+      }
+    };
+
+    const timer = window.setInterval(checkSchedule, 2000);
+    return () => window.clearInterval(timer);
+  }, [trahList, activeTrahId, viewMode, accountScope.scopeKey, accountProfile.displayName, showNotification]);
 
   // Sinkronisasi cadangan otomatis ke RAM transit saat daftar Trah berubah (agar link judul selalu siap meski host tutup HP)
   useEffect(() => {
@@ -3018,7 +2508,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         trahId: newTrah.id,
         trahName: newTrah.name,
         lineageSide: newTrahLineage,
-        authorName: accountProfile.displayName || 'Ian (Anda)',
+        authorName: accountProfile.displayName || accountProfile.fullName || 'Anggota Keluarga',
         authorKinship: `${accountProfile.kinshipRole ? accountProfile.kinshipRole + ' • ' : ''}Pendiri ${newTrah.name}`,
         authorAvatar: accountProfile.avatarUrl || undefined,
         content: introLines.join('\n'),
@@ -3163,7 +2653,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       trahId: activeTrah.id,
       trahName: activeTrah.name,
       lineageSide: currentLineage,
-      authorName: accountProfile.displayName || 'Ian (Anda)',
+      authorName: accountProfile.displayName || accountProfile.fullName || 'Anggota Keluarga',
       authorKinship: `${accountProfile.kinshipRole ? accountProfile.kinshipRole + ' • ' : ''}${authorKinship}`,
       authorAvatar: accountProfile.avatarUrl || undefined,
       content: newPostContent.trim(),
@@ -3201,7 +2691,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
     const newComment: TrahComment = {
       id: `c_${Date.now()}`,
-      authorName: accountProfile.displayName || 'Ian (Anda)',
+      authorName: accountProfile.displayName || accountProfile.fullName || 'Anggota Keluarga',
       authorKinship: accountProfile.kinshipRole || 'Keluarga',
       text,
       timestamp: 'Baru saja'
@@ -3219,28 +2709,6 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
     setCommentInputs((prev) => ({ ...prev, [postId]: '' }));
     showNotification('Komentar berhasil dikirim! 💬');
-  };
-
-  const handleResetExampleSanta = () => {
-    let updatedTrahList = trahList.map((t) => {
-      if (t.lineageSide === 'ayah_user' || t.id === 'trah-ayah-user' || t.id === 'trah-santa' || t.name.toUpperCase().includes('SANTA')) {
-        return DEFAULT_TRAH_DATA[0];
-      }
-      return t;
-    });
-
-    if (!updatedTrahList.some((t) => t.id === 'trah-ayah-user' || t.lineageSide === 'ayah_user')) {
-      updatedTrahList = [DEFAULT_TRAH_DATA[0], ...updatedTrahList];
-    }
-
-    setTrahList(updatedTrahList);
-    setActiveTrahId('trah-ayah-user');
-    try {
-      localStorage.setItem(activeTrahStorageKey, JSON.stringify(updatedTrahList));
-    } catch (err) {
-      console.warn('Storage sync err:', err);
-    }
-    showNotification('Contoh 4 Pilar Trah (Trah Santa) berhasil dimuat! 👨✨');
   };
 
   const handleMoveActiveTrahToAyah = () => {
@@ -3570,20 +3038,10 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     const idSet = new Set(activeTrah.members.map((m) => m.id));
     const brokenParents = activeTrah.members.filter((m) => m.parentId && !idSet.has(m.parentId));
     const rootsCount = activeTrah.members.filter((m) => !m.parentId).length;
-    const isSanta =
-      activeTrah.id === 'trah-ayah-user' || activeTrah.name.toUpperCase().includes('SANTA');
-    const hasDisconnectedSantaMembers =
-      isSanta &&
-      activeTrah.members.some((m) => {
-        const key = m.name.trim().toLowerCase();
-        return key in SANTA_CANONICAL_PARENT_BY_NAME && SANTA_CANONICAL_PARENT_BY_NAME[key] !== null && !m.parentId;
-      });
     return {
       brokenParents,
       rootsCount,
-      isSanta,
-      hasDisconnectedSantaMembers,
-      needsAttention: brokenParents.length > 0 || hasDisconnectedSantaMembers || (rootsCount > 1 && activeTrah.members.length > 1),
+      needsAttention: brokenParents.length > 0 || (rootsCount > 1 && activeTrah.members.length > 1),
     };
   }, [activeTrah]);
 
@@ -3675,6 +3133,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             {viewMode === 'grid' && <Move className="w-4 h-4 text-amber-300" />}
             {viewMode === 'excel' && <FileSpreadsheet className="w-4 h-4" />}
             {viewMode === 'feed' && <MessageSquareText className="w-4 h-4 text-blue-300" />}
+            {viewMode === 'kuis' && <Trophy className="w-4 h-4 text-amber-300" />}
             {viewMode === 'settings' && <Settings className="w-4 h-4 text-emerald-200" />}
           </div>
           <div className="flex flex-col text-left truncate">
@@ -3682,6 +3141,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
               {viewMode === 'grid' && 'Grid Manual / Auto'}
               {viewMode === 'excel' && 'Tabel Data (Excel)'}
               {viewMode === 'feed' && `Medsos TrahBook (${trahList.length} Trah)`}
+              {viewMode === 'kuis' && 'Kuis Trah Silsilah'}
               {viewMode === 'settings' && 'Pengaturan & Akun'}
             </h2>
             <span className="text-[10px] text-emerald-200 font-bold truncate leading-none mt-0.5">
@@ -3827,6 +3287,12 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-800 text-[11px] font-extrabold">
               <MessageSquareText className="w-3.5 h-3.5 text-blue-600" />
               <span>Medsos TrahBook ({trahList.length} Trah)</span>
+            </div>
+          )}
+          {viewMode === 'kuis' && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-extrabold">
+              <Trophy className="w-3.5 h-3.5 text-amber-600" />
+              <span>Kuis Silsilah · Jadwal, Sponsor, Latihan &amp; Rekap</span>
             </div>
           )}
           {viewMode === 'settings' && (
@@ -4038,20 +3504,8 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                 </div>
               </div>
             </div>
-
-            {accountScope.isOwner && (
-              <div className="pt-2 border-t border-stone-100">
-                <button
-                  type="button"
-                  onClick={handleResetExampleSanta}
-                  className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 underline"
-                >
-                  Muat kembali 4 Pilar Trah pemilik (Trah Santa &amp; Rohani)
-                </button>
-              </div>
-            )}
           </div>
-        ) : activeTrah.members.length === 0 && viewMode !== 'grid' && viewMode !== 'settings' ? (
+        ) : activeTrah.members.length === 0 && viewMode !== 'grid' && viewMode !== 'settings' && viewMode !== 'kuis' ? (
           <div className="flex flex-col items-center justify-center text-center p-6 bg-white rounded-3xl border border-dashed border-stone-300 max-w-md mx-auto my-auto shadow-sm">
             <Users className="w-10 h-10 text-emerald-600 mb-2" />
             <h3 className="font-bold text-sm text-stone-800">Silsilah Masih Kosong</h3>
@@ -4199,15 +3653,6 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                   >
                     ⚡ Tautkan &amp; Perbaiki Otomatis
                   </button>
-                  {excelLineageHealth.isSanta && (
-                    <button
-                      type="button"
-                      onClick={handleResetExampleSanta}
-                      className="bg-white hover:bg-stone-100 text-stone-800 border border-amber-300 font-bold px-2.5 py-1 rounded-xl text-[11px] transition"
-                    >
-                      Muat Contoh Santa Asli
-                    </button>
-                  )}
                 </div>
               </div>
             )}
@@ -4881,6 +4326,18 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                 })}
             </div>
           </div>
+        ) : viewMode === 'kuis' ? (
+          /* ========================================================= */
+          /* SUBMENU KUIS TRAH SILSILAH (MOBILE-FIRST & MODULAR)       */
+          /* ========================================================= */
+          <LeluhurQuizView
+            activeTrah={activeTrah}
+            trahList={trahList}
+            userName={accountProfile.displayName || 'Keluarga'}
+            userKinship={accountProfile.kinshipRole || 'Keluarga Trah'}
+            onOpenPrintBook={() => setIsBookModalOpen(true)}
+            showNotification={showNotification}
+          />
         ) : viewMode === 'settings' ? (
           /* ========================================================= */
           /* MENU SETTING / PENGATURAN: AKUN, TRAH, BACKUP, PREFERENSI */
@@ -4901,7 +4358,6 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             onExportCSV={handleExportCSV}
             onExportFullBackupJSON={handleExportFullBackupJSON}
             onImportFullBackupJSON={handleImportFullBackupJSON}
-            onResetExampleSanta={handleResetExampleSanta}
             trahPostsCount={trahPosts.length}
             savedDesignsCount={countSavedGridDesigns}
             activityLogs={activityLogs}
@@ -4939,11 +4395,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       </main>
 
       {/* ========================================================= */}
-      {/* 4. NAVBAR BAWAH: GRID, TABEL, MEDSOS, SETTING             */}
+      {/* 4. NAVBAR BAWAH: GRID, TABEL, MEDSOS, KUIS, SETTING       */}
       {/* Tampilan: Ikon Besar di Atas, Nama Kecil di Bawahnya      */}
       {/* ========================================================= */}
-      <nav className="bg-stone-900/95 backdrop-blur-md border-t border-stone-800 text-stone-300 px-3 py-1.5 shrink-0 z-30 shadow-2xl">
-        <div className="max-w-lg mx-auto grid grid-cols-4 gap-1.5">
+      <nav className="bg-stone-900/95 backdrop-blur-md border-t border-stone-800 text-stone-300 px-2 py-1.5 shrink-0 z-30 shadow-2xl">
+        <div className="max-w-lg mx-auto grid grid-cols-5 gap-1">
           {/* 1. Grid Manual / Auto */}
           <button
             type="button"
@@ -4958,11 +4414,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             }`}
           >
             <div
-              className={`w-10 h-9 flex items-center justify-center rounded-xl transition-all ${
+              className={`w-9 h-8 flex items-center justify-center rounded-xl transition-all ${
                 viewMode === 'grid' ? 'bg-amber-500/20 text-amber-400 scale-110 shadow-xs ring-1 ring-amber-500/30' : ''
               }`}
             >
-              <Move className="w-6 h-6" />
+              <Move className="w-5 h-5" />
             </div>
             <span className="text-[10px] tracking-tight mt-1 leading-none font-bold">Grid</span>
           </button>
@@ -4981,11 +4437,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             }`}
           >
             <div
-              className={`w-10 h-9 flex items-center justify-center rounded-xl transition-all ${
+              className={`w-9 h-8 flex items-center justify-center rounded-xl transition-all ${
                 viewMode === 'excel' ? 'bg-emerald-500/20 text-emerald-400 scale-110 shadow-xs ring-1 ring-emerald-500/30' : ''
               }`}
             >
-              <FileSpreadsheet className="w-6 h-6" />
+              <FileSpreadsheet className="w-5 h-5" />
             </div>
             <span className="text-[10px] tracking-tight mt-1 leading-none font-bold">Tabel</span>
           </button>
@@ -5004,19 +4460,42 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             }`}
           >
             <div
-              className={`w-10 h-9 flex items-center justify-center rounded-xl transition-all ${
+              className={`w-9 h-8 flex items-center justify-center rounded-xl transition-all ${
                 viewMode === 'feed' ? 'bg-blue-500/20 text-blue-400 scale-110 shadow-xs ring-1 ring-blue-500/30' : ''
               }`}
             >
-              <MessageSquareText className="w-6 h-6" />
+              <MessageSquareText className="w-5 h-5" />
             </div>
             <span className="text-[10px] tracking-tight mt-1 leading-none font-bold">Medsos</span>
             {trahPosts.length > 0 && (
-              <span className="absolute top-1.5 right-4 w-2 h-2 rounded-full bg-blue-500 ring-2 ring-stone-900" />
+              <span className="absolute top-1.5 right-3 w-2 h-2 rounded-full bg-blue-500 ring-2 ring-stone-900" />
             )}
           </button>
 
-          {/* 4. Pengaturan & Akun */}
+          {/* 4. Kuis Trah Silsilah */}
+          <button
+            type="button"
+            onClick={() => {
+              setViewMode('kuis');
+              showNotification('Membuka Submenu Kuis Trah Silsilah 🏆');
+            }}
+            className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-2xl transition-all duration-150 active:scale-95 ${
+              viewMode === 'kuis'
+                ? 'text-amber-300 font-black'
+                : 'text-stone-400 hover:text-stone-200 hover:bg-stone-800/50 font-medium'
+            }`}
+          >
+            <div
+              className={`w-9 h-8 flex items-center justify-center rounded-xl transition-all ${
+                viewMode === 'kuis' ? 'bg-amber-400/20 text-amber-300 scale-110 shadow-xs ring-1 ring-amber-400/30' : ''
+              }`}
+            >
+              <Trophy className="w-5 h-5" />
+            </div>
+            <span className="text-[10px] tracking-tight mt-1 leading-none font-bold">Kuis</span>
+          </button>
+
+          {/* 5. Pengaturan & Akun */}
           <button
             type="button"
             onClick={() => {
@@ -5030,11 +4509,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             }`}
           >
             <div
-              className={`w-10 h-9 flex items-center justify-center rounded-xl transition-all ${
+              className={`w-9 h-8 flex items-center justify-center rounded-xl transition-all ${
                 viewMode === 'settings' ? 'bg-teal-500/20 text-teal-300 scale-110 shadow-xs ring-1 ring-teal-400/30' : ''
               }`}
             >
-              <Settings className="w-6 h-6" />
+              <Settings className="w-5 h-5" />
             </div>
             <span className="text-[10px] tracking-tight mt-1 leading-none font-bold">Setting</span>
           </button>
@@ -5215,6 +4694,21 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                       <span>Buat Buku Leluhur (PDF)</span>
                     </span>
                     <span className="text-[9px] bg-emerald-950/60 text-amber-300 px-1.5 py-0.5 rounded font-bold">A4/A5/A6</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsSidebarOpen(false);
+                      setViewMode('kuis');
+                      showNotification('Membuka Kuis Trah Silsilah 🏆');
+                    }}
+                    className="w-full py-2 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-bold text-xs flex items-center justify-between border border-amber-400/40 shadow-xs active:scale-95 transition"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Trophy className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Kuis Trah Silsilah</span>
+                    </span>
+                    <span className="text-[9px] bg-amber-400/20 text-amber-200 px-1.5 py-0.5 rounded font-bold">Kuis</span>
                   </button>
 
                   <button

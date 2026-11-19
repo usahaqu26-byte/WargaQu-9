@@ -196,10 +196,10 @@ export const SiagaQuView: React.FC<SiagaQuViewProps> = ({
     accuracy?: string;
     altitude?: string;
   }>({
-    lat: '-6.2088° S',
-    long: '106.8456° E',
-    accuracy: '±5 meter',
-    altitude: '24m dpl',
+    lat: 'Belum Terkunci',
+    long: 'Aktifkan GPS',
+    accuracy: '-',
+    altitude: '-',
   });
 
   // --- MorseQu States & References ---
@@ -445,9 +445,7 @@ export const SiagaQuView: React.FC<SiagaQuViewProps> = ({
       setIsCompassActive(true);
       showNotification('Sensor kompas & magnetik aktif.');
     } else {
-      // Desktop / simulation fallback: rotate heading by 45 degrees
-      setCompassHeading((prev) => (prev + 45) % 360);
-      showNotification('Sensor fisik tidak tersedia. Simulasi kalibrasi arah +45°.');
+      showNotification('Sensor kompas fisik tidak tersedia pada perangkat ini.');
     }
   };
 
@@ -464,18 +462,12 @@ export const SiagaQuView: React.FC<SiagaQuViewProps> = ({
             lat: `${Math.abs(parseFloat(lat))}° ${latDir}`,
             long: `${Math.abs(parseFloat(long))}° ${longDir}`,
             accuracy: `±${Math.round(pos.coords.accuracy || 10)} meter`,
-            altitude: pos.coords.altitude ? `${Math.round(pos.coords.altitude)}m dpl` : '24m dpl',
+            altitude: pos.coords.altitude ? `${Math.round(pos.coords.altitude)}m dpl` : '-',
           });
           showNotification('Koordinat GPS berhasil diperbarui secara presisi!');
         },
         () => {
-          showNotification('Menggunakan koordinat cache lokal RT 03 Blok A No. 12.');
-          setGpsCoords({
-            lat: '-6.2088° S',
-            long: '106.8456° E',
-            accuracy: '±12 meter (Offline Cache)',
-            altitude: '24m dpl',
-          });
+          showNotification('Izin GPS belum diaktifkan atau sinyal satelit tidak terjangkau.');
         },
         { enableHighAccuracy: true, timeout: 6000 }
       );
@@ -647,22 +639,22 @@ export const SiagaQuView: React.FC<SiagaQuViewProps> = ({
     setEmergencySecondsLeft(5);
     setActiveStep(1);
 
-    const sampleTranscripts: Record<string, string> = {
-      'Banjir / Evakuasi':
-        '"Air naik cepat setinggi dada di Blok A No 12 RT 03! Butuh perahu karet evakuasi keluarga & lansia!"',
-      'Anak / Orang Hilang':
-        '"Tolong, anak saya usia 5 tahun memakai baju merah celana biru hilang di dekat pos ronda RT 03!"',
-      'Maling / Kejahatan':
-        '"Ada orang mencurigakan memanjat pagar rumah Blok A No 12, tolong warga bantu ketuk kentongan!"',
-      'Kebakaran':
-        '"Asap tebal dan api terlihat di bagian dapur Blok B No 4, tolong bantuan damkar warga membawa APAR sekarang!"',
-      'Medis / Ambulans':
-        '"Kondisi darurat, lansia pingsan mendadak dan sesak nafas di Blok A No 12, butuh ambulans secepatnya!"',
+    const locSummary = [rtProfile.orgName, currentMember.block].filter(Boolean).join(' · ') || 'Lokasi Pelapor';
+    const gpsSummary =
+      gpsCoords.lat && gpsCoords.lat !== 'Belum Terkunci'
+        ? ` (${gpsCoords.lat}, ${gpsCoords.long})`
+        : '';
+    const emergencyTemplates: Record<string, string> = {
+      'Banjir / Evakuasi': `"Peringatan darurat banjir/evakuasi di ${locSummary}${gpsSummary}. Mohon bantuan tim evakuasi warga!"`,
+      'Anak / Orang Hilang': `"Laporan darurat anak/anggota keluarga hilang di sekitar ${locSummary}${gpsSummary}. Mohon pantauan warga!"`,
+      'Maling / Kejahatan': `"Peringatan keamanan/kejahatan di ${locSummary}${gpsSummary}. Mohon warga & tim ronda merapat!"`,
+      'Kebakaran': `"Bahaya kebakaran dilaporkan di ${locSummary}${gpsSummary}. Mohon bantuan APAR warga & hubungi Damkar!"`,
+      'Medis / Ambulans': `"Darurat medis di ${locSummary}${gpsSummary}. Membutuhkan pertolongan pertama & ambulans segera!"`,
     };
 
     const transcript =
-      sampleTranscripts[selectedCategory] ||
-      '"Tolong, ada keadaan darurat di lokasi saya Blok A No 12 RT 03 sekarang!"';
+      emergencyTemplates[selectedCategory] ||
+      `"Keadaan darurat (${selectedCategory}) dilaporkan dari ${locSummary}${gpsSummary}."`;
     setActiveTranscript(transcript);
 
     const newLog: EmergencyLog = {
@@ -1251,7 +1243,7 @@ export const SiagaQuView: React.FC<SiagaQuViewProps> = ({
               </div>
               <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
                 <div className="p-2 bg-slate-900/80 rounded-xl border border-slate-700">
-                  <div className="text-white font-bold">Pengurus RT 03</div>
+                  <div className="text-white font-bold truncate">{rtProfile.orgName || 'Pengurus'}</div>
                   <div className="text-emerald-400 font-medium">Auto Acc</div>
                 </div>
                 <div className="p-2 bg-slate-900/80 rounded-xl border border-slate-700">
@@ -1861,11 +1853,11 @@ export const SiagaQuView: React.FC<SiagaQuViewProps> = ({
                   <span className="text-red-400 font-bold font-mono">118</span>
                 </a>
                 <a
-                  href="tel:081299990303"
+                  href="tel:112"
                   className="p-2.5 bg-slate-800 hover:bg-slate-700 rounded-xl border border-slate-700 text-white flex items-center justify-between active:scale-98 transition"
                 >
-                  <span>Pos Ronda RT 03</span>
-                  <span className="text-emerald-400 font-bold font-mono">Pos 03</span>
+                  <span>Panggilan Darurat Nasional</span>
+                  <span className="text-emerald-400 font-bold font-mono">112</span>
                 </a>
               </div>
             </div>
@@ -2053,7 +2045,9 @@ export const SiagaQuView: React.FC<SiagaQuViewProps> = ({
                 <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[10px] border border-emerald-500/40">
                   ✓
                 </div>
-                <span className="text-slate-200">0s: Titik GPS Terkunci (RT 03 Blok A/12)</span>
+                <span className="text-slate-200">
+                  0s: Titik Lokasi ({[rtProfile.orgName, currentMember.block].filter(Boolean).join(' · ') || gpsCoords.lat})
+                </span>
               </div>
 
               <div

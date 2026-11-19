@@ -39,7 +39,7 @@ const MODULE_DATA: Record<string, ModuleInfo> = {
     icon: Home,
     color: 'text-emerald-700',
     bgColor: 'bg-emerald-50 border-emerald-200',
-    description: 'Menu data kependudukan dan administrasi RT 03 masih kosong.',
+    description: 'Menu data kependudukan dan administrasi warga masih kosong.',
   },
   siagaqu: {
     title: 'SiagaQu',
@@ -71,7 +71,7 @@ const MODULE_DATA: Record<string, ModuleInfo> = {
     icon: MessageSquare,
     color: 'text-sky-700',
     bgColor: 'bg-sky-50 border-sky-200',
-    description: 'Ruang obrolan warga RT 03 saat ini belum memiliki pesan baru.',
+    description: 'Ruang obrolan warga saat ini belum memiliki pesan baru.',
   },
   setting: {
     title: 'Setting',
@@ -111,7 +111,7 @@ const MODULE_DATA: Record<string, ModuleInfo> = {
     icon: UserCheck,
     color: 'text-emerald-700',
     bgColor: 'bg-emerald-50 border-emerald-200',
-    description: 'Detail biodata warga (Hendriana - RT 03/RW 05).',
+    description: 'Detail biodata akun warga WargaQu.',
   },
   riwayat_iuran: {
     title: 'Riwayat Iuran',

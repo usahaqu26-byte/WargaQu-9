@@ -23,6 +23,13 @@ import {
 } from '../../services/accountGovernanceService';
 import { FirebaseSyncService } from '../../services/firebaseSyncService';
 import type { MonetizableModuleId } from '../../services/monetizationService';
+import {
+  RELAY_STATUS_EVENT,
+  RELAY_TELEMETRY_EVENT,
+  RealtimeRelayService,
+  RelayConnectionState,
+  ServerTelemetryPayload,
+} from '../../services/realtimeRelayService';
 
 type ExtendedAccountFilter =
   | 'all'
@@ -44,8 +51,16 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
   initialModuleFilter = 'all',
   onModuleFilterChange,
 }) => {
-  const [, setTick] = useState(0);
-  const [connectedClients, setConnectedClients] = useState<number>(0);
+  const [tick, setTick] = useState(0);
+  const [connectedClients, setConnectedClients] = useState<number>(
+    () => RealtimeRelayService.getTelemetry()?.connectedClients || 0
+  );
+  const [relayStatus, setRelayStatus] = useState<RelayConnectionState>(
+    () => RealtimeRelayService.getStatus()
+  );
+  const [telemetry, setTelemetry] = useState<ServerTelemetryPayload | null>(
+    () => RealtimeRelayService.getTelemetry()
+  );
   const [refreshing, setRefreshing] = useState(false);
 
   // Filters & search
@@ -77,8 +92,9 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
 
   const syncFromRelay = async (quiet = false) => {
     setRefreshing(true);
-    const [res, cloudRes] = await Promise.all([
+    const [res, health, cloudRes] = await Promise.all([
       AccountGovernanceService.fetchVolatileServerPresence(),
+      RealtimeRelayService.fetchHealthTelemetry(),
       FirebaseSyncService.isCloudAdmin()
         ? FirebaseSyncService.fetchAdminCloudSnapshot().catch(() => ({
             accountsCount: 0,
@@ -86,30 +102,56 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
           }))
         : Promise.resolve({ accountsCount: 0, policiesCount: 0 }),
     ]);
-    setConnectedClients(res.connectedClients);
+    if (health) {
+      setTelemetry(health);
+      setConnectedClients(health.connectedClients);
+    } else {
+      setConnectedClients(res.connectedClients);
+    }
     setTick(t => t + 1);
     setRefreshing(false);
     if (!quiet) {
       showNotification(
         FirebaseSyncService.isCloudAdmin()
-          ? `Sinkronisasi selesai (${cloudRes.accountsCount} akun Cloud, ${res.connectedClients} koneksi live).`
-          : `Sinkronisasi live relay selesai (${res.connectedClients} koneksi aktif, ${res.count} presence).`
+          ? `Sinkronisasi selesai (${cloudRes.accountsCount} akun Cloud, ${health?.connectedClients ?? res.connectedClients} koneksi live).`
+          : `Sinkronisasi live relay selesai (${health?.connectedClients ?? res.connectedClients} koneksi aktif, ${res.count} presence).`
       );
     }
   };
 
   useEffect(() => {
-    syncFromRelay(true);
+    void syncFromRelay(true);
     const onSync = () => setTick(t => t + 1);
+    const onRelayStatus = (ev: Event) => {
+      const next = (ev as CustomEvent<RelayConnectionState>).detail;
+      if (next) setRelayStatus(next);
+    };
+    const onRelayTelemetry = (ev: Event) => {
+      const next = (ev as CustomEvent<ServerTelemetryPayload>).detail;
+      if (next) {
+        setTelemetry(next);
+        setConnectedClients(next.connectedClients);
+      }
+    };
     window.addEventListener(ACCOUNT_GOV_SYNC_EVENT, onSync);
-    return () => window.removeEventListener(ACCOUNT_GOV_SYNC_EVENT, onSync);
+    window.addEventListener(RELAY_STATUS_EVENT, onRelayStatus);
+    window.addEventListener(RELAY_TELEMETRY_EVENT, onRelayTelemetry);
+    const timer = window.setInterval(() => {
+      void syncFromRelay(true);
+    }, 8000);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener(ACCOUNT_GOV_SYNC_EVENT, onSync);
+      window.removeEventListener(RELAY_STATUS_EVENT, onRelayStatus);
+      window.removeEventListener(RELAY_TELEMETRY_EVENT, onRelayTelemetry);
+    };
   }, []);
 
   const bundle = AccountGovernanceService.getBundle();
-  const accounts = useMemo(() => AccountGovernanceService.getCombinedKnownAccounts(), [bundle, refreshing]);
+  const accounts = useMemo(() => AccountGovernanceService.getCombinedKnownAccounts(), [bundle, refreshing, tick]);
   const moduleStats = useMemo(() => AccountGovernanceService.getModuleAccountStats(), [accounts]);
   const healthMetrics = useMemo(() => AccountGovernanceService.getAccountHealthMetrics(), [accounts]);
-  const adminWorkspaces = useMemo(() => AccountGovernanceService.getAdminOwnWorkspaces(), []);
+  const adminWorkspaces = useMemo(() => AccountGovernanceService.getAdminOwnWorkspaces(), [tick]);
 
   const filteredAccounts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -287,11 +329,30 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
       <section className="p-4 space-y-3 bg-slate-50/70">
         <div className="flex items-start justify-between gap-2">
           <div>
-            <div className="flex items-center gap-1.5">
-              <Radio className="w-3.5 h-3.5 text-emerald-600" />
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Radio
+                className={`w-3.5 h-3.5 ${
+                  relayStatus === 'connected' ? 'text-emerald-600' : 'text-amber-600'
+                }`}
+              />
               <h2 className="text-xs font-extrabold text-slate-900">
                 Pemantauan Akun Aktif &amp; Akses Dinamis
               </h2>
+              <span
+                className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                  relayStatus === 'connected'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : relayStatus === 'connecting'
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-rose-100 text-rose-800'
+                }`}
+              >
+                {relayStatus === 'connected'
+                  ? `LIVE · ${telemetry?.activeChannels ?? 0} channel`
+                  : relayStatus === 'connecting'
+                  ? 'MENGHUBUNGKAN'
+                  : 'OFFLINE'}
+              </span>
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
               {FirebaseSyncService.isCloudAdmin()

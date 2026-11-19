@@ -48,7 +48,7 @@ interface WargaDashboardProps {
 function getLiveUnreadChatCount(): number {
   try {
     const raw = localStorage.getItem('wargaqu_chat_rooms_v1');
-    if (!raw) return 5;
+    if (!raw) return 0;
     const rooms = JSON.parse(raw) as Array<{ unreadCount?: number }>;
     if (!Array.isArray(rooms)) return 0;
     return rooms.reduce((sum, r) => sum + (r.unreadCount || 0), 0);

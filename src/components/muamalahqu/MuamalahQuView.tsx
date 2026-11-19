@@ -37,6 +37,7 @@ import {
 } from '../../services/devicePairingService';
 import { MonetizationService } from '../../services/monetizationService';
 import { RealtimeRelayService } from '../../services/realtimeRelayService';
+import { RtSiagaStorage } from '../../services/rtSiagaStorage';
 
 interface MuamalahQuViewProps {
   onBackToMain: () => void;
@@ -116,29 +117,35 @@ export const MuamalahQuView: React.FC<MuamalahQuViewProps> = ({
     }
     return {
       storeName: 'UsahaQu & Dapur Warga',
-      ownerName: 'Warga RT 03',
-      phone: '0812-3456-7890',
-      blockAddress: 'Blok A No. 12',
+      ownerName: '',
+      phone: '',
+      blockAddress: '',
       isOpen: true,
       enableCod: true,
       enablePickup: true,
       enableSecurityDrop: true,
-      qrisNumber: '936009988221003'
+      qrisNumber: ''
     };
   });
+
+  const rtProfile = useMemo(() => RtSiagaStorage.getProfile(), []);
 
   useEffect(() => {
     const syncFromAuth = () => {
       const acc = AuthService.getAccount();
-      if (!acc) return;
-      const displayName = AuthService.getDisplayName(acc);
+      const member = RtSiagaStorage.getCurrentMember();
+      const displayName = acc ? AuthService.getDisplayName(acc) : '';
       setSettings(prev => ({
         ...prev,
         ownerName:
           prev.ownerName && prev.ownerName !== 'Warga RT 03'
             ? prev.ownerName
-            : displayName,
-        phone: acc.phone,
+            : displayName || member?.name || '',
+        phone: prev.phone && prev.phone !== '0812-3456-7890' ? prev.phone : acc?.phone || member?.phone || '',
+        blockAddress:
+          prev.blockAddress && prev.blockAddress !== 'Blok A No. 12'
+            ? prev.blockAddress
+            : member?.block || '',
       }));
     };
     const syncRemotePairing = (ev: Event) => {
@@ -174,29 +181,32 @@ export const MuamalahQuView: React.FC<MuamalahQuViewProps> = ({
   const [newProdPrice, setNewProdPrice] = useState<string>('');
   const [newProdStock, setNewProdStock] = useState<string>('15');
   const [newProdDesc, setNewProdDesc] = useState<string>('');
-  const [newProdSeller, setNewProdSeller] = useState<string>('Dapur RT 03');
-  const [newProdBlock, setNewProdBlock] = useState<string>('Blok B No. 04');
+  const [newProdSeller, setNewProdSeller] = useState<string>('');
+  const [newProdBlock, setNewProdBlock] = useState<string>('');
 
   // Checkout Options
   const [deliveryOption, setDeliveryOption] = useState<'cod' | 'pickup' | 'pos_ronda'>('cod');
   const [paymentOption, setPaymentOption] = useState<'wargapay' | 'cash' | 'qris'>('wargapay');
   const [orderNotes, setOrderNotes] = useState<string>('');
 
-  // Flash sale countdown timer state
-  const [timeLeft, setTimeLeft] = useState<{ hours: number; minutes: number; seconds: number }>({
-    hours: 2,
-    minutes: 45,
-    seconds: 18
-  });
+  // Countdown real-time menuju pergantian hari (23:59:59)
+  const getDailyRemaining = () => {
+    const now = new Date();
+    const endOfDay = new Date(now);
+    endOfDay.setHours(23, 59, 59, 999);
+    const diffSec = Math.max(0, Math.floor((endOfDay.getTime() - now.getTime()) / 1000));
+    return {
+      hours: Math.floor(diffSec / 3600),
+      minutes: Math.floor((diffSec % 3600) / 60),
+      seconds: diffSec % 60,
+    };
+  };
+
+  const [timeLeft, setTimeLeft] = useState<{ hours: number; minutes: number; seconds: number }>(getDailyRemaining);
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev.seconds > 0) return { ...prev, seconds: prev.seconds - 1 };
-        if (prev.minutes > 0) return { ...prev, minutes: 59, seconds: 59 };
-        if (prev.hours > 0) return { hours: prev.hours - 1, minutes: 59, seconds: 59 };
-        return { hours: 3, minutes: 0, seconds: 0 };
-      });
+      setTimeLeft(getDailyRemaining());
     }, 1000);
     return () => clearInterval(timer);
   }, []);
@@ -222,107 +232,24 @@ export const MuamalahQuView: React.FC<MuamalahQuViewProps> = ({
     }
   };
 
-  // Convert UsahaQu menuList into Marketplace Products + Add community products
+  // Convert UsahaQu menuList into Marketplace Products (100% dari katalog usaha aktual)
   const products: MarketplaceProduct[] = useMemo(() => {
-    // 1. Products from UsahaQu
-    const usahaQuProducts: MarketplaceProduct[] = menuList.map((m, idx) => ({
+    return menuList.map((m, idx) => ({
       id: `usahaqu-${m.id}`,
       name: m.name,
-      category: 'kuliner',
+      category: m.category === 'minuman' ? 'kuliner' : m.category === 'pelengkap' ? 'sembako' : 'kuliner',
       price: m.price,
-      originalPrice: Math.round(m.price * 1.15),
       description: m.description,
       imageUrl: m.imageUrl,
-      sellerName: 'Bakso Qu 1.0 (UsahaQu)',
-      sellerBlock: 'Blok A No. 12',
-      rating: 4.9,
-      soldCount: 35 + idx * 12,
+      sellerName: settings.storeName || settings.ownerName || 'UsahaQu Warga',
+      sellerBlock: settings.blockAddress || rtProfile.orgName || 'Lingkungan Warga',
+      rating: 5.0,
+      soldCount: 0,
       stock: 20,
       isFromUsahaQu: true,
-      badge: idx === 0 ? 'Star Seller' : 'Terlaris'
+      badge: idx === 0 ? 'Menu Utama' : undefined
     }));
-
-    // 2. Extra Community Citizen Products
-    const communityProducts: MarketplaceProduct[] = [
-      {
-        id: 'comm-1',
-        name: 'Sambal Cumi Asin Juara Bu RT',
-        category: 'kuliner',
-        price: 28000,
-        originalPrice: 35000,
-        description: 'Sambal cumi pedas gurih tanpa pengawet kemasan toples 150gr, tahan 1 bulan.',
-        imageUrl: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=500&q=80',
-        sellerName: 'Dapur Bu RT Ahmad',
-        sellerBlock: 'Blok A No. 01',
-        rating: 5.0,
-        soldCount: 88,
-        stock: 12,
-        badge: 'Favorit RT'
-      },
-      {
-        id: 'comm-2',
-        name: 'Keripik Tempe Renyah Pak Hendra',
-        category: 'kuliner',
-        price: 15000,
-        originalPrice: 18000,
-        description: 'Keripik tempe kedelai lokal renyah dengan daun jeruk harum. Isi 250gr.',
-        imageUrl: 'https://images.unsplash.com/photo-1599488615731-7e5c2823ff28?auto=format&fit=crop&w=500&q=80',
-        sellerName: 'Pak Hendra (Sekretaris RT)',
-        sellerBlock: 'Blok B No. 04',
-        rating: 4.8,
-        soldCount: 42,
-        stock: 25,
-        badge: 'Diskon 17%'
-      },
-      {
-        id: 'comm-3',
-        name: 'Sayur Bayam & Kangkung Hidroponik',
-        category: 'sembako',
-        price: 7000,
-        originalPrice: 9000,
-        description: 'Panen pagi hari segar tanpa pestisida dari kebun hidroponik lorong RT 03.',
-        imageUrl: 'https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=500&q=80',
-        sellerName: 'KWT Melati RT 03',
-        sellerBlock: 'Taman Blok C',
-        rating: 4.9,
-        soldCount: 110,
-        stock: 18,
-        badge: 'Organik'
-      },
-      {
-        id: 'comm-4',
-        name: 'Madu Randu Asli Hutan Jawa 350ml',
-        category: 'sembako',
-        price: 65000,
-        originalPrice: 80000,
-        description: 'Madu murni alami tanpa campuran, baik untuk imunitas keluarga.',
-        imageUrl: 'https://images.unsplash.com/photo-1587049352846-4a222e784d38?auto=format&fit=crop&w=500&q=80',
-        sellerName: 'Pak Danu Herbal',
-        sellerBlock: 'Blok D No. 08',
-        rating: 5.0,
-        soldCount: 29,
-        stock: 8,
-        badge: '100% Asli'
-      },
-      {
-        id: 'comm-5',
-        name: 'Jasa Servis AC & Cuci Rumah',
-        category: 'jasa',
-        price: 60000,
-        originalPrice: 75000,
-        description: 'Cuci AC 0.5 - 2 PK bersih bergaransi oleh teknisi warga RT 03 berpengalaman.',
-        imageUrl: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&w=500&q=80',
-        sellerName: 'Mas Joko AC',
-        sellerBlock: 'Blok C No. 02',
-        rating: 4.9,
-        soldCount: 65,
-        stock: 99,
-        badge: 'Garansi'
-      }
-    ];
-
-    return [...usahaQuProducts, ...communityProducts];
-  }, [menuList]);
+  }, [menuList, settings.storeName, settings.ownerName, settings.blockAddress, rtProfile.orgName]);
 
   // Filtered Products
   const filteredProducts = useMemo(() => {
@@ -355,7 +282,7 @@ export const MuamalahQuView: React.FC<MuamalahQuViewProps> = ({
     return selectedCartItems.reduce((sum, i) => sum + i.product.price * i.quantity, 0);
   }, [selectedCartItems]);
 
-  const deliveryFee = 0; // Bebas Ongkir Antar Blok RT 03
+  const deliveryFee = 0; // Bebas Ongkir Antar Warga
   const finalTotal = cartSubtotal + deliveryFee;
 
   // Add to cart handler
@@ -484,7 +411,7 @@ export const MuamalahQuView: React.FC<MuamalahQuViewProps> = ({
       name: newProdName.trim(),
       category: 'pelengkap',
       price: priceNum,
-      description: newProdDesc.trim() || `Produk UMKM warga RT 03 (${newProdBlock}).`,
+      description: newProdDesc.trim() || `Produk UMKM warga${newProdBlock ? ` (${newProdBlock})` : ''}.`,
       imageUrl: finalImage,
       isAvailable: true
     };
@@ -560,7 +487,7 @@ export const MuamalahQuView: React.FC<MuamalahQuViewProps> = ({
               type="text"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Cari di MuamalahQu RT 03..."
+              placeholder="Cari produk warga di MuamalahQu..."
               className="bg-transparent flex-1 text-xs text-slate-800 placeholder-slate-400 focus:outline-none"
             />
             {searchQuery ? (
@@ -631,7 +558,9 @@ export const MuamalahQuView: React.FC<MuamalahQuViewProps> = ({
         <div className="flex justify-between items-center text-[10px] text-orange-100 font-medium px-1">
           <div className="flex items-center gap-1 truncate max-w-[220px]">
             <MapPin className="w-3 h-3 text-yellow-300 shrink-0" />
-            <span>Kirim ke: <b>Blok A No. 12 (RT 03 / RW 05)</b></span>
+            <span>
+              Kirim ke: <b>{settings.blockAddress || rtProfile.orgName || 'Atur alamat di Toko Saya'}</b>
+            </span>
           </div>
           <div className="flex items-center gap-1 font-bold text-yellow-200">
             <Truck className="w-3 h-3" />
@@ -654,7 +583,7 @@ export const MuamalahQuView: React.FC<MuamalahQuViewProps> = ({
                   <Sparkles className="w-3 h-3 fill-yellow-300 text-yellow-300" />
                   FLASH SALE
                 </span>
-                <span className="text-[11px] font-bold text-slate-700">Warga RT 03</span>
+                <span className="text-[11px] font-bold text-slate-700">{rtProfile.orgName || 'WargaQu'}</span>
               </div>
 
               {/* Countdown Timer */}

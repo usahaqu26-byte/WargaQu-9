@@ -13,7 +13,6 @@ import {
   Download,
   Upload,
   FileSpreadsheet,
-  Sparkles,
   Mail,
   Phone,
   MapPin,
@@ -75,7 +74,6 @@ interface LeluhurSettingsViewProps {
   onExportCSV: () => void;
   onExportFullBackupJSON: () => void;
   onImportFullBackupJSON: (file: File) => void;
-  onResetExampleSanta: () => void;
   trahPostsCount: number;
   savedDesignsCount: number;
   activityLogs: LeluhurActivityLog[];
@@ -111,7 +109,6 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
   onExportCSV,
   onExportFullBackupJSON,
   onImportFullBackupJSON,
-  onResetExampleSanta,
   trahPostsCount,
   savedDesignsCount,
   activityLogs,
@@ -142,7 +139,6 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
   const [editTrahDesc, setEditTrahDesc] = useState<string>('');
   const [editTrahLineage, setEditTrahLineage] = useState<LineageSide>('umum');
   const [confirmDeleteTrahId, setConfirmDeleteTrahId] = useState<string | null>(null);
-  const [confirmResetSanta, setConfirmResetSanta] = useState<boolean>(false);
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const backupInputRef = useRef<HTMLInputElement>(null);
@@ -856,53 +852,6 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
               showNotification={showNotification}
               onRestored={() => window.location.reload()}
             />
-
-            {/* Muat Ulang Contoh Trah Santa */}
-            <div className="p-4 rounded-2xl border border-stone-200 bg-stone-50 space-y-2">
-              <div className="flex items-center gap-2 text-stone-900 font-extrabold text-xs">
-                <Sparkles className="w-4 h-4 text-amber-600" />
-                <span>Muat Ulang Contoh Trah Santa</span>
-              </div>
-              <p className="text-[11px] text-stone-600">
-                Kembalikan data contoh bawaan pada Pilar Trah Ayah (Uyut Santa ➔ Abah madgani ➔ Bapak Samud).
-              </p>
-              {!confirmResetSanta ? (
-                <button
-                  type="button"
-                  onClick={() => setConfirmResetSanta(true)}
-                  className="w-full py-2 px-3 rounded-xl bg-stone-800 hover:bg-stone-900 text-amber-300 font-bold text-xs flex items-center justify-center gap-1.5 transition"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Muat Ulang Data Contoh Santa</span>
-                </button>
-              ) : (
-                <div className="p-2 rounded-xl bg-amber-100 border border-amber-300 space-y-1.5">
-                  <div className="flex items-center gap-1 text-[10px] font-bold text-amber-950">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-                    <span>Pilar Trah Ayah akan diisi ulang dengan contoh Santa. Lanjutkan?</span>
-                  </div>
-                  <div className="flex gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onResetExampleSanta();
-                        setConfirmResetSanta(false);
-                      }}
-                      className="flex-1 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold"
-                    >
-                      Ya, Muat Ulang
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmResetSanta(false)}
-                      className="py-1.5 px-3 rounded-lg bg-white text-stone-700 text-[11px] font-bold border border-stone-300"
-                    >
-                      Batal
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
         </div>
       )}

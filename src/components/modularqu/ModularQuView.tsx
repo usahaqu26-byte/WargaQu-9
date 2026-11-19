@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   ArrowLeft,
   Store,
@@ -871,21 +871,32 @@ export const ModularQuView: React.FC<ModularQuViewProps> = ({
     window.open(url, '_blank');
   };
 
-  // Dummy sample transaction for Profil preview
-  const sampleDummyTx: ModularTransaction = {
-    id: 'TRX-SAMPLE',
-    date: new Date().toLocaleDateString('id-ID') + ' 14:30',
-    items: [
-      { id: '1', name: 'Kopi Susu Gula Aren', qty: 2, price: 15000, cost: 7000 },
-      { id: '2', name: 'Roti Bakar Keju Cokelat', qty: 1, price: 12000, cost: 6000 }
-    ],
-    total: 42000,
-    totalCost: 20000,
-    payAmount: 50000,
-    change: 8000,
-    payMethod: 'Tunai',
-    note: 'Meja 05 / Bapak Budi'
-  };
+  // Pratinjau struk dari transaksi terakhir atau katalog usaha aktual
+  const receiptPreviewTx: ModularTransaction = useMemo(() => {
+    if (transactions.length > 0) {
+      return transactions[0];
+    }
+    const sampleItems = products.slice(0, 2).map((p) => ({
+      id: p.id,
+      name: p.name,
+      qty: 1,
+      price: p.price,
+      cost: p.cost,
+    }));
+    const subtotal = sampleItems.reduce((sum, item) => sum + item.price * item.qty, 0);
+    const totalCost = sampleItems.reduce((sum, item) => sum + item.cost * item.qty, 0);
+    return {
+      id: 'PRATINJAU',
+      date: new Date().toLocaleDateString('id-ID') + ' ' + new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+      items: sampleItems,
+      total: subtotal,
+      totalCost,
+      payAmount: subtotal,
+      change: 0,
+      payMethod: 'Tunai',
+      note: 'Contoh Format Dokumen',
+    };
+  }, [transactions, products]);
 
   const categories = ['Semua', ...Array.from(new Set(products.map((p) => p.category)))];
   const filteredProducts = products.filter((p) => {
@@ -1549,7 +1560,7 @@ export const ModularQuView: React.FC<ModularQuViewProps> = ({
               </div>
               <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex justify-center">
                 <div className="bg-white p-4 rounded-xl shadow-2xl w-full max-w-sm">
-                  {renderReceiptContent(sampleDummyTx, previewFormat)}
+                  {renderReceiptContent(receiptPreviewTx, previewFormat)}
                 </div>
               </div>
             </div>

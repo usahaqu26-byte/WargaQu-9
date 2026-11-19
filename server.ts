@@ -32,6 +32,7 @@ interface ConnectedClient {
   ws: WebSocket;
   channels: Set<string>;
   clientId: string;
+  accountKey?: string;
 }
 
 const PORT = Number(process.env.PORT || 3000);
@@ -723,10 +724,15 @@ ATURAN EKSTRAKSI:
     string,
     { data: Record<string, unknown>; lastSeenMs: number }
   >();
+  const volatileQuizRooms = new Map<
+    string,
+    { trahSlug: string; rounds: unknown[]; updatedAt: number; expiresAt: number }
+  >();
   const TICKET_TTL_MS = 72 * 60 * 60 * 1000;
   const PRESENCE_TTL_MS = 24 * 60 * 60 * 1000;
   const MAX_VOLATILE_TICKETS = 500;
   const MAX_VOLATILE_PRESENCE = 1000;
+  const serverStartedAtMs = Date.now();
 
   function pruneExpiredPresence() {
     const now = Date.now();
@@ -764,6 +770,16 @@ ATURAN EKSTRAKSI:
       if (!oldestKey) break;
       volatileInviteRooms.delete(oldestKey);
     }
+    for (const [k, v] of volatileQuizRooms.entries()) {
+      if (v.expiresAt <= now) {
+        volatileQuizRooms.delete(k);
+      }
+    }
+    while (volatileQuizRooms.size > 200) {
+      const oldestKey = volatileQuizRooms.keys().next().value;
+      if (!oldestKey) break;
+      volatileQuizRooms.delete(oldestKey);
+    }
   }
 
   function subscribeClient(client: ConnectedClient, channel: string) {
@@ -790,6 +806,7 @@ ATURAN EKSTRAKSI:
     }
     client.channels.clear();
     clients.delete(client);
+    broadcastAdminTelemetry();
   }
 
   function broadcastToChannel(channel: string, data: string, excludeClient?: ConnectedClient) {
@@ -803,6 +820,32 @@ ATURAN EKSTRAKSI:
     }
   }
 
+  function buildTelemetryPayload() {
+    pruneExpiredPresence();
+    pruneExpiredTickets();
+    return {
+      connectedClients: clients.size,
+      activeChannels: channelSubscribers.size,
+      activePresenceRamCount: volatilePresenceMap.size,
+      activeQuizRooms: volatileQuizRooms.size,
+      activeTransitTickets: volatileInviteTickets.size + volatileInviteRooms.size,
+      uptimeSec: Math.max(0, Math.floor((Date.now() - serverStartedAtMs) / 1000)),
+      sentAt: new Date().toISOString(),
+    };
+  }
+
+  function broadcastAdminTelemetry(excludeClient?: ConnectedClient) {
+    const frame = JSON.stringify({
+      type: 'relay:event',
+      eventId: `telemetry-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      channel: 'admin:policy',
+      eventName: 'admin:telemetry',
+      payload: buildTelemetryPayload(),
+      sentAt: new Date().toISOString(),
+    });
+    broadcastToChannel('admin:policy', frame, excludeClient);
+  }
+
   wss.on('connection', (ws) => {
     const client: ConnectedClient = {
       ws,
@@ -811,6 +854,7 @@ ATURAN EKSTRAKSI:
     };
     clients.add(client);
     subscribeClient(client, 'admin:policy');
+    broadcastAdminTelemetry(client);
 
     ws.on('message', (raw) => {
       try {
@@ -834,6 +878,16 @@ ATURAN EKSTRAKSI:
               JSON.stringify({
                 type: 'relay:joined',
                 channels: Array.from(client.channels),
+                sentAt: new Date().toISOString(),
+              })
+            );
+            ws.send(
+              JSON.stringify({
+                type: 'relay:event',
+                eventId: `telemetry-init-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+                channel: 'admin:policy',
+                eventName: 'admin:telemetry',
+                payload: buildTelemetryPayload(),
                 sentAt: new Date().toISOString(),
               })
             );
@@ -875,6 +929,7 @@ ATURAN EKSTRAKSI:
               );
             }
           }
+          broadcastAdminTelemetry(client);
           return;
         }
 
@@ -892,8 +947,10 @@ ATURAN EKSTRAKSI:
             const p = msg.payload as Record<string, unknown>;
             const key = typeof p.accountKey === 'string' ? p.accountKey.trim() : '';
             if (key) {
+              client.accountKey = key;
               pruneExpiredPresence();
               volatilePresenceMap.set(key, { data: p, lastSeenMs: Date.now() });
+              broadcastAdminTelemetry();
             }
           } else if (
             msg.eventName === 'zt:device_freeze' &&
@@ -1055,7 +1112,58 @@ ATURAN EKSTRAKSI:
     }
     pruneExpiredPresence();
     volatilePresenceMap.set(key, { data: p, lastSeenMs: Date.now() });
+    broadcastAdminTelemetry();
     res.json({ ok: true });
+  });
+
+  // Ephemeral RAM-only Quiz Trah Rooms (sinkron ronde, sponsor, & skor lintas perangkat)
+  app.get('/api/quiz-rounds/:trahSlug', (req, res) => {
+    pruneExpiredTickets();
+    const trahSlug = String(req.params.trahSlug || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 64);
+    if (!trahSlug) {
+      res.status(400).json({ error: 'Invalid trahSlug' });
+      return;
+    }
+    const entry = volatileQuizRooms.get(trahSlug);
+    if (!entry) {
+      res.json({ found: false, rounds: [] });
+      return;
+    }
+    res.json({ found: true, trahSlug: entry.trahSlug, rounds: entry.rounds, updatedAt: entry.updatedAt });
+  });
+
+  app.post('/api/quiz-rounds/:trahSlug', pairJsonParser, (req, res) => {
+    pruneExpiredTickets();
+    const trahSlug = String(req.params.trahSlug || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 64);
+    const body = req.body as { rounds?: unknown };
+    if (!trahSlug || !Array.isArray(body?.rounds)) {
+      res.status(400).json({ error: 'Invalid quiz rounds payload' });
+      return;
+    }
+    const updatedAt = Date.now();
+    const trimmedRounds = body.rounds.slice(0, 40);
+    if (trimmedRounds.length === 0) {
+      volatileQuizRooms.delete(trahSlug);
+    } else {
+      volatileQuizRooms.set(trahSlug, {
+        trahSlug,
+        rounds: trimmedRounds,
+        updatedAt,
+        expiresAt: updatedAt + TICKET_TTL_MS,
+      });
+    }
+    broadcastAdminTelemetry();
+    res.json({ ok: true, trahSlug, count: trimmedRounds.length, updatedAt });
   });
 
   app.get('/api/relay-policy', (_req, res) => {
@@ -1076,15 +1184,12 @@ ATURAN EKSTRAKSI:
 
   // Lightweight health endpoint (zero citizen PII)
   app.get('/api/relay-health', (_req, res) => {
-    pruneExpiredPresence();
+    const telemetry = buildTelemetryPayload();
     res.json({
       status: 'ok',
       mode: 'stateless-pass-through',
       citizenDatabaseStorage: 'none',
-      connectedClients: clients.size,
-      activeChannels: channelSubscribers.size,
-      activeTransitTickets: volatileInviteTickets.size + volatileInviteRooms.size,
-      activePresenceRamCount: volatilePresenceMap.size,
+      ...telemetry,
     });
   });
 
