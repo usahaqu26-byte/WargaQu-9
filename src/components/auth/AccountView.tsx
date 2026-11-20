@@ -17,6 +17,7 @@ import {
   Monitor,
   FileText,
   Copyright,
+  ExternalLink,
 } from 'lucide-react';
 import { AUTH_SYNC_EVENT, AuthAccount, AuthService } from '../../services/authService';
 import { RT_SYNC_EVENT, RtSiagaStorage, WargaMember } from '../../services/rtSiagaStorage';
@@ -41,6 +42,7 @@ interface AccountViewProps {
   onOpenRtQu: () => void;
   onOpenSiagaQu: () => void;
   onOpenAdminZeroTrust: () => void;
+  onOpenStorePreview?: () => void;
   showNotification: (msg: string) => void;
 }
 
@@ -49,6 +51,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
   onOpenRtQu,
   onOpenSiagaQu,
   onOpenAdminZeroTrust,
+  onOpenStorePreview,
   showNotification,
 }) => {
   const [account, setAccount] = useState<AuthAccount | null>(() => AuthService.getAccount());
@@ -638,6 +641,27 @@ export const AccountView: React.FC<AccountViewProps> = ({
             </div>
             <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
           </button>
+
+          {onOpenStorePreview && (
+            <button
+              type="button"
+              onClick={onOpenStorePreview}
+              className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-emerald-50/50"
+            >
+              <div className="flex items-start gap-2.5 min-w-0">
+                <ExternalLink className="w-4 h-4 mt-0.5 shrink-0 text-emerald-700" />
+                <div>
+                  <div className="text-xs font-bold text-emerald-800">
+                    Halaman Pratinjau &amp; Unduh (ala Play Store)
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Buka atau bagikan link etalase WargaQu (Pasang PWA &amp; Unduh APK)
+                  </div>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-emerald-700 shrink-0" />
+            </button>
+          )}
         </section>
         </div>
         </div>

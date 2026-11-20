@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WargaQu - Pratinjau &amp; Unduh Aplikasi</title>
+    <meta name="description" content="Pratinjau resmi WargaQu sebelum unduh APK Android atau pasang versi PWA lintas perangkat." />
+    <meta property="og:title" content="WargaQu - Pratinjau & Unduh Aplikasi" />
+    <meta property="og:description" content="Coba pratinjau modul WargaQu, pasang instan via PWA, atau unduh APK Android resmi." />
+    <meta property="og:image" content="./wargaqu-share.jpg" />
+    <meta http-equiv="refresh" content="0; url=./?preview=store" />
+    <script>
+      (function () {
+        var target = './?preview=store' + (window.location.search ? '&' + window.location.search.slice(1) : '');
+        window.location.replace(target);
+      })();
+    </script>
+  </head>
+  <body style="font-family: sans-serif; padding: 2rem; color: #0f172a;">
+    <p>Membuka halaman pratinjau WargaQu... <a href="./?preview=store">Klik di sini jika tidak otomatis beralih</a>.</p>
+  </body>
+</html>

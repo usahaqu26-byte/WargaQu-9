@@ -14,6 +14,7 @@ import { DompetQuView } from './components/dompetqu/DompetQuView';
 import { LoginModal } from './components/auth/LoginModal';
 import { AccountView } from './components/auth/AccountView';
 import { AdminZeroTrustView } from './components/admin/AdminZeroTrustView';
+import { StorePreviewView, PreviewTargetScreen } from './components/store/StorePreviewView';
 import { ModuleGuideModal } from './components/common/ModuleGuideModal';
 import {
   GuideModuleId,
@@ -53,11 +54,34 @@ import {
   PairingSyncEventDetail,
 } from './services/devicePairingService';
 
-type AppScreen = 'warga' | 'dompetqu' | 'akun' | 'admin_zero_trust' | 'leluhurqu' | 'rtqu' | 'siagaqu' | 'chatqu' | 'muamalahqu' | 'areaqu' | 'usahaqu' | 'modularqu' | 'bantuan' | 'empty_module';
+type AppScreen = 'warga' | 'store' | 'dompetqu' | 'akun' | 'admin_zero_trust' | 'leluhurqu' | 'rtqu' | 'siagaqu' | 'chatqu' | 'muamalahqu' | 'areaqu' | 'usahaqu' | 'modularqu' | 'bantuan' | 'empty_module';
+
+function isStorePreviewUrlRequested(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const preview = (params.get('preview') || '').trim().toLowerCase();
+    const store = (params.get('store') || '').trim().toLowerCase();
+    const hash = (window.location.hash || '').trim().toLowerCase();
+    return (
+      preview === 'store' ||
+      preview === 'play' ||
+      store === '1' ||
+      store === 'true' ||
+      hash === '#store' ||
+      hash.startsWith('#store?') ||
+      window.location.pathname.toLowerCase().endsWith('/store')
+    );
+  } catch {
+    return false;
+  }
+}
 
 export default function App() {
   // Screen Navigation State
-  const [currentScreen, setCurrentScreen] = useState<AppScreen>('warga');
+  const [currentScreen, setCurrentScreen] = useState<AppScreen>(() =>
+    isStorePreviewUrlRequested() ? 'store' : 'warga'
+  );
   const [selectedEmptyModule, setSelectedEmptyModule] = useState<string>('areaqu');
   const [usahaQuMode, setUsahaQuMode] = useState<'resto' | 'modular'>('resto');
   const [rtQuInitialTab, setRtQuInitialTab] = useState<'ringkasan' | 'forum' | 'keuangan' | 'iuran' | 'pengurus'>('ringkasan');
@@ -193,12 +217,18 @@ export default function App() {
         localStorage.setItem('wargaqu_pending_rt_invite_v1', rtInvite);
         setCurrentScreen('rtqu');
         window.history.replaceState({ screen: 'rtqu' }, '', '#rtqu');
+      } else if (isStorePreviewUrlRequested()) {
+        setCurrentScreen('store');
       }
     } catch {
       // ignore URL/storage errors
     }
 
     const onHashInviteCheck = () => {
+      if (isStorePreviewUrlRequested()) {
+        setCurrentScreen('store');
+        return;
+      }
       const pairToken = extractPairFromLocation();
       if (pairToken) {
         try {
@@ -614,7 +644,71 @@ export default function App() {
     window.history.pushState({ screen: 'warga' }, '', '#warga');
   };
 
+  const handleOpenStorePreview = () => {
+    setCurrentScreen('store');
+    window.history.pushState({ screen: 'store' }, '', '#store');
+  };
+
+  const handleEnterAppFromStore = (targetScreen: PreviewTargetScreen = 'warga') => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('preview');
+        cleanUrl.searchParams.delete('store');
+        cleanUrl.hash = targetScreen === 'warga' ? '#warga' : `#${targetScreen}`;
+        window.history.pushState({ screen: targetScreen }, '', cleanUrl.toString());
+      } catch {
+        // ignore URL cleanup
+      }
+    }
+    if (targetScreen === 'usahaqu') {
+      handleOpenUsahaQu('resto');
+      return;
+    }
+    if (targetScreen === 'rtqu') {
+      handleOpenRtQu();
+      return;
+    }
+    if (targetScreen === 'areaqu') {
+      handleOpenAreaQu();
+      return;
+    }
+    if (targetScreen === 'leluhurqu') {
+      handleOpenLeluhurQu();
+      return;
+    }
+    if (targetScreen === 'siagaqu') {
+      handleOpenSiagaQu();
+      return;
+    }
+    if (targetScreen === 'dompetqu') {
+      handleOpenDompetQu();
+      return;
+    }
+    if (targetScreen === 'muamalahqu') {
+      handleOpenMuamalahQu();
+      return;
+    }
+    setCurrentScreen('warga');
+  };
+
   const activeOrderCount = Object.keys(activeOrders).length;
+
+  if (currentScreen === 'store') {
+    return (
+      <div className="h-[100dvh] w-full overflow-hidden bg-white relative">
+        {notification && (
+          <div className="fixed top-16 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md z-50 bg-emerald-950/95 text-[#5eead4] px-4 py-2 rounded-2xl shadow-xl border border-emerald-500/40 text-xs font-semibold flex items-center justify-between">
+            <span>{notification}</span>
+          </div>
+        )}
+        <StorePreviewView
+          onEnterApp={handleEnterAppFromStore}
+          showNotification={showNotification}
+        />
+      </div>
+    );
+  }
 
   return (
     <AndroidFrame>
@@ -711,6 +805,7 @@ export default function App() {
           onOpenRtQu={handleOpenRtQu}
           onOpenSiagaQu={handleOpenSiagaQu}
           onOpenAdminZeroTrust={handleOpenAdminZeroTrust}
+          onOpenStorePreview={handleOpenStorePreview}
           showNotification={showNotification}
         />
       )}

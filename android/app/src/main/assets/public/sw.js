@@ -80,6 +80,9 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "url": "wargaqu-share.jpg",
     "revision": "217235eef8b45adc0603865973e8016d"
   }, {
+    "url": "store.html",
+    "revision": "ffa3697570ffeb1a5e5701f5dad874f8"
+  }, {
     "url": "pwa-maskable-512x512.png",
     "revision": "efc84a5d7b1e7ecda758aac45ce67738"
   }, {
@@ -90,7 +93,7 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "revision": "3649812790a8dbd835813340e87aac07"
   }, {
     "url": "index.html",
-    "revision": "078a255460b9ed212a67c85ed7e6d0b7"
+    "revision": "321287351d9b4dc894940bcab2496a69"
   }, {
     "url": "icon.svg",
     "revision": "f8c11ed66fb69e7c38afb09669dc2436"
@@ -104,7 +107,7 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "url": "assets/workbox-window.prod.es5-Bd17z0YL.js",
     "revision": null
   }, {
-    "url": "assets/web-lnEtdngV.js",
+    "url": "assets/web-BnUx1VCO.js",
     "revision": null
   }, {
     "url": "assets/rolldown-runtime-hePW80VL.js",
@@ -113,16 +116,16 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "url": "assets/purify.es-B7SQ8EAD.js",
     "revision": null
   }, {
-    "url": "assets/jspdf.es.min-CwjG7b1C.js",
+    "url": "assets/jspdf.es.min-C5N0I73w.js",
     "revision": null
   }, {
-    "url": "assets/index.es-D1mD1tW1.js",
+    "url": "assets/index.es-vprt_hjD.js",
     "revision": null
   }, {
-    "url": "assets/index-Dt3_86B4.js",
+    "url": "assets/index-BjwqjnA8.css",
     "revision": null
   }, {
-    "url": "assets/index-COjZ6VkF.css",
+    "url": "assets/index-B38eYfOP.js",
     "revision": null
   }, {
     "url": "assets/html2canvas-Dn6bw578.js",
@@ -131,7 +134,7 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "url": "assets/firebase-CA98DPK0.js",
     "revision": null
   }, {
-    "url": "assets/esm-DQ-PXodn.js",
+    "url": "assets/esm-CmG8FFc1.js",
     "revision": null
   }, {
     "url": "assets/es-Ct67x-Wl.js",
@@ -161,6 +164,9 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "url": "pwa-maskable-512x512.png",
     "revision": "efc84a5d7b1e7ecda758aac45ce67738"
   }, {
+    "url": "store.html",
+    "revision": "ffa3697570ffeb1a5e5701f5dad874f8"
+  }, {
     "url": "wargaqu-share.jpg",
     "revision": "217235eef8b45adc0603865973e8016d"
   }, {
@@ -169,7 +175,7 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html"), {
-    denylist: [/^\/api\//, /^\/ws-relay/]
+    denylist: [/^\/api\//, /^\/ws-relay/, /store\.html/]
   }));
   workbox.registerRoute(/^https:\/\/fonts\.googleapis\.com\/.*/i, new workbox.CacheFirst({
     "cacheName": "google-fonts-cache",

@@ -20,6 +20,7 @@ export default defineConfig(() => {
           'pwa-512x512.png',
           'pwa-maskable-512x512.png',
           'wargaqu-share.jpg',
+          'store.html',
         ],
         manifest: {
           id: './',
@@ -56,7 +57,7 @@ export default defineConfig(() => {
         },
         workbox: {
           maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
-          navigateFallbackDenylist: [/^\/api\//, /^\/ws-relay/],
+          navigateFallbackDenylist: [/^\/api\//, /^\/ws-relay/, /store\.html/],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg,woff,woff2}'],
           runtimeCaching: [
             {
