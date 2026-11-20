@@ -18,7 +18,9 @@ import {
   MerchantIdentity,
   POICategory,
   LapakType,
+  MobileRigType,
   CATEGORY_OPTIONS,
+  RIG_TYPE_OPTIONS,
   AVATAR_ICON_OPTIONS
 } from './types';
 
@@ -107,6 +109,8 @@ export const IdentityPanel: React.FC<IdentityPanelProps> = ({
       wargaId: mForm.wargaId.trim() || 'WQ-UMKM-01',
       rtRw: mForm.rtRw.trim() || 'Lingkungan Warga',
       lapakName: mForm.lapakName.trim(),
+      rigType: mForm.rigType || (mForm.lapakType === 'keliling' ? 'motor' : 'menetap'),
+      routeSchedule: (mForm.routeSchedule || '').trim(),
       baseAddress: mForm.baseAddress.trim(),
       phone: mForm.phone.trim(),
       operationalHours: mForm.operationalHours.trim() || '08:00 - 20:00 WIB',
@@ -535,16 +539,41 @@ export const IdentityPanel: React.FC<IdentityPanelProps> = ({
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">
-                    Kendaraan / Stand
+                    Jenis Armada / Stand
                   </label>
-                  <input
-                    type="text"
-                    value={mForm.vehicleType}
-                    onChange={e => setMForm(prev => ({ ...prev, vehicleType: e.target.value }))}
-                    placeholder="Gerobak Motor / Kios"
-                    className="w-full min-h-[44px] bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600/30 focus:border-emerald-600"
-                  />
+                  <select
+                    value={mForm.rigType || (mForm.lapakType === 'keliling' ? 'motor' : 'menetap')}
+                    onChange={e => {
+                      const nextRig = e.target.value as MobileRigType;
+                      const rigMeta = RIG_TYPE_OPTIONS.find(r => r.id === nextRig);
+                      setMForm(prev => ({
+                        ...prev,
+                        rigType: nextRig,
+                        vehicleType: rigMeta?.label || prev.vehicleType,
+                      }));
+                    }}
+                    className="w-full min-h-[44px] bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600/30 focus:border-emerald-600"
+                  >
+                    {RIG_TYPE_OPTIONS.map(opt => (
+                      <option key={opt.id} value={opt.id}>
+                        {opt.icon} {opt.label} ({opt.speedHint})
+                      </option>
+                    ))}
+                  </select>
                 </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Jadwal Wilayah &amp; Jam Keliling (Opsional)
+                </label>
+                <input
+                  type="text"
+                  value={mForm.routeSchedule || ''}
+                  onChange={e => setMForm(prev => ({ ...prev, routeSchedule: e.target.value }))}
+                  placeholder="Contoh: Pagi 06:30–09:00 Blok A–C • Sore 16:00–18:00 Pos Ronda"
+                  className="w-full min-h-[44px] bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600/30 focus:border-emerald-600"
+                />
               </div>
 
               <div>
@@ -556,7 +585,7 @@ export const IdentityPanel: React.FC<IdentityPanelProps> = ({
                   required
                   value={mForm.baseAddress}
                   onChange={e => setMForm(prev => ({ ...prev, baseAddress: e.target.value }))}
-                  placeholder="Depan Balai Warga RT 03 & Keliling Blok A-C"
+                  placeholder="Depan Balai Warga & Keliling Blok A-C"
                   className="w-full min-h-[44px] bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600/30 focus:border-emerald-600"
                 />
               </div>

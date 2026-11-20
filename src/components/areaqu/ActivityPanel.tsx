@@ -9,15 +9,26 @@ import {
   CheckCircle2,
   Truck,
   ChefHat,
-  ExternalLink
+  ExternalLink,
+  BellRing,
+  Navigation,
+  CalendarClock
 } from 'lucide-react';
-import { AreaOrderItem, LapakItem, OrderStatus } from './types';
+import {
+  AreaOrderItem,
+  KelilingPingItem,
+  KelilingPingStatus,
+  LapakItem,
+  OrderStatus
+} from './types';
 
 interface ActivityPanelProps {
   orders: AreaOrderItem[];
+  pings: KelilingPingItem[];
   favoriteLapaks: LapakItem[];
   myLapakId: string;
   onUpdateOrderStatus: (orderId: string, status: OrderStatus) => void;
+  onUpdatePingStatus: (pingId: string, status: KelilingPingStatus) => void;
   onSelectLapakOnMap: (lapak: LapakItem) => void;
   onToggleFavorite: (lapakId: string) => void;
 }
@@ -29,17 +40,30 @@ const STATUS_LABELS: Record<OrderStatus, { label: string; style: string }> = {
   selesai: { label: 'Selesai', style: 'text-slate-600 bg-slate-100 border-slate-200' }
 };
 
+const PING_STATUS_LABELS: Record<KelilingPingStatus, { label: string; style: string }> = {
+  menunggu: { label: 'Menunggu Pedagang', style: 'text-amber-700 bg-amber-50 border-amber-200' },
+  otw: { label: 'Pedagang OTW Mampir', style: 'text-violet-700 bg-violet-50 border-violet-200' },
+  sampai: { label: 'Sudah di Depan / Lokasi', style: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+  selesai: { label: 'Selesai', style: 'text-slate-600 bg-slate-100 border-slate-200' }
+};
+
 export const ActivityPanel: React.FC<ActivityPanelProps> = ({
   orders,
+  pings,
   favoriteLapaks,
   myLapakId,
   onUpdateOrderStatus,
+  onUpdatePingStatus,
   onSelectLapakOnMap,
   onToggleFavorite
 }) => {
   const [subTab, setSubTab] = useState<'pesanan' | 'favorit' | 'masuk'>('pesanan');
 
   const incomingOrders = orders.filter(o => o.lapakId === myLapakId);
+  const incomingPings = pings.filter(p => p.lapakId === myLapakId);
+  const activeIncomingTotal =
+    incomingOrders.filter(o => o.status !== 'selesai').length +
+    incomingPings.filter(p => p.status !== 'selesai').length;
 
   return (
     <div className="flex-1 flex flex-col bg-[#f8fafc] overflow-hidden">
@@ -94,22 +118,70 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
             }`}
           >
             <Inbox className="w-3.5 h-3.5 shrink-0" />
-            <span>Masuk ({incomingOrders.length})</span>
+            <span>Masuk ({activeIncomingTotal})</span>
           </button>
         </div>
       </div>
 
       {/* Scrollable Content */}
       <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-3">
-        {/* SUB-MENU 1: PESANAN SAYA (CALON KONSUMEN) */}
+        {/* SUB-MENU 1: PESANAN & PANGGILAN MAMPIR SAYA */}
         {subTab === 'pesanan' && (
           <>
-            {orders.length === 0 ? (
+            {pings.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-0.5">
+                  <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                    <BellRing className="w-3.5 h-3.5 text-violet-700" />
+                    <span>Panggilan Mampir Keliling ({pings.length})</span>
+                  </span>
+                </div>
+                {pings.map(ping => {
+                  const pMeta = PING_STATUS_LABELS[ping.status];
+                  return (
+                    <div
+                      key={ping.id}
+                      className="bg-white rounded-2xl border border-violet-200/80 p-3 space-y-2"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-xl shrink-0">{ping.lapakIcon}</span>
+                          <div className="min-w-0">
+                            <h4 className="text-xs font-bold text-slate-900 truncate">{ping.lapakName}</h4>
+                            <p className="text-[11px] text-slate-500 truncate">
+                              {ping.lapakOwner} · {ping.createdAt}
+                            </p>
+                          </div>
+                        </div>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border shrink-0 ${pMeta.style}`}>
+                          {pMeta.label}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-700 bg-slate-50 rounded-xl px-2.5 py-2 border border-slate-100">
+                        {ping.note || 'Mohon mampir ke titik lokasi saya.'}
+                      </p>
+                      {ping.status !== 'selesai' && (
+                        <button
+                          type="button"
+                          onClick={() => onUpdatePingStatus(ping.id, 'selesai')}
+                          className="w-full min-h-[38px] bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Selesaikan Panggilan</span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {orders.length === 0 && pings.length === 0 ? (
               <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center space-y-2">
                 <ShoppingBag className="w-8 h-8 text-slate-300 mx-auto" />
-                <p className="text-sm font-bold text-slate-800">Belum Ada Pesanan</p>
+                <p className="text-sm font-bold text-slate-800">Belum Ada Pesanan atau Panggilan</p>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  Pilih lapak di menu Jelajah, isi keranjang katalog, lalu kirim pesanan dengan identitas antar Anda.
+                  Pilih lapak di menu Jelajah untuk kirim pesanan, Pre-Order jam lewat, atau tekan Panggil Mampir pada pedagang keliling.
                 </p>
               </div>
             ) : (
@@ -130,6 +202,12 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
                           <p className="text-[11px] text-slate-500 truncate">
                             {order.lapakOwner} · {order.createdAt}
                           </p>
+                          {order.orderKind === 'preorder' && (
+                            <div className="inline-flex items-center gap-1 mt-1 text-[10px] font-bold text-violet-800 bg-violet-50 border border-violet-200 px-1.5 py-0.5 rounded-md">
+                              <CalendarClock className="w-3 h-3" />
+                              <span>PRE-ORDER {order.scheduledSlot ? `· ${order.scheduledSlot}` : ''}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                       <span
@@ -245,12 +323,81 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
         {/* SUB-MENU 3: PESANAN & PANGGILAN MASUK (PEDAGANG) */}
         {subTab === 'masuk' && (
           <>
-            {incomingOrders.length === 0 ? (
+            {incomingPings.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-[11px] font-bold text-violet-900 flex items-center gap-1.5 px-0.5">
+                  <BellRing className="w-3.5 h-3.5 text-violet-700" />
+                  <span>Warga Memanggil / Minta Mampir ({incomingPings.length})</span>
+                </div>
+                {incomingPings.map(ping => {
+                  const pMeta = PING_STATUS_LABELS[ping.status];
+                  return (
+                    <div
+                      key={ping.id}
+                      className="bg-white rounded-2xl border border-violet-200 p-3.5 space-y-2.5"
+                    >
+                      <div className="flex items-start justify-between gap-2 pb-2 border-b border-slate-100">
+                        <div className="min-w-0">
+                          <h3 className="text-xs font-bold text-slate-900 truncate">
+                            Panggilan: {ping.senderName}
+                          </h3>
+                          <p className="text-[11px] text-slate-500 truncate">
+                            {ping.senderAddress}{ping.senderLandmark ? ` (${ping.senderLandmark})` : ''}
+                          </p>
+                        </div>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border shrink-0 ${pMeta.style}`}>
+                          {pMeta.label}
+                        </span>
+                      </div>
+
+                      <div className="bg-violet-50/70 rounded-xl p-2.5 text-[11px] text-slate-800 space-y-1 border border-violet-100">
+                        <p className="font-medium">{ping.note || 'Mohon mampir sebentar ke lokasi saya.'}</p>
+                        <div className="flex items-center justify-between text-[10px] text-slate-500">
+                          <span className="font-mono tabular-nums">{ping.senderPhone || '-'}</span>
+                          <span>{ping.createdAt}</span>
+                        </div>
+                      </div>
+
+                      {ping.status !== 'selesai' && (
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => onUpdatePingStatus(ping.id, 'otw')}
+                            className="min-h-[38px] px-2 rounded-xl bg-violet-50 hover:bg-violet-100 border border-violet-200 text-violet-800 text-[11px] font-bold flex items-center justify-center gap-1"
+                          >
+                            <Navigation className="w-3 h-3" />
+                            <span>OTW</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onUpdatePingStatus(ping.id, 'sampai')}
+                            className="min-h-[38px] px-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-[11px] font-bold flex items-center justify-center gap-1"
+                          >
+                            <MapPin className="w-3 h-3" />
+                            <span>Sampai</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onUpdatePingStatus(ping.id, 'selesai')}
+                            className="min-h-[38px] px-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-[11px] font-bold flex items-center justify-center gap-1"
+                          >
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>Selesai</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {incomingOrders.length === 0 && incomingPings.length === 0 ? (
               <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center space-y-2">
                 <Inbox className="w-8 h-8 text-slate-300 mx-auto" />
-                <p className="text-sm font-bold text-slate-800">Belum Ada Order Masuk</p>
+                <p className="text-sm font-bold text-slate-800">Belum Ada Order / Panggilan Masuk</p>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  Pesanan warga yang ditujukan ke lapak Anda akan tampil di sini lengkap dengan identitas & alamat pembeli.
+                  Pesanan, Pre-Order, maupun panggilan "Mampir" dari warga akan tampil di sini secara real-time.
                 </p>
               </div>
             ) : (
@@ -269,6 +416,12 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
                         <p className="text-[11px] text-slate-500">
                           {order.consumerWargaId} · {order.consumerRtRw}
                         </p>
+                        {order.orderKind === 'preorder' && (
+                          <div className="inline-flex items-center gap-1 mt-1 text-[10px] font-bold text-violet-800 bg-violet-50 border border-violet-200 px-1.5 py-0.5 rounded-md">
+                            <CalendarClock className="w-3 h-3" />
+                            <span>PRE-ORDER {order.scheduledSlot ? `· ${order.scheduledSlot}` : ''}</span>
+                          </div>
+                        )}
                       </div>
                       <span
                         className={`text-[10px] font-bold px-2 py-1 rounded-lg border shrink-0 ${statusMeta.style}`}

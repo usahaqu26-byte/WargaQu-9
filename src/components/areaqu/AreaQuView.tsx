@@ -34,7 +34,11 @@ import {
   BadgeCheck,
   Navigation,
   Edit3,
-  HelpCircle
+  HelpCircle,
+  BellRing,
+  Megaphone,
+  CalendarClock,
+  Gauge
 } from 'lucide-react';
 import { ModuleOnboardingService } from '../../services/moduleOnboardingService';
 import L from 'leaflet';
@@ -56,8 +60,13 @@ import {
   MerchantIdentity,
   AreaOrderItem,
   OrderStatus,
+  KelilingPingItem,
+  KelilingPingStatus,
+  MotionState,
   CATEGORY_OPTIONS,
-  getCategoryLabel
+  getCategoryLabel,
+  getRigMeta,
+  inferMotionState
 } from './types';
 import { IdentityPanel } from './IdentityPanel';
 import { ActivityPanel } from './ActivityPanel';
@@ -113,6 +122,9 @@ const INITIAL_LAPAKS: LapakItem[] = [
     rtRw: '',
     isVerifiedWarga: false,
     lapakType: 'menetap',
+    rigType: 'menetap',
+    motionState: 'ngetem',
+    routeSchedule: '',
     category: 'kuliner',
     categoryLabel: 'Kuliner & Usaha',
     lat: DEFAULT_COORDS[0],
@@ -150,6 +162,8 @@ const DEFAULT_MERCHANT_IDENTITY: MerchantIdentity = {
   lapakName: 'Lapak Usaha Saya',
   category: 'kuliner',
   lapakType: 'menetap',
+  rigType: 'menetap',
+  routeSchedule: '',
   baseAddress: '',
   phone: '',
   operationalHours: '09:00 - 21:00 WIB',
@@ -181,6 +195,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
   const [lapakSubTab, setLapakSubTab] = useState<'lokasi' | 'katalog'>('lokasi');
   const [identitySubTab, setIdentitySubTab] = useState<'konsumen' | 'pedagang' | 'keamanan'>('konsumen');
   const [isSettingLapakPinOnMap, setIsSettingLapakPinOnMap] = useState<boolean>(false);
+  const [isSettingUserPinOnMap, setIsSettingUserPinOnMap] = useState<boolean>(false);
   const [lapakFeeModal, setLapakFeeModal] = useState<{
     open: boolean;
     actionLabel: string;
@@ -273,7 +288,14 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length === 2) {
+        if (
+          Array.isArray(parsed) &&
+          parsed.length === 2 &&
+          typeof parsed[0] === 'number' &&
+          typeof parsed[1] === 'number' &&
+          !isNaN(parsed[0]) &&
+          !isNaN(parsed[1])
+        ) {
           return [parsed[0], parsed[1]];
         }
       } catch {
@@ -283,12 +305,50 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
     return DEFAULT_COORDS;
   });
 
-  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+  const savedGpsMeta = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('wargaqu_areaqu_gps_meta_v1');
+      if (raw) {
+        return JSON.parse(raw) as {
+          mode?: 'gps' | 'preset' | 'manual';
+          label?: string;
+          accuracy?: number | null;
+        };
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  }, []);
+
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(
+    typeof savedGpsMeta?.accuracy === 'number' ? savedGpsMeta.accuracy : null
+  );
   const [isGpsAcquiring, setIsGpsAcquiring] = useState<boolean>(false);
-  const [gpsSourceLabel, setGpsSourceLabel] = useState<string>('Koordinat Awal (Aktifkan GPS)');
+  const [gpsSourceLabel, setGpsSourceLabel] = useState<string>(
+    savedGpsMeta?.label || 'Mendeteksi GPS...'
+  );
+  const [gpsErrorDetail, setGpsErrorDetail] = useState<string>('');
   const [showGpsModal, setShowGpsModal] = useState<boolean>(false);
   const [manualLatInput, setManualLatInput] = useState<string>('');
   const [manualLngInput, setManualLngInput] = useState<string>('');
+
+  const persistUserLocation = (
+    coords: [number, number],
+    mode: 'gps' | 'preset' | 'manual',
+    label: string,
+    accuracy: number | null
+  ) => {
+    try {
+      localStorage.setItem('wargaqu_areaqu_user_coords', JSON.stringify(coords));
+      localStorage.setItem(
+        'wargaqu_areaqu_gps_meta_v1',
+        JSON.stringify({ mode, label, accuracy, updatedAt: Date.now() })
+      );
+    } catch {
+      // ignore quota error
+    }
+  };
 
   // ---------------------------------------------------------------------------
   // 4. MERCHANTS / LAPAK DATASET, ORDERS, FAVORITES
@@ -342,6 +402,23 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
     localStorage.setItem('wargaqu_areaqu_orders_v1', JSON.stringify(orders));
   }, [orders]);
 
+  const [pings, setPings] = useState<KelilingPingItem[]>(() => {
+    const saved = localStorage.getItem('wargaqu_areaqu_keliling_pings_v1');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {
+        // ignore parse error
+      }
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('wargaqu_areaqu_keliling_pings_v1', JSON.stringify(pings));
+  }, [pings]);
+
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => {
     const saved = localStorage.getItem('wargaqu_areaqu_favorites_v1');
     if (saved) {
@@ -365,7 +442,19 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
     return lapaks.find(l => l.isMyLapak) || lapaks[0];
   }, [lapaks]);
 
+  const [selectedRadius, setSelectedRadius] = useState<number>(1000);
   const [selectedLapak, setSelectedLapak] = useState<LapakItem | null>(null);
+  const [kelilingBanner, setKelilingBanner] = useState<{
+    lapakId: string;
+    lapakName: string;
+    lapakIcon: string;
+    ownerName: string;
+    rigLabel: string;
+    note: string;
+    distanceMeter: number;
+    sentAt: string;
+  } | null>(null);
+  const proximityAlertedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const handleRemoteAreaRelay = (evt: Event) => {
@@ -378,6 +467,16 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
         if (!incomingOrder?.id) return;
         if (myLapak && incomingOrder.lapakId !== myLapak.id) return;
         setOrders(prev => (prev.some(o => o.id === incomingOrder.id) ? prev : [incomingOrder, ...prev]));
+        showNotification(
+          `${incomingOrder.orderKind === 'preorder' ? 'Pre-Order' : 'Pesanan'} baru dari ${incomingOrder.consumerName}`
+        );
+        return;
+      }
+
+      if (detail.eventName === 'order:areaqu_status') {
+        const p = detail.payload as { orderId?: string; status?: OrderStatus };
+        if (!p.orderId || !p.status) return;
+        setOrders(prev => prev.map(o => (o.id === p.orderId ? { ...o, status: p.status! } : o)));
         return;
       }
 
@@ -392,6 +491,78 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
           }
           return [{ ...incomingLapak, isMyLapak: false }, ...prev];
         });
+        if (
+          favoriteIds.includes(incomingLapak.id) &&
+          incomingLapak.status === 'keliling' &&
+          !proximityAlertedRef.current.has(incomingLapak.id)
+        ) {
+          const dist = calculateDistanceMeters(
+            userCoords[0],
+            userCoords[1],
+            incomingLapak.lat,
+            incomingLapak.lng
+          );
+          if (dist <= 300) {
+            proximityAlertedRef.current.add(incomingLapak.id);
+            showNotification(`${incomingLapak.avatarIcon} ${incomingLapak.name} (Favorit) sudah dekat (${dist}m)!`);
+          }
+        }
+        return;
+      }
+
+      if (detail.eventName === 'areaqu:keliling_ping') {
+        const p = detail.payload as { ping?: KelilingPingItem };
+        const incomingPing = p.ping;
+        if (!incomingPing?.id) return;
+        if (myLapak && incomingPing.lapakId !== myLapak.id) return;
+        setPings(prev => (prev.some(item => item.id === incomingPing.id) ? prev : [incomingPing, ...prev]));
+        showNotification(`Panggilan mampir dari ${incomingPing.senderName}!`);
+        return;
+      }
+
+      if (detail.eventName === 'areaqu:keliling_ping_status') {
+        const p = detail.payload as { pingId?: string; status?: KelilingPingStatus };
+        if (!p.pingId || !p.status) return;
+        setPings(prev =>
+          prev.map(item => (item.id === p.pingId ? { ...item, status: p.status! } : item))
+        );
+        if (p.status === 'otw') {
+          showNotification('Pedagang keliling sudah OTW mampir ke lokasi Anda!');
+        } else if (p.status === 'sampai') {
+          showNotification('Pedagang keliling sudah sampai di titik lokasi Anda!');
+        }
+        return;
+      }
+
+      if (detail.eventName === 'areaqu:keliling_announce') {
+        const p = detail.payload as {
+          lapakId?: string;
+          lapakName?: string;
+          lapakIcon?: string;
+          ownerName?: string;
+          rigLabel?: string;
+          note?: string;
+          lat?: number;
+          lng?: number;
+          sentAt?: string;
+        };
+        if (!p.lapakId || p.lapakId === myLapak?.id) return;
+        const dist =
+          typeof p.lat === 'number' && typeof p.lng === 'number'
+            ? calculateDistanceMeters(userCoords[0], userCoords[1], p.lat, p.lng)
+            : 0;
+        if (dist <= selectedRadius || selectedRadius >= 5000) {
+          setKelilingBanner({
+            lapakId: p.lapakId,
+            lapakName: p.lapakName || 'Pedagang Keliling',
+            lapakIcon: p.lapakIcon || '🛵',
+            ownerName: p.ownerName || 'Pedagang',
+            rigLabel: p.rigLabel || 'Keliling',
+            note: p.note || 'Sedang melintas di sekitar lingkungan.',
+            distanceMeter: dist,
+            sentAt: p.sentAt || new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+          });
+        }
         return;
       }
 
@@ -416,7 +587,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
     };
     window.addEventListener(REALTIME_RELAY_EVENT, handleRemoteAreaRelay);
     return () => window.removeEventListener(REALTIME_RELAY_EVENT, handleRemoteAreaRelay);
-  }, [myLapak?.id, selectedLapak?.id]);
+  }, [myLapak?.id, selectedLapak?.id, favoriteIds, userCoords, selectedRadius]);
 
   // ---------------------------------------------------------------------------
   // 5. MAP INSTANCE & LEAFLET REFS
@@ -425,17 +596,31 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
   const mapInstanceRef = useRef<L.Map | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
   const radarCircleRef = useRef<L.Circle | null>(null);
+  const gpsAccuracyCircleRef = useRef<L.Circle | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const routePolylineRef = useRef<L.Polyline | null>(null);
   const isSettingLapakPinRef = useRef<boolean>(false);
+  const isSettingUserPinRef = useRef<boolean>(false);
+  const pendingRecenterRef = useRef<boolean>(false);
+  const gpsWatchIdRef = useRef<number | null>(null);
+  const gpsStopTimerRef = useRef<number | null>(null);
+  const isMapVisibleRef = useRef<boolean>(true);
 
   useEffect(() => {
     isSettingLapakPinRef.current = isSettingLapakPinOnMap;
   }, [isSettingLapakPinOnMap]);
 
+  useEffect(() => {
+    isSettingUserPinRef.current = isSettingUserPinOnMap;
+  }, [isSettingUserPinOnMap]);
+
+  useEffect(() => {
+    isMapVisibleRef.current = activeTab === 'jelajah' && jelajahSubMode === 'peta';
+  }, [activeTab, jelajahSubMode]);
+
   // Filter & Search states (Jelajah)
-  const [selectedRadius, setSelectedRadius] = useState<number>(1000);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [motionFilter, setMotionFilter] = useState<'semua' | 'keliling_live' | 'ngetem'>('semua');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Modals
@@ -444,6 +629,9 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
   const [showRadiusModal, setShowRadiusModal] = useState<boolean>(false);
   const [showAddProductModal, setShowAddProductModal] = useState<boolean>(false);
   const [showPreviewModal, setShowPreviewModal] = useState<boolean>(false);
+  const [showPingModal, setShowPingModal] = useState<boolean>(false);
+  const [pingNoteInput, setPingNoteInput] = useState<string>('');
+  const [pingShareCoords, setPingShareCoords] = useState<boolean>(true);
 
   // Consumer Identity Gate Modal
   const [showConsumerGateModal, setShowConsumerGateModal] = useState<boolean>(false);
@@ -458,8 +646,23 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
   const [chatMessages, setChatMessages] = useState<Array<{ sender: 'user' | 'merchant'; text: string; time: string }>>([]);
   const [chatInputText, setChatInputText] = useState<string>('');
 
-  // Cart items
+  // Cart & Pre-Order items
   const [cartItems, setCartItems] = useState<Record<string, number>>({});
+  const [orderKind, setOrderKind] = useState<'langsung' | 'preorder'>('langsung');
+  const [scheduledSlot, setScheduledSlot] = useState<string>('Putaran Pagi (06:30–09:00)');
+
+  // Pedagang Keliling Live GPS Broadcast states
+  const [isKelilingLive, setIsKelilingLive] = useState<boolean>(false);
+  const [broadcastNoteInput, setBroadcastNoteInput] = useState<string>('');
+  const [routeScheduleDraft, setRouteScheduleDraft] = useState<string>(myLapak?.routeSchedule || '');
+  const kelilingWatchIdRef = useRef<number | null>(null);
+  const lastBroadcastSentRef = useRef<{ lat: number; lng: number; time: number } | null>(null);
+  const lastSpeedSampleRef = useRef<{ lat: number; lng: number; time: number } | null>(null);
+  const manualMotionOverrideRef = useRef<MotionState | null>(null);
+
+  useEffect(() => {
+    setRouteScheduleDraft(myLapak?.routeSchedule || '');
+  }, [myLapak?.routeSchedule]);
 
   // Add Product form states
   const [newProductName, setNewProductName] = useState('');
@@ -468,53 +671,205 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
   const [newProductDesc, setNewProductDesc] = useState('');
 
   // ---------------------------------------------------------------------------
-  // 6. GPS ACQUISITION
+  // 6. GPS ACQUISITION (TWO-STAGE HIGH-ACCURACY REFINEMENT + FALLBACK)
   // ---------------------------------------------------------------------------
+  const stopGpsWatcher = () => {
+    if (gpsWatchIdRef.current !== null && navigator.geolocation) {
+      navigator.geolocation.clearWatch(gpsWatchIdRef.current);
+      gpsWatchIdRef.current = null;
+    }
+    if (gpsStopTimerRef.current !== null) {
+      window.clearTimeout(gpsStopTimerRef.current);
+      gpsStopTimerRef.current = null;
+    }
+  };
+
+  const applyResolvedCoords = (
+    newCoords: [number, number],
+    accuracyMeters: number | null,
+    mode: 'gps' | 'preset' | 'manual',
+    label: string
+  ) => {
+    setUserCoords(newCoords);
+    setGpsAccuracy(accuracyMeters);
+    setGpsSourceLabel(label);
+    setGpsErrorDetail('');
+    persistUserLocation(newCoords, mode, label, accuracyMeters);
+
+    // Sinkronkan titik draft lapak jika pedagang belum memverifikasi/mengatur titik sendiri
+    setLapaks(prev =>
+      prev.map(item =>
+        item.isMyLapak &&
+        !item.isPublished &&
+        item.lat === DEFAULT_COORDS[0] &&
+        item.lng === DEFAULT_COORDS[1]
+          ? { ...item, lat: newCoords[0], lng: newCoords[1] }
+          : item
+      )
+    );
+
+    if (mapInstanceRef.current && isMapVisibleRef.current) {
+      mapInstanceRef.current.flyTo(newCoords, Math.max(mapInstanceRef.current.getZoom(), 16), {
+        duration: 0.9,
+      });
+      pendingRecenterRef.current = false;
+    } else {
+      pendingRecenterRef.current = true;
+    }
+  };
+
   const handleAcquireRealGPS = (silent: boolean = false) => {
     if (!navigator.geolocation) {
-      if (!silent) showNotification('Sensor GPS tidak didukung di peramban ini');
+      const msg = 'Sensor GPS tidak didukung di browser/perangkat ini';
+      setGpsErrorDetail(msg);
+      if (!silent) showNotification(msg);
       return;
     }
 
+    stopGpsWatcher();
     setIsGpsAcquiring(true);
-    if (!silent) showNotification('Mencari sinyal GPS satelit perangkat...');
+    setGpsErrorDetail('');
+    if (!silent) showNotification('Mengunci sinyal GPS akurat perangkat...');
 
-    navigator.geolocation.getCurrentPosition(
-      position => {
-        const { latitude, longitude, accuracy } = position.coords;
-        const newCoords: [number, number] = [latitude, longitude];
+    let bestAccuracy = Infinity;
+    let receivedAnyFix = false;
+    let finished = false;
 
-        setUserCoords(newCoords);
-        setGpsAccuracy(Math.round(accuracy));
-        setGpsSourceLabel(`Sensor GPS HP (±${Math.round(accuracy)}m)`);
-        localStorage.setItem('wargaqu_areaqu_user_coords', JSON.stringify(newCoords));
+    const finishAcquisition = () => {
+      if (finished) return;
+      finished = true;
+      stopGpsWatcher();
+      setIsGpsAcquiring(false);
+    };
 
-        if (mapInstanceRef.current) {
-          mapInstanceRef.current.flyTo(newCoords, 17, { duration: 1.2 });
+    const handlePositionSuccess = (position: GeolocationPosition, isCoarseFallback = false) => {
+      const { latitude, longitude, accuracy } = position.coords;
+      const roundedAcc = Math.round(accuracy);
+      const newCoords: [number, number] = [latitude, longitude];
+
+      if (!receivedAnyFix || roundedAcc < bestAccuracy) {
+        bestAccuracy = roundedAcc;
+        receivedAnyFix = true;
+
+        const qualityLabel =
+          roundedAcc <= 35
+            ? `GPS Akurat (±${roundedAcc}m)`
+            : roundedAcc <= 250
+            ? `GPS / Wi-Fi (±${roundedAcc}m)`
+            : `Lokasi Jaringan (±${roundedAcc}m)`;
+
+        applyResolvedCoords(newCoords, roundedAcc, 'gps', qualityLabel);
+
+        if (!silent && !isCoarseFallback && roundedAcc <= 35) {
+          showNotification(`Titik GPS akurat terkunci (±${roundedAcc}m)`);
         }
-
-        setIsGpsAcquiring(false);
-        showNotification(`Titik GPS Akurat Terkunci! (Akurasi: ±${Math.round(accuracy)}m)`);
-      },
-      () => {
-        setIsGpsAcquiring(false);
-        if (!silent) {
-          showNotification('Izin GPS belum diberikan atau lokasi di luar jangkauan sensor');
-        }
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 12000,
-        maximumAge: 30000
       }
-    );
+
+      // Berhenti lebih awal begitu akurasi GPS sudah sangat presisi (<= 20m)
+      if (roundedAcc <= 20) {
+        finishAcquisition();
+      }
+    };
+
+    const handleGpsFailure = (err: GeolocationPositionError, allowCoarseRetry: boolean) => {
+      if (err.code === err.PERMISSION_DENIED) {
+        const denyMsg =
+          'Izin lokasi ditolak browser. Aktifkan izin Lokasi pada ikon gembok/setelan browser, atau pilih lokasi manual.';
+        setGpsErrorDetail(denyMsg);
+        setGpsSourceLabel('Izin GPS Ditolak (Pilih Manual)');
+        finishAcquisition();
+        if (!silent) showNotification(denyMsg);
+        return;
+      }
+
+      // Jika mode high-accuracy gagal (mis. di dalam gedung / PC tanpa chip GPS), coba jaringan Wi-Fi/IP
+      if (allowCoarseRetry && !receivedAnyFix) {
+        navigator.geolocation.getCurrentPosition(
+          pos => {
+            handlePositionSuccess(pos, true);
+            if (!silent) {
+              showNotification(
+                `Lokasi jaringan ditemukan (±${Math.round(pos.coords.accuracy)}m). Bisa disempurnakan di Peta.`
+              );
+            }
+            finishAcquisition();
+          },
+          coarseErr => {
+            const detail =
+              coarseErr.code === coarseErr.TIMEOUT
+                ? 'Sinyal lokasi habis waktu (timeout). Pastikan GPS aktif atau pilih titik di peta.'
+                : 'Lokasi perangkat tidak tersedia saat ini. Gunakan "Tandai di Peta" atau input manual.';
+            setGpsErrorDetail(detail);
+            finishAcquisition();
+            if (!silent) showNotification(detail);
+          },
+          { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 }
+        );
+        return;
+      }
+
+      if (receivedAnyFix) {
+        finishAcquisition();
+      } else {
+        const detail =
+          err.code === err.TIMEOUT
+            ? 'Sinyal GPS terlalu lama merespons. Coba di area terbuka atau tandai titik di peta.'
+            : 'Lokasi perangkat tidak dapat dibaca saat ini.';
+        setGpsErrorDetail(detail);
+        finishAcquisition();
+        if (!silent) showNotification(detail);
+      }
+    };
+
+    try {
+      const watchId = navigator.geolocation.watchPosition(
+        pos => handlePositionSuccess(pos, false),
+        err => handleGpsFailure(err, true),
+        {
+          enableHighAccuracy: true,
+          timeout: 12000,
+          maximumAge: 0,
+        }
+      );
+      gpsWatchIdRef.current = watchId;
+
+      // Jendela penyempurnaan GPS maksimal 7.5 detik agar tidak menguras baterai
+      gpsStopTimerRef.current = window.setTimeout(() => {
+        if (!receivedAnyFix) {
+          handleGpsFailure(
+            {
+              code: 3,
+              message: 'GPS refinement timeout',
+              PERMISSION_DENIED: 1,
+              POSITION_UNAVAILABLE: 2,
+              TIMEOUT: 3,
+            } as GeolocationPositionError,
+            true
+          );
+        } else {
+          if (!silent && bestAccuracy > 35) {
+            showNotification(
+              `Lokasi terkunci (±${Math.round(bestAccuracy)}m). Gunakan "Tandai di Peta" jika ingin presisi ke rumah.`
+            );
+          }
+          finishAcquisition();
+        }
+      }, 7500);
+    } catch {
+      finishAcquisition();
+    }
   };
 
   useEffect(() => {
-    const hasCustomCoords = localStorage.getItem('wargaqu_areaqu_user_coords');
-    if (!hasCustomCoords) {
+    const mode = savedGpsMeta?.mode;
+    const hasCoords = Boolean(localStorage.getItem('wargaqu_areaqu_user_coords'));
+    // Selalu refresh GPS perangkat jika belum pernah disetel manual/preset, atau mode sebelumnya memang GPS
+    if (!hasCoords || !mode || mode === 'gps') {
       handleAcquireRealGPS(true);
     }
+    return () => {
+      stopGpsWatcher();
+    };
   }, []);
 
   useEffect(() => {
@@ -530,7 +885,8 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
   const computedLapaks = useMemo(() => {
     return lapaks.map(item => {
       const distanceMeter = calculateDistanceMeters(userCoords[0], userCoords[1], item.lat, item.lng);
-      const etaMinutes = Math.max(1, Math.round(distanceMeter / 90));
+      const speedRef = typeof item.speedKmh === 'number' && item.speedKmh > 2 ? (item.speedKmh * 1000) / 60 : 90;
+      const etaMinutes = Math.max(1, Math.round(distanceMeter / speedRef));
       return {
         ...item,
         distanceMeter,
@@ -539,32 +895,52 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
     });
   }, [lapaks, userCoords]);
 
+  const activeSelectedLapak = useMemo(() => {
+    if (!selectedLapak) return null;
+    return computedLapaks.find(l => l.id === selectedLapak.id) || selectedLapak;
+  }, [computedLapaks, selectedLapak]);
+
   const filteredLapaks = useMemo(() => {
     return computedLapaks
       .filter(item => {
         if (item.isPublished === false) return false;
         const matchCategory = selectedCategory === 'all' ? true : item.category === selectedCategory;
+        const isMobileVendor =
+          item.status === 'keliling' ||
+          item.lapakType === 'keliling' ||
+          (item.rigType && item.rigType !== 'menetap');
+        const motion = inferMotionState(item.speedKmh, item.motionState);
+        const matchMotion =
+          motionFilter === 'semua'
+            ? true
+            : motionFilter === 'keliling_live'
+            ? isMobileVendor && item.status !== 'tutup'
+            : isMobileVendor && motion === 'ngetem' && item.status !== 'tutup';
+
         const q = searchQuery.toLowerCase().trim();
         const matchSearch = q
           ? item.name.toLowerCase().includes(q) ||
             item.ownerName.toLowerCase().includes(q) ||
             item.description.toLowerCase().includes(q) ||
             item.address.toLowerCase().includes(q) ||
+            (item.routeSchedule || '').toLowerCase().includes(q) ||
             item.catalog.some(p => p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q))
           : true;
         const matchRadius = item.distanceMeter <= selectedRadius;
-        return matchCategory && matchSearch && matchRadius;
+        return matchCategory && matchMotion && matchSearch && matchRadius;
       })
       .sort((a, b) => (a.distanceMeter ?? 0) - (b.distanceMeter ?? 0));
-  }, [computedLapaks, selectedCategory, searchQuery, selectedRadius]);
+  }, [computedLapaks, selectedCategory, motionFilter, searchQuery, selectedRadius]);
 
   const favoriteLapaks = useMemo(() => {
     return computedLapaks.filter(l => favoriteIds.includes(l.id));
   }, [computedLapaks, favoriteIds]);
 
   const incomingOrderCount = useMemo(() => {
-    return orders.filter(o => o.lapakId === myLapak.id && o.status !== 'selesai').length;
-  }, [orders, myLapak.id]);
+    const activeOrders = orders.filter(o => o.lapakId === myLapak.id && o.status !== 'selesai').length;
+    const activePings = pings.filter(p => p.lapakId === myLapak.id && p.status !== 'selesai').length;
+    return activeOrders + activePings;
+  }, [orders, pings, myLapak.id]);
 
   // ---------------------------------------------------------------------------
   // 8. LEAFLET MAP INITIALIZATION & TAB SYNC
@@ -621,6 +997,17 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
 
       radarCircleRef.current = circle;
 
+      const showInitialAcc = Boolean(gpsAccuracy && gpsAccuracy > 15 && gpsAccuracy <= 5000);
+      const accCircle = L.circle(userCoords, {
+        radius: showInitialAcc ? gpsAccuracy! : 0,
+        color: '#0284c7',
+        weight: 1,
+        opacity: showInitialAcc ? 0.55 : 0,
+        fillColor: '#38bdf8',
+        fillOpacity: showInitialAcc ? 0.14 : 0,
+      }).addTo(map);
+      gpsAccuracyCircleRef.current = accCircle;
+
       const markersLayer = L.layerGroup().addTo(map);
       markersLayerRef.current = markersLayer;
 
@@ -640,18 +1027,17 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
           return;
         }
 
-        setUserCoords([clickedLat, clickedLng]);
-        setGpsSourceLabel('Ditentukan dari Titik Peta');
-        localStorage.setItem('wargaqu_areaqu_user_coords', JSON.stringify([clickedLat, clickedLng]));
-
-        if (userMarkerRef.current) {
-          userMarkerRef.current.setLatLng([clickedLat, clickedLng]);
+        // Hanya ubah titik pengguna bila user sengaja mengaktifkan mode "Tandai Lokasi Saya di Peta"
+        if (isSettingUserPinRef.current) {
+          setIsSettingUserPinOnMap(false);
+          applyResolvedCoords(
+            [clickedLat, clickedLng],
+            null,
+            'manual',
+            `Pin Peta (${clickedLat.toFixed(4)}, ${clickedLng.toFixed(4)})`
+          );
+          showNotification(`Lokasi Anda ditetapkan di ${clickedLat}, ${clickedLng}`);
         }
-        if (radarCircleRef.current) {
-          radarCircleRef.current.setLatLng([clickedLat, clickedLng]);
-        }
-
-        showNotification(`Titik GPS Anda dipindahkan ke: ${clickedLat}, ${clickedLng}`);
       });
 
       mapInstanceRef.current = map;
@@ -676,14 +1062,20 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
     };
   }, []);
 
-  // Refresh Leaflet layout when returning to Jelajah -> Peta
+  // Refresh Leaflet layout & recenter kamera saat kembali ke Jelajah -> Peta
   useEffect(() => {
     if (activeTab === 'jelajah' && jelajahSubMode === 'peta' && mapInstanceRef.current) {
       setTimeout(() => {
-        mapInstanceRef.current?.invalidateSize();
-      }, 80);
+        const map = mapInstanceRef.current;
+        if (!map) return;
+        map.invalidateSize();
+        if (pendingRecenterRef.current) {
+          map.setView(userCoords, Math.max(map.getZoom(), 16), { animate: false });
+          pendingRecenterRef.current = false;
+        }
+      }, 90);
     }
-  }, [activeTab, jelajahSubMode]);
+  }, [activeTab, jelajahSubMode, userCoords]);
 
   useEffect(() => {
     if (userMarkerRef.current) {
@@ -693,7 +1085,16 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
       radarCircleRef.current.setLatLng(userCoords);
       radarCircleRef.current.setRadius(selectedRadius);
     }
-  }, [userCoords, selectedRadius]);
+    if (gpsAccuracyCircleRef.current) {
+      gpsAccuracyCircleRef.current.setLatLng(userCoords);
+      const showAcc = Boolean(gpsAccuracy && gpsAccuracy > 15 && gpsAccuracy <= 5000);
+      gpsAccuracyCircleRef.current.setRadius(showAcc ? gpsAccuracy! : 0);
+      gpsAccuracyCircleRef.current.setStyle({
+        fillOpacity: showAcc ? 0.14 : 0,
+        opacity: showAcc ? 0.55 : 0,
+      });
+    }
+  }, [userCoords, selectedRadius, gpsAccuracy]);
 
   // Render Lapak Markers
   useEffect(() => {
@@ -712,39 +1113,90 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
       else if (lapak.category === 'jasa') badgeBg = '#0d9488';
       else if (lapak.category === 'transportasi') badgeBg = '#16a34a';
 
-      const isSelected = selectedLapak?.id === lapak.id;
+      const isSelected = activeSelectedLapak?.id === lapak.id;
       const isMine = lapak.isMyLapak;
+      const isMobile =
+        lapak.status === 'keliling' ||
+        lapak.lapakType === 'keliling' ||
+        (lapak.rigType && lapak.rigType !== 'menetap');
+      const motion = inferMotionState(lapak.speedKmh, lapak.motionState);
+      const rigMeta = getRigMeta(lapak.rigType);
+      const roundedSpeed = typeof lapak.speedKmh === 'number' ? Math.round(lapak.speedKmh) : null;
+
+      let ringColor = '#ffffff';
+      let speedChipBg = '';
+      let speedChipLabel = '';
+      let showPulseHalo = false;
+
+      if (isMobile && lapak.status !== 'tutup') {
+        if (motion === 'melaju') {
+          badgeBg = '#6d28d9';
+          ringColor = '#ddd6fe';
+          speedChipBg = '#5b21b6';
+          speedChipLabel = roundedSpeed && roundedSpeed >= 10 ? `${roundedSpeed} km/j` : 'Melaju';
+          showPulseHalo = true;
+        } else if (motion === 'pelan') {
+          badgeBg = '#d97706';
+          ringColor = '#fef3c7';
+          speedChipBg = '#b45309';
+          speedChipLabel = roundedSpeed && roundedSpeed >= 2 ? `${roundedSpeed} km/j` : 'Pelan';
+        } else {
+          badgeBg = '#059669';
+          ringColor = '#d1fae5';
+          speedChipBg = '#047857';
+          speedChipLabel = 'Ngetem';
+        }
+      }
+
+      const headingArrow =
+        isMobile && motion === 'melaju' && typeof lapak.headingDeg === 'number'
+          ? `<div style="position:absolute; top:-9px; left:50%; transform:translateX(-50%) rotate(${Math.round(lapak.headingDeg)}deg); color:#4c1d95; font-size:11px; font-weight:900; text-shadow:0 0 2px #fff;">▲</div>`
+          : '';
+
+      const rigMiniCorner =
+        isMobile && lapak.rigType && lapak.rigType !== 'menetap'
+          ? `<span style="position:absolute; top:-5px; right:-6px; width:18px; height:18px; border-radius:9999px; background:#ffffff; border:1px solid #cbd5e1; display:flex; align-items:center; justify-content:center; font-size:10px; box-shadow:0 1px 3px rgba(0,0,0,0.2);">${rigMeta.icon}</span>`
+          : '';
+
+      const pulseHaloHtml = showPulseHalo
+        ? `<div style="position:absolute; inset:-6px; border-radius:9999px; border:2px solid #8b5cf6; opacity:0.55; pointer-events:none;"></div>`
+        : '';
+
+      const bottomPillHtml = isMine
+        ? `<span style="position: absolute; bottom: -9px; left: 50%; transform: translateX(-50%); background: #facc15; color: #1e293b; font-size: 8px; font-weight: 900; padding: 1px 4px; border-radius: 4px; border: 1px solid #ffffff; white-space: nowrap;">${isMobile && speedChipLabel ? `Saya · ${speedChipLabel}` : 'Lapak Saya'}</span>`
+        : speedChipLabel
+        ? `<span style="position: absolute; bottom: -9px; left: 50%; transform: translateX(-50%); background: ${speedChipBg}; color: #ffffff; font-size: 8px; font-weight: 800; padding: 1px 5px; border-radius: 9999px; border: 1px solid #ffffff; white-space: nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.25);">${speedChipLabel}</span>`
+        : '';
 
       const markerHtml = `
         <div style="position: relative; cursor: pointer;" class="${isSelected ? 'scale-125' : ''}">
+          ${pulseHaloHtml}
+          ${headingArrow}
           <div style="
             background: ${isMine ? '#10b981' : badgeBg};
             color: white;
             border-radius: 9999px;
-            width: ${isMine ? '38px' : '32px'};
-            height: ${isMine ? '38px' : '32px'};
+            width: ${isMine ? '40px' : isMobile ? '36px' : '32px'};
+            height: ${isMine ? '40px' : isMobile ? '36px' : '32px'};
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: ${isMine ? '18px' : '15px'};
-            border: ${isMine ? '3px solid #facc15' : '2px solid #ffffff'};
+            font-size: ${isMine ? '18px' : '16px'};
+            border: ${isMine ? '3px solid #facc15' : `2.5px solid ${ringColor}`};
             box-shadow: 0 4px 8px rgba(0,0,0,0.35);
           ">
             ${lapak.avatarIcon}
           </div>
-          ${
-            isMine
-              ? `<span style="position: absolute; bottom: -7px; left: 50%; transform: translateX(-50%); background: #facc15; color: #1e293b; font-size: 8px; font-weight: 900; padding: 1px 4px; border-radius: 4px; border: 1px solid #ffffff; white-space: nowrap;">Lapak Saya</span>`
-              : ''
-          }
+          ${rigMiniCorner}
+          ${bottomPillHtml}
         </div>
       `;
 
       const customIcon = L.divIcon({
         className: 'lapak-custom-marker',
         html: markerHtml,
-        iconSize: [36, 36],
-        iconAnchor: [18, 18]
+        iconSize: [40, 40],
+        iconAnchor: [20, 20]
       });
 
       const marker = L.marker([lapak.lat, lapak.lng], { icon: customIcon });
@@ -755,7 +1207,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
           map.removeLayer(routePolylineRef.current);
         }
         const polyline = L.polyline([userCoords, [lapak.lat, lapak.lng]], {
-          color: '#059669',
+          color: isMobile ? '#6d28d9' : '#059669',
           weight: 4,
           opacity: 0.85,
           dashArray: '8, 8'
@@ -766,7 +1218,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
 
       markersLayer.addLayer(marker);
     });
-  }, [filteredLapaks, selectedLapak, userCoords]);
+  }, [filteredLapaks, activeSelectedLapak?.id, userCoords]);
 
   const handleRecenter = () => {
     if (mapInstanceRef.current) {
@@ -792,30 +1244,39 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
   const handleSaveMerchantIdentity = (updated: MerchantIdentity) => {
     const applyMerchant = () => {
       setMerchantIdentity(updated);
+      let syncedLapak: LapakItem | null = null;
       setLapaks(prev =>
-        prev.map(item =>
-          item.isMyLapak
-            ? {
-                ...item,
-                name: updated.lapakName,
-                ownerName: updated.ownerName,
-                ownerWargaId: updated.wargaId,
-                rtRw: updated.rtRw,
-                isVerifiedWarga: updated.isVerified,
-                lapakType: updated.lapakType,
-                category: updated.category,
-                categoryLabel: getCategoryLabel(updated.category),
-                address: updated.baseAddress,
-                phone: updated.phone,
-                operationalHours: updated.operationalHours,
-                description: updated.description,
-                avatarIcon: updated.avatarIcon,
-                vehicleType: updated.vehicleType,
-                isPublished: true
-              }
-            : item
-        )
+        prev.map(item => {
+          if (!item.isMyLapak) return item;
+          syncedLapak = {
+            ...item,
+            name: updated.lapakName,
+            ownerName: updated.ownerName,
+            ownerWargaId: updated.wargaId,
+            rtRw: updated.rtRw,
+            isVerifiedWarga: updated.isVerified,
+            lapakType: updated.lapakType,
+            rigType: updated.rigType || (updated.lapakType === 'keliling' ? 'gerobak' : 'menetap'),
+            routeSchedule: updated.routeSchedule || item.routeSchedule || '',
+            category: updated.category,
+            categoryLabel: getCategoryLabel(updated.category),
+            address: updated.baseAddress,
+            phone: updated.phone,
+            operationalHours: updated.operationalHours,
+            description: updated.description,
+            avatarIcon: updated.avatarIcon,
+            vehicleType: updated.vehicleType,
+            status: updated.lapakType === 'keliling' && item.status === 'tutup' ? 'keliling' : item.status,
+            isPublished: true
+          };
+          return syncedLapak;
+        })
       );
+      if (syncedLapak) {
+        RealtimeRelayService.publish(RealtimeRelayService.getRtChannel(), 'areaqu:lapak_sync', {
+          lapak: syncedLapak,
+        });
+      }
       showNotification('Identitas Pedagang & profil lapak berhasil diterbitkan!');
     };
 
@@ -833,18 +1294,214 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
       return;
     }
     runWithLapakFeeGate('Aktifkan Lokasi Radar Lapak AreaQu', () => {
+      const updatedLapak = {
+        ...myLapak,
+        lat: userCoords[0],
+        lng: userCoords[1],
+        isPublished: true,
+      };
       setLapaks(prev =>
         prev.map(item =>
-          item.id === myLapak.id
-            ? { ...item, lat: userCoords[0], lng: userCoords[1], isPublished: true }
-            : item
+          item.id === myLapak.id ? updatedLapak : item
         )
       );
+      RealtimeRelayService.publish(RealtimeRelayService.getRtChannel(), 'areaqu:lapak_sync', {
+        lapak: updatedLapak,
+      });
       showNotification('Lokasi Lapak Digital disinkronkan dengan titik GPS Anda!');
-      if (mapInstanceRef.current) {
+      if (mapInstanceRef.current && isMapVisibleRef.current) {
         mapInstanceRef.current.panTo(userCoords);
+      } else {
+        pendingRecenterRef.current = true;
       }
     });
+  };
+
+  const stopKelilingBroadcast = (silent = false) => {
+    if (kelilingWatchIdRef.current !== null && navigator.geolocation) {
+      navigator.geolocation.clearWatch(kelilingWatchIdRef.current);
+      kelilingWatchIdRef.current = null;
+    }
+    setIsKelilingLive(false);
+    if (!silent) {
+      showNotification('Siaran GPS Keliling dihentikan');
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (kelilingWatchIdRef.current !== null && navigator.geolocation) {
+        navigator.geolocation.clearWatch(kelilingWatchIdRef.current);
+      }
+    };
+  }, []);
+
+  const handleToggleKelilingLive = () => {
+    if (!merchantIdentity.isVerified) {
+      showNotification('Lengkapi Identitas Pedagang sebelum mengaktifkan Live Keliling');
+      setIdentitySubTab('pedagang');
+      setActiveTab('identitas');
+      return;
+    }
+    if (isKelilingLive) {
+      stopKelilingBroadcast(false);
+      return;
+    }
+    if (!navigator.geolocation) {
+      showNotification('Browser/perangkat tidak mendukung pelacakan GPS live');
+      return;
+    }
+
+    runWithLapakFeeGate('Aktifkan Live Radar Pedagang Keliling', () => {
+      setIsKelilingLive(true);
+      manualMotionOverrideRef.current = null;
+      lastBroadcastSentRef.current = null;
+      lastSpeedSampleRef.current = null;
+      showNotification('Live GPS Keliling aktif! Posisi & kecepatan Anda disiarkan real-time.');
+
+      kelilingWatchIdRef.current = navigator.geolocation.watchPosition(
+        pos => {
+          const { latitude, longitude, speed, heading } = pos.coords;
+          const now = Date.now();
+          let computedSpeedKmh: number | undefined =
+            typeof speed === 'number' && !isNaN(speed) && speed >= 0
+              ? Number((speed * 3.6).toFixed(1))
+              : undefined;
+
+          if (computedSpeedKmh === undefined && lastSpeedSampleRef.current) {
+            const dtSec = (now - lastSpeedSampleRef.current.time) / 1000;
+            if (dtSec >= 1.5) {
+              const distM = calculateDistanceMeters(
+                lastSpeedSampleRef.current.lat,
+                lastSpeedSampleRef.current.lng,
+                latitude,
+                longitude
+              );
+              computedSpeedKmh = Number(((distM / dtSec) * 3.6).toFixed(1));
+            }
+          }
+          lastSpeedSampleRef.current = { lat: latitude, lng: longitude, time: now };
+
+          const nextMotion = manualMotionOverrideRef.current
+            ? manualMotionOverrideRef.current
+            : inferMotionState(computedSpeedKmh, myLapak.motionState);
+
+          const updatedLapak: LapakItem = {
+            ...myLapak,
+            lat: latitude,
+            lng: longitude,
+            speedKmh: computedSpeedKmh ?? myLapak.speedKmh ?? 0,
+            headingDeg: typeof heading === 'number' && !isNaN(heading) ? heading : myLapak.headingDeg,
+            motionState: nextMotion,
+            lastLocationAt: now,
+            status: 'keliling',
+            isPublished: true,
+          };
+
+          setLapaks(prev => prev.map(item => (item.id === myLapak.id ? updatedLapak : item)));
+          setUserCoords([latitude, longitude]);
+
+          const lastSent = lastBroadcastSentRef.current;
+          const movedSinceSend = lastSent
+            ? calculateDistanceMeters(lastSent.lat, lastSent.lng, latitude, longitude)
+            : 999;
+          const elapsedSinceSend = lastSent ? now - lastSent.time : 99999;
+
+          if (elapsedSinceSend >= 4000 || movedSinceSend >= 12) {
+            lastBroadcastSentRef.current = { lat: latitude, lng: longitude, time: now };
+            RealtimeRelayService.publish(RealtimeRelayService.getRtChannel(), 'areaqu:lapak_sync', {
+              lapak: updatedLapak,
+            });
+          }
+        },
+        err => {
+          if (err.code === err.PERMISSION_DENIED) {
+            showNotification('Izin GPS ditolak. Aktifkan lokasi browser untuk mode keliling live.');
+            stopKelilingBroadcast(true);
+          }
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      );
+    });
+  };
+
+  const handleSwitchMotionState = (mode: MotionState) => {
+    if (!merchantIdentity.isVerified) {
+      showNotification('Lengkapi Identitas Pedagang dahulu');
+      setIdentitySubTab('pedagang');
+      setActiveTab('identitas');
+      return;
+    }
+    manualMotionOverrideRef.current = mode;
+    const presetSpeed = mode === 'ngetem' ? 0 : mode === 'pelan' ? 4 : 18;
+    const updatedLapak: LapakItem = {
+      ...myLapak,
+      status: 'keliling',
+      motionState: mode,
+      speedKmh: presetSpeed,
+      lastLocationAt: Date.now(),
+      isPublished: true,
+    };
+    setLapaks(prev => prev.map(item => (item.id === myLapak.id ? updatedLapak : item)));
+    RealtimeRelayService.publish(RealtimeRelayService.getRtChannel(), 'areaqu:lapak_sync', {
+      lapak: updatedLapak,
+    });
+    const label = mode === 'ngetem' ? 'Ngetem / Mangkal' : mode === 'pelan' ? 'Jalan Pelan' : 'Melaju Motor';
+    showNotification(`Ikon peta disetel ke: ${label}`);
+  };
+
+  const handleSendKelilingAnnounce = () => {
+    if (!merchantIdentity.isVerified) {
+      showNotification('Lengkapi Identitas Pedagang sebelum mengumumkan');
+      return;
+    }
+    runWithLapakFeeGate('Kirim Pengumuman Keliling ke Warga', () => {
+      const rigMeta = getRigMeta(myLapak.rigType);
+      const noteText =
+        broadcastNoteInput.trim() ||
+        myLapak.routeSchedule ||
+        `${myLapak.name} sedang keliling siap mampir di sekitar Anda!`;
+      const updatedLapak: LapakItem = {
+        ...myLapak,
+        status: 'keliling',
+        liveBroadcastNote: noteText,
+        routeSchedule: routeScheduleDraft.trim(),
+        isPublished: true,
+        lastLocationAt: Date.now(),
+      };
+      setLapaks(prev => prev.map(item => (item.id === myLapak.id ? updatedLapak : item)));
+      RealtimeRelayService.publish(RealtimeRelayService.getRtChannel(), 'areaqu:lapak_sync', {
+        lapak: updatedLapak,
+      });
+      RealtimeRelayService.publish(RealtimeRelayService.getRtChannel(), 'areaqu:keliling_announce', {
+        lapakId: updatedLapak.id,
+        lapakName: updatedLapak.name,
+        lapakIcon: updatedLapak.avatarIcon,
+        ownerName: updatedLapak.ownerName,
+        rigLabel: rigMeta.label,
+        note: noteText,
+        lat: updatedLapak.lat,
+        lng: updatedLapak.lng,
+        sentAt: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+      });
+      setBroadcastNoteInput('');
+      showNotification('Pengumuman keliling disiarkan ke warga di sekitar Anda!');
+    });
+  };
+
+  const handleSaveRouteSchedule = () => {
+    const updatedLapak: LapakItem = {
+      ...myLapak,
+      routeSchedule: routeScheduleDraft.trim(),
+    };
+    setLapaks(prev => prev.map(item => (item.id === myLapak.id ? updatedLapak : item)));
+    setMerchantIdentity(prev => ({ ...prev, routeSchedule: routeScheduleDraft.trim() }));
+    if (updatedLapak.isPublished) {
+      RealtimeRelayService.publish(RealtimeRelayService.getRtChannel(), 'areaqu:lapak_sync', {
+        lapak: updatedLapak,
+      });
+    }
+    showNotification('Jadwal rute & jam keliling disimpan!');
   };
 
   const handleToggleLapakStatus = (newStatus: 'buka' | 'keliling' | 'tutup') => {
@@ -854,9 +1511,21 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
       setActiveTab('identitas');
       return;
     }
-    setLapaks(prev =>
-      prev.map(item => (item.id === myLapak.id ? { ...item, status: newStatus } : item))
-    );
+    if (newStatus !== 'keliling' && isKelilingLive) {
+      stopKelilingBroadcast(true);
+    }
+    const updatedLapak: LapakItem = {
+      ...myLapak,
+      status: newStatus,
+      motionState: newStatus === 'buka' ? 'ngetem' : myLapak.motionState,
+      speedKmh: newStatus === 'buka' ? 0 : myLapak.speedKmh,
+    };
+    setLapaks(prev => prev.map(item => (item.id === myLapak.id ? updatedLapak : item)));
+    if (updatedLapak.isPublished) {
+      RealtimeRelayService.publish(RealtimeRelayService.getRtChannel(), 'areaqu:lapak_sync', {
+        lapak: updatedLapak,
+      });
+    }
     showNotification(`Status Lapak diubah menjadi: ${newStatus.toUpperCase()}`);
   };
 
@@ -869,9 +1538,13 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
     }
     const nextPublished = !(myLapak.isPublished ?? true);
     const applyToggle = () => {
+      const updatedLapak = { ...myLapak, isPublished: nextPublished };
       setLapaks(prev =>
-        prev.map(item => (item.id === myLapak.id ? { ...item, isPublished: nextPublished } : item))
+        prev.map(item => (item.id === myLapak.id ? updatedLapak : item))
       );
+      RealtimeRelayService.publish(RealtimeRelayService.getRtChannel(), 'areaqu:lapak_sync', {
+        lapak: updatedLapak,
+      });
       showNotification(
         nextPublished
           ? 'Lapak aktif & lokasi terlihat oleh WargaQu'
@@ -1085,6 +1758,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
       return;
     }
 
+    const isPreorder = orderKind === 'preorder';
     const newOrder: AreaOrderItem = {
       id: 'ORD-' + Date.now().toString().slice(-6),
       lapakId: selectedLapak.id,
@@ -1101,6 +1775,8 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
       total: cartSubtotal,
       note: '',
       status: 'menunggu',
+      orderKind,
+      scheduledSlot: isPreorder ? scheduledSlot.trim() || 'Putaran Berikutnya' : undefined,
       channel,
       createdAt: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
       coords: verifiedConsumer.shareExactLocationOnOrder ? userCoords : undefined
@@ -1130,13 +1806,21 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
     const gpsNote = verifiedConsumer.shareExactLocationOnOrder
       ? `\nTitik GPS Antar: ${userCoords[0].toFixed(5)}, ${userCoords[1].toFixed(5)}`
       : '';
-    const orderText = `Pesanan AreaQu (${newOrder.id})\nPembeli: ${verifiedConsumer.fullName} (${verifiedConsumer.wargaId} - ${verifiedConsumer.rtRw})\nWA: ${verifiedConsumer.phone}\nAlamat Antar: ${verifiedConsumer.addressDetail}${verifiedConsumer.landmark ? ` (${verifiedConsumer.landmark})` : ''}${gpsNote}\n\nDaftar Pesanan:\n${orderedLines.join('\n')}\nTotal: Rp ${cartSubtotal.toLocaleString('id-ID')}`;
+    const orderTypeHeader = isPreorder
+      ? `[PRE-ORDER JAM LEWAT: ${newOrder.scheduledSlot}]\n`
+      : '';
+    const orderText = `${orderTypeHeader}Pesanan AreaQu (${newOrder.id})\nPembeli: ${verifiedConsumer.fullName} (${verifiedConsumer.wargaId} - ${verifiedConsumer.rtRw})\nWA: ${verifiedConsumer.phone}\nAlamat Antar: ${verifiedConsumer.addressDetail}${verifiedConsumer.landmark ? ` (${verifiedConsumer.landmark})` : ''}${gpsNote}\n\nDaftar Pesanan:\n${orderedLines.join('\n')}\nTotal: Rp ${cartSubtotal.toLocaleString('id-ID')}`;
 
     setShowKatalogModal(false);
     setCartItems({});
+    setOrderKind('langsung');
 
     if (channel === 'areaqu') {
-      showNotification('Pesanan tercatat di Aktivitas & dikirim ke pedagang!');
+      showNotification(
+        isPreorder
+          ? 'Pre-Order jadwal lewat tercatat & dikirim ke pedagang!'
+          : 'Pesanan tercatat di Aktivitas & dikirim ke pedagang!'
+      );
       handleOpenChatWithLapak(selectedLapak, orderText);
     } else {
       showNotification('Pesanan tercatat di Aktivitas! Membuka WhatsApp pedagang...');
@@ -1195,7 +1879,54 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
 
   const handleUpdateOrderStatus = (orderId: string, status: OrderStatus) => {
     setOrders(prev => prev.map(o => (o.id === orderId ? { ...o, status } : o)));
+    RealtimeRelayService.publish(RealtimeRelayService.getRtChannel(), 'order:areaqu_status', {
+      orderId,
+      status,
+    });
     showNotification(`Status pesanan ${orderId} diperbarui: ${status.toUpperCase()}`);
+  };
+
+  const handleUpdatePingStatus = (pingId: string, status: KelilingPingStatus) => {
+    setPings(prev => prev.map(p => (p.id === pingId ? { ...p, status } : p)));
+    RealtimeRelayService.publish(RealtimeRelayService.getRtChannel(), 'areaqu:keliling_ping_status', {
+      pingId,
+      status,
+    });
+    const label = status === 'otw' ? 'OTW MAMPIR' : status === 'sampai' ? 'SUDAH SAMPAI' : 'SELESAI';
+    showNotification(`Status panggilan diperbarui: ${label}`);
+  };
+
+  const handleSendKelilingPing = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeSelectedLapak) return;
+
+    const senderName = consumerIdentity.fullName?.trim() || 'Warga Sekitar';
+    const senderAddr = consumerIdentity.addressDetail?.trim() || gpsSourceLabel || 'Lokasi GPS Sekitar';
+
+    const newPing: KelilingPingItem = {
+      id: 'PNG-' + Date.now().toString().slice(-6),
+      lapakId: activeSelectedLapak.id,
+      lapakName: activeSelectedLapak.name,
+      lapakIcon: activeSelectedLapak.avatarIcon,
+      lapakOwner: activeSelectedLapak.ownerName,
+      senderName,
+      senderAddress: senderAddr,
+      senderLandmark: consumerIdentity.landmark || '',
+      senderPhone: consumerIdentity.phone || '',
+      note: pingNoteInput.trim() || 'Mohon mampir sebentar ke depan rumah / titik saya.',
+      status: 'menunggu',
+      createdAt: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+      timestamp: Date.now(),
+      coords: pingShareCoords ? userCoords : undefined,
+    };
+
+    setPings(prev => [newPing, ...prev]);
+    RealtimeRelayService.publish(RealtimeRelayService.getRtChannel(), 'areaqu:keliling_ping', {
+      ping: newPing,
+    });
+    setPingNoteInput('');
+    setShowPingModal(false);
+    showNotification(`Panggilan mampir dikirim ke ${activeSelectedLapak.name}!`);
   };
 
   return (
@@ -1304,7 +2035,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
             </button>
           </div>
 
-          {/* Category Interactive Filter Tabs */}
+          {/* Category & Mobile-Vendor Speed Filter Tabs */}
           <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
             {[{ id: 'all', label: 'Semua', icon: '📍' }, ...CATEGORY_OPTIONS].map(cat => (
               <button
@@ -1321,7 +2052,74 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
               </button>
             ))}
           </div>
+
+          <div className="flex items-center justify-between gap-1.5 pt-0.5">
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+              {[
+                { id: 'semua' as const, label: 'Semua Status' },
+                { id: 'keliling_live' as const, label: '🛵 Keliling Live' },
+                { id: 'ngetem' as const, label: '🟢 Sedang Ngetem' },
+              ].map(m => (
+                <button
+                  key={m.id}
+                  onClick={() => setMotionFilter(m.id)}
+                  className={`px-2 py-1 rounded-md text-[10px] font-bold whitespace-nowrap border transition shrink-0 ${
+                    motionFilter === m.id
+                      ? 'bg-violet-700 text-white border-violet-700'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <div className="hidden sm:flex items-center gap-2 text-[10px] text-slate-500 shrink-0">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-600 inline-block" /> Ngetem</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-600 inline-block" /> Pelan</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-violet-700 inline-block" /> Melaju</span>
+            </div>
+          </div>
         </div>
+
+        {/* Live Pedagang Keliling Announcement Banner */}
+        {kelilingBanner && (
+          <div className="bg-violet-900 text-white px-3 py-2 flex items-center justify-between gap-2 z-20 shrink-0 border-b border-violet-700">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-lg shrink-0">{kelilingBanner.lapakIcon}</span>
+              <div className="min-w-0">
+                <div className="text-[11px] font-extrabold truncate flex items-center gap-1">
+                  <Megaphone className="w-3 h-3 text-amber-300 shrink-0" />
+                  <span>{kelilingBanner.lapakName}</span>
+                  <span className="text-violet-200 font-normal">
+                    · {kelilingBanner.distanceMeter > 0 ? `${kelilingBanner.distanceMeter}m` : kelilingBanner.rigLabel}
+                  </span>
+                </div>
+                <p className="text-[10px] text-violet-100 truncate">{kelilingBanner.note}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => {
+                  const found = computedLapaks.find(l => l.id === kelilingBanner.lapakId);
+                  if (found) {
+                    setSelectedLapak(found);
+                    setShowPingModal(true);
+                  }
+                }}
+                className="px-2.5 py-1 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg text-[10px] font-black"
+              >
+                Panggil
+              </button>
+              <button
+                onClick={() => setKelilingBanner(null)}
+                className="p-1 text-violet-300 hover:text-white"
+                title="Tutup pengumuman"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Pin Drop Instruction Banner for Merchant */}
         {isSettingLapakPinOnMap && (
@@ -1329,6 +2127,19 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
             <span>Ketuk titik di peta untuk menetapkan lokasi lapak Anda</span>
             <button
               onClick={() => setIsSettingLapakPinOnMap(false)}
+              className="px-2 py-1 bg-slate-900 text-white rounded-lg text-[11px]"
+            >
+              Batal
+            </button>
+          </div>
+        )}
+
+        {/* Pin Drop Instruction Banner for User Location */}
+        {isSettingUserPinOnMap && (
+          <div className="bg-sky-600 text-white px-3 py-2 text-xs font-bold flex items-center justify-between gap-2 z-20 shrink-0">
+            <span>Ketuk titik lokasi Anda pada peta (mis. tepat di depan rumah)</span>
+            <button
+              onClick={() => setIsSettingUserPinOnMap(false)}
               className="px-2 py-1 bg-slate-900 text-white rounded-lg text-[11px]"
             >
               Batal
@@ -1373,132 +2184,181 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
           </div>
 
           {/* Selected Lapak Bottom Sheet */}
-          {selectedLapak ? (
-            <div className="absolute bottom-0 left-0 right-0 z-30 bg-white rounded-t-3xl shadow-2xl border-t border-slate-200 p-4 space-y-3 animate-in slide-in-from-bottom duration-200">
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
-                  <ShieldCheck className="w-4 h-4 shrink-0" />
-                  <span>
-                    {selectedLapak.isVerifiedWarga !== false ? 'Pedagang Terverifikasi' : 'Lapak Warga'}
-                    {selectedLapak.rtRw ? ` · ${selectedLapak.rtRw}` : ''}
-                  </span>
+          {activeSelectedLapak ? (() => {
+            const rigMeta = getRigMeta(activeSelectedLapak.rigType);
+            const isMobileVendor =
+              activeSelectedLapak.status === 'keliling' ||
+              activeSelectedLapak.lapakType === 'keliling' ||
+              (activeSelectedLapak.rigType && activeSelectedLapak.rigType !== 'menetap');
+            const motion = inferMotionState(activeSelectedLapak.speedKmh, activeSelectedLapak.motionState);
+            const speedText =
+              typeof activeSelectedLapak.speedKmh === 'number' && activeSelectedLapak.speedKmh > 0
+                ? `${Math.round(activeSelectedLapak.speedKmh)} km/j`
+                : null;
+            return (
+              <div className="absolute bottom-0 left-0 right-0 z-30 bg-white rounded-t-3xl shadow-2xl border-t border-slate-200 p-4 space-y-3 animate-in slide-in-from-bottom duration-200">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 min-w-0">
+                    <ShieldCheck className="w-4 h-4 shrink-0" />
+                    <span className="truncate">
+                      {activeSelectedLapak.isVerifiedWarga !== false ? 'Pedagang Terverifikasi' : 'Lapak Warga'}
+                      {activeSelectedLapak.rtRw ? ` · ${activeSelectedLapak.rtRw}` : ''}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => handleToggleFavorite(activeSelectedLapak.id)}
+                      className="p-1.5 rounded-full hover:bg-slate-100 text-slate-500"
+                      title="Simpan ke Favorit"
+                    >
+                      <Heart
+                        className={`w-4 h-4 ${
+                          favoriteIds.includes(activeSelectedLapak.id) ? 'fill-rose-500 text-rose-500' : ''
+                        }`}
+                      />
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSelectedLapak(null);
+                        if (routePolylineRef.current && mapInstanceRef.current) {
+                          mapInstanceRef.current.removeLayer(routePolylineRef.current);
+                        }
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-slate-600 rounded-full"
+                      title="Tutup"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => handleToggleFavorite(selectedLapak.id)}
-                    className="p-1.5 rounded-full hover:bg-slate-100 text-slate-500"
-                    title="Simpan ke Favorit"
-                  >
-                    <Heart
-                      className={`w-4 h-4 ${
-                        favoriteIds.includes(selectedLapak.id) ? 'fill-rose-500 text-rose-500' : ''
-                      }`}
-                    />
-                  </button>
+
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-2xl shrink-0 relative">
+                      {activeSelectedLapak.avatarIcon}
+                      {isMobileVendor && (
+                        <span className="absolute -bottom-1 -right-1 text-xs bg-white rounded-full w-5 h-5 flex items-center justify-center border border-slate-200 shadow-xs">
+                          {rigMeta.icon}
+                        </span>
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-extrabold text-slate-900 leading-snug truncate">
+                        {activeSelectedLapak.name}
+                      </h3>
+                      <div className="text-[11px] text-slate-600 mt-0.5 truncate">
+                        <strong className="text-slate-800">{activeSelectedLapak.ownerName}</strong> ·{' '}
+                        {isMobileVendor ? rigMeta.label : activeSelectedLapak.categoryLabel}
+                      </div>
+                      <div className="flex items-center flex-wrap gap-1.5 text-[11px] text-slate-500 mt-0.5">
+                        <span
+                          className={`font-bold px-1.5 py-0.5 rounded-md border text-[10px] ${
+                            activeSelectedLapak.status === 'tutup'
+                              ? 'bg-slate-100 text-slate-600 border-slate-200'
+                              : isMobileVendor && motion === 'melaju'
+                              ? 'bg-violet-50 text-violet-800 border-violet-200'
+                              : isMobileVendor && motion === 'pelan'
+                              ? 'bg-amber-50 text-amber-800 border-amber-200'
+                              : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          }`}
+                        >
+                          {activeSelectedLapak.status === 'tutup'
+                            ? 'Tutup'
+                            : isMobileVendor
+                            ? motion === 'melaju'
+                              ? `Melaju${speedText ? ` ${speedText}` : ''}`
+                              : motion === 'pelan'
+                              ? `Jalan Pelan${speedText ? ` ${speedText}` : ''}`
+                              : 'Sedang Ngetem'
+                            : 'Buka'}
+                        </span>
+                        <span>· {activeSelectedLapak.operationalHours}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <div className="flex items-center justify-end text-amber-500 font-bold text-xs">
+                      <Star className="w-3.5 h-3.5 fill-amber-400 mr-0.5" />
+                      <span className="tabular-nums">{activeSelectedLapak.rating}</span>
+                    </div>
+                    <span className="text-[11px] font-bold text-emerald-700 block font-mono tabular-nums">
+                      {activeSelectedLapak.distanceMeter !== undefined
+                        ? activeSelectedLapak.distanceMeter >= 1000
+                          ? `${(activeSelectedLapak.distanceMeter / 1000).toFixed(1)} km`
+                          : `${activeSelectedLapak.distanceMeter} m`
+                        : 'Dekat'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 rounded-xl p-2.5 text-xs space-y-1 border border-slate-200/80">
+                  <div className="flex items-center text-slate-600 text-[11px]">
+                    <MapPin className="w-3.5 h-3.5 text-emerald-600 mr-1.5 shrink-0" />
+                    <span className="truncate font-medium">{activeSelectedLapak.address}</span>
+                  </div>
+                  {activeSelectedLapak.routeSchedule && (
+                    <div className="flex items-center text-violet-800 text-[11px] font-semibold">
+                      <CalendarClock className="w-3.5 h-3.5 text-violet-600 mr-1.5 shrink-0" />
+                      <span className="truncate">Rute: {activeSelectedLapak.routeSchedule}</span>
+                    </div>
+                  )}
+                  <p className="text-slate-600 text-[11px] leading-relaxed line-clamp-2">
+                    {activeSelectedLapak.liveBroadcastNote || activeSelectedLapak.description}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-4 gap-1.5">
                   <button
                     onClick={() => {
-                      setSelectedLapak(null);
-                      if (routePolylineRef.current && mapInstanceRef.current) {
-                        mapInstanceRef.current.removeLayer(routePolylineRef.current);
-                      }
+                      setCartItems({});
+                      setOrderKind('langsung');
+                      setShowKatalogModal(true);
                     }}
-                    className="p-1.5 text-slate-400 hover:text-slate-600 rounded-full"
-                    title="Tutup"
+                    className="min-h-[44px] px-2 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-1"
                   >
-                    <X className="w-4 h-4" />
+                    <ShoppingBag className="w-4 h-4 shrink-0" />
+                    <span className="text-[11px] font-bold truncate">
+                      Menu ({activeSelectedLapak.catalog.length})
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setPingNoteInput('');
+                      setShowPingModal(true);
+                    }}
+                    className="min-h-[44px] px-2 py-2 rounded-xl bg-violet-700 hover:bg-violet-800 text-white shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-1"
+                    title="Panggil Pedagang agar Mampir"
+                  >
+                    <BellRing className="w-4 h-4 shrink-0" />
+                    <span className="text-[11px] font-bold truncate">Panggil</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleOpenChatWithLapak(activeSelectedLapak)}
+                    className="min-h-[44px] px-2 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-800 active:scale-[0.98] transition flex items-center justify-center gap-1"
+                  >
+                    <MessageCircle className="w-4 h-4 shrink-0" />
+                    <span className="text-[11px] font-bold">Chat</span>
+                  </button>
+
+                  <button
+                    onClick={() =>
+                      handleOpenWhatsApp(
+                        activeSelectedLapak.phone,
+                        `Halo ${activeSelectedLapak.name}, saya ${consumerIdentity.fullName || 'Warga AreaQu'} ingin bertanya/panggil mampir.`
+                      )
+                    }
+                    className="min-h-[44px] px-2 py-2 rounded-xl bg-green-50 hover:bg-green-100 border border-green-200 text-green-800 active:scale-[0.98] transition flex items-center justify-center gap-1"
+                  >
+                    <Phone className="w-4 h-4 shrink-0" />
+                    <span className="text-[11px] font-bold">WA</span>
                   </button>
                 </div>
               </div>
-
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-2xl shrink-0">
-                    {selectedLapak.avatarIcon}
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="text-sm font-extrabold text-slate-900 leading-snug truncate">
-                      {selectedLapak.name}
-                    </h3>
-                    <div className="text-[11px] text-slate-600 mt-0.5 truncate">
-                      Pemilik: <strong className="text-slate-800">{selectedLapak.ownerName}</strong> ·{' '}
-                      {selectedLapak.categoryLabel}
-                    </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
-                      Status:{' '}
-                      <span className="font-semibold text-emerald-700">
-                        {selectedLapak.status === 'buka'
-                          ? 'Buka'
-                          : selectedLapak.status === 'keliling'
-                          ? 'Keliling Siaga'
-                          : 'Tutup'}
-                      </span>{' '}
-                      · Jam {selectedLapak.operationalHours}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="text-right shrink-0">
-                  <div className="flex items-center justify-end text-amber-500 font-bold text-xs">
-                    <Star className="w-3.5 h-3.5 fill-amber-400 mr-0.5" />
-                    <span className="tabular-nums">{selectedLapak.rating}</span>
-                  </div>
-                  <span className="text-[11px] font-bold text-emerald-700 block font-mono tabular-nums">
-                    {selectedLapak.distanceMeter !== undefined
-                      ? selectedLapak.distanceMeter >= 1000
-                        ? `${(selectedLapak.distanceMeter / 1000).toFixed(1)} km`
-                        : `${selectedLapak.distanceMeter} m`
-                      : 'Dekat'}
-                  </span>
-                </div>
-              </div>
-
-              <div className="bg-slate-50 rounded-xl p-2.5 text-xs space-y-1 border border-slate-200/80">
-                <div className="flex items-center text-slate-600 text-[11px]">
-                  <MapPin className="w-3.5 h-3.5 text-emerald-600 mr-1.5 shrink-0" />
-                  <span className="truncate font-medium">{selectedLapak.address}</span>
-                </div>
-                <p className="text-slate-600 text-[11px] leading-relaxed line-clamp-2">
-                  {selectedLapak.description}
-                </p>
-              </div>
-
-              <div className="grid grid-cols-4 gap-2">
-                <button
-                  onClick={() => {
-                    setCartItems({});
-                    setShowKatalogModal(true);
-                  }}
-                  className="col-span-2 min-h-[44px] px-3 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm active:scale-[0.98] transition flex items-center justify-center gap-1.5"
-                >
-                  <ShoppingBag className="w-4 h-4 shrink-0" />
-                  <span className="text-xs font-bold">
-                    Katalog ({selectedLapak.catalog.length})
-                  </span>
-                </button>
-
-                <button
-                  onClick={() => handleOpenChatWithLapak(selectedLapak)}
-                  className="min-h-[44px] px-2 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-800 active:scale-[0.98] transition flex items-center justify-center gap-1"
-                >
-                  <MessageCircle className="w-4 h-4 shrink-0" />
-                  <span className="text-[11px] font-bold">Chat</span>
-                </button>
-
-                <button
-                  onClick={() =>
-                    handleOpenWhatsApp(
-                      selectedLapak.phone,
-                      `Halo ${selectedLapak.name}, saya ${consumerIdentity.fullName || 'Warga AreaQu'} ingin bertanya produk Anda.`
-                    )
-                  }
-                  className="min-h-[44px] px-2 py-2 rounded-xl bg-green-50 hover:bg-green-100 border border-green-200 text-green-800 active:scale-[0.98] transition flex items-center justify-center gap-1"
-                >
-                  <Phone className="w-4 h-4 shrink-0" />
-                  <span className="text-[11px] font-bold">WA</span>
-                </button>
-              </div>
-            </div>
-          ) : (
+            );
+          })() : (
             <div className="absolute bottom-3 left-3 right-3 z-20 bg-white/95 backdrop-blur-md rounded-2xl shadow-lg border border-slate-200 p-3 flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <h4 className="text-xs font-bold text-slate-900">
@@ -1507,7 +2367,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
                 <p className="text-[11px] text-slate-500 truncate">
                   {consumerIdentity.isVerified
                     ? `Identitas Pembeli: ${consumerIdentity.fullName} (${consumerIdentity.addressDetail})`
-                    : 'Ketuk pin peta atau buka Daftar untuk melihat katalog'}
+                    : 'Ketuk pin peta atau buka Daftar untuk Panggil / Pre-Order'}
                 </p>
               </div>
 
@@ -1541,77 +2401,111 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
                 <Store className="w-8 h-8 text-slate-300 mx-auto" />
                 <p className="text-sm font-bold text-slate-800">Tidak Ada Lapak di Radius Ini</p>
                 <p className="text-xs text-slate-500">
-                  Coba perluas radius radar atau ubah kata kunci pencarian Anda.
+                  Coba perluas radius radar atau ubah filter status/pencarian Anda.
                 </p>
               </div>
             ) : (
-              filteredLapaks.map(lapak => (
-                <div
-                  key={lapak.id}
-                  className="bg-white rounded-2xl border border-slate-200 p-3.5 space-y-2.5"
-                >
-                  <div className="flex items-start justify-between gap-2.5">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-11 h-11 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-2xl shrink-0">
-                        {lapak.avatarIcon}
-                      </div>
-                      <div className="min-w-0">
-                        <h3 className="text-xs font-bold text-slate-900 truncate">{lapak.name}</h3>
-                        <p className="text-[11px] text-slate-600 truncate">
-                          {lapak.ownerName}{lapak.rtRw ? ` · ${lapak.rtRw}` : ''}
-                        </p>
-                        <div className="text-[11px] text-slate-500 mt-0.5">
-                          <span className="font-semibold text-emerald-700">
-                            {lapak.status === 'buka'
-                              ? 'Buka'
-                              : lapak.status === 'keliling'
-                              ? 'Keliling'
-                              : 'Tutup'}
-                          </span>
-                          {' · '}
-                          <span>{lapak.catalog.length} produk</span>
+              filteredLapaks.map(lapak => {
+                const rigMeta = getRigMeta(lapak.rigType);
+                const isMobileVendor =
+                  lapak.status === 'keliling' ||
+                  lapak.lapakType === 'keliling' ||
+                  (lapak.rigType && lapak.rigType !== 'menetap');
+                const motion = inferMotionState(lapak.speedKmh, lapak.motionState);
+                return (
+                  <div
+                    key={lapak.id}
+                    className="bg-white rounded-2xl border border-slate-200 p-3.5 space-y-2.5"
+                  >
+                    <div className="flex items-start justify-between gap-2.5">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-11 h-11 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-2xl shrink-0 relative">
+                          {lapak.avatarIcon}
+                          {isMobileVendor && (
+                            <span className="absolute -bottom-1 -right-1 text-[10px] bg-white rounded-full w-4 h-4 flex items-center justify-center border border-slate-200">
+                              {rigMeta.icon}
+                            </span>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="text-xs font-bold text-slate-900 truncate">{lapak.name}</h3>
+                          <p className="text-[11px] text-slate-600 truncate">
+                            {lapak.ownerName} · {isMobileVendor ? rigMeta.label : lapak.categoryLabel}
+                          </p>
+                          <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                            <span className={`font-semibold ${isMobileVendor && motion === 'melaju' ? 'text-violet-700' : 'text-emerald-700'}`}>
+                              {lapak.status === 'tutup'
+                                ? 'Tutup'
+                                : isMobileVendor
+                                ? motion === 'melaju'
+                                  ? `Melaju${lapak.speedKmh ? ` ±${Math.round(lapak.speedKmh)} km/j` : ''}`
+                                  : motion === 'pelan'
+                                  ? `Pelan${lapak.speedKmh ? ` ±${Math.round(lapak.speedKmh)} km/j` : ''}`
+                                  : 'Ngetem'
+                                : 'Buka'}
+                            </span>
+                            <span>·</span>
+                            <span>{lapak.catalog.length} produk</span>
+                          </div>
+                          {lapak.routeSchedule && (
+                            <p className="text-[10px] text-violet-700 font-medium truncate mt-0.5">
+                              Rute: {lapak.routeSchedule}
+                            </p>
+                          )}
                         </div>
                       </div>
+
+                      <div className="text-right shrink-0">
+                        <span className="text-xs font-extrabold text-emerald-700 font-mono tabular-nums block">
+                          {lapak.distanceMeter !== undefined
+                            ? lapak.distanceMeter >= 1000
+                              ? `${(lapak.distanceMeter / 1000).toFixed(1)} km`
+                              : `${lapak.distanceMeter} m`
+                            : 'Dekat'}
+                        </span>
+                        <span className="text-[10px] text-slate-500">±{lapak.etaMinutes} mnt</span>
+                      </div>
                     </div>
 
-                    <div className="text-right shrink-0">
-                      <span className="text-xs font-extrabold text-emerald-700 font-mono tabular-nums block">
-                        {lapak.distanceMeter !== undefined
-                          ? lapak.distanceMeter >= 1000
-                            ? `${(lapak.distanceMeter / 1000).toFixed(1)} km`
-                            : `${lapak.distanceMeter} m`
-                          : 'Dekat'}
-                      </span>
-                      <span className="text-[10px] text-slate-500">{lapak.etaMinutes} mnt</span>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button
+                        onClick={() => {
+                          setSelectedLapak(lapak);
+                          setJelajahSubMode('peta');
+                          mapInstanceRef.current?.flyTo([lapak.lat, lapak.lng], 17);
+                        }}
+                        className="min-h-[40px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-bold flex items-center justify-center gap-1"
+                      >
+                        <Navigation className="w-3.5 h-3.5" />
+                        <span>Peta</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setSelectedLapak(lapak);
+                          setPingNoteInput('');
+                          setShowPingModal(true);
+                        }}
+                        className="min-h-[40px] rounded-xl bg-violet-50 hover:bg-violet-100 border border-violet-200 text-violet-800 text-[11px] font-bold flex items-center justify-center gap-1"
+                      >
+                        <BellRing className="w-3.5 h-3.5" />
+                        <span>Panggil</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setSelectedLapak(lapak);
+                          setCartItems({});
+                          setOrderKind('langsung');
+                          setShowKatalogModal(true);
+                        }}
+                        className="min-h-[40px] rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-bold flex items-center justify-center gap-1"
+                      >
+                        <ShoppingBag className="w-3.5 h-3.5" />
+                        <span>Katalog</span>
+                      </button>
                     </div>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => {
-                        setSelectedLapak(lapak);
-                        setJelajahSubMode('peta');
-                        mapInstanceRef.current?.flyTo([lapak.lat, lapak.lng], 17);
-                      }}
-                      className="min-h-[40px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center justify-center gap-1"
-                    >
-                      <Navigation className="w-3.5 h-3.5" />
-                      <span>Lihat di Peta</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setSelectedLapak(lapak);
-                        setCartItems({});
-                        setShowKatalogModal(true);
-                      }}
-                      className="min-h-[40px] rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold flex items-center justify-center gap-1"
-                    >
-                      <ShoppingBag className="w-3.5 h-3.5" />
-                      <span>Buka Katalog</span>
-                    </button>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         )}
@@ -1771,6 +2665,103 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
                       </div>
                     </div>
 
+                    {/* Pedagang Keliling Live Radar, Speed State & Siaran Warga */}
+                    <div className="bg-white rounded-2xl border border-violet-200 p-4 space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <h3 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                            <Gauge className="w-4 h-4 text-violet-700 shrink-0" />
+                            <span>Radar Pedagang Keliling Live</span>
+                          </h3>
+                          <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                            Armada: {getRigMeta(myLapak.rigType).icon} {getRigMeta(myLapak.rigType).label}
+                            {typeof myLapak.speedKmh === 'number' ? ` · ${Math.round(myLapak.speedKmh)} km/j` : ''}
+                          </p>
+                        </div>
+                        <button
+                          onClick={handleToggleKelilingLive}
+                          className={`min-h-[38px] px-3 py-1.5 rounded-xl text-[11px] font-bold shrink-0 transition ${
+                            isKelilingLive
+                              ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                              : 'bg-violet-700 hover:bg-violet-800 text-white'
+                          }`}
+                        >
+                          {isKelilingLive ? 'Hentikan Live GPS' : 'Mulai Live GPS'}
+                        </button>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <span className="text-[11px] font-bold text-slate-700 block">
+                          Tampilan Ikon Kecepatan di Peta Warga:
+                        </span>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {[
+                            { id: 'ngetem' as const, label: 'Ngetem', hint: '0 km/j', activeCls: 'bg-emerald-700 text-white border-emerald-700' },
+                            { id: 'pelan' as const, label: 'Jalan Pelan', hint: 'Gerobak/Sepeda', activeCls: 'bg-amber-600 text-white border-amber-600' },
+                            { id: 'melaju' as const, label: 'Melaju', hint: 'Motor/Pickup', activeCls: 'bg-violet-700 text-white border-violet-700' },
+                          ].map(opt => {
+                            const currentMotion = inferMotionState(myLapak.speedKmh, myLapak.motionState);
+                            const isActive = myLapak.status === 'keliling' && currentMotion === opt.id;
+                            return (
+                              <button
+                                key={opt.id}
+                                onClick={() => handleSwitchMotionState(opt.id)}
+                                className={`min-h-[42px] px-2 py-1.5 rounded-xl border text-center transition ${
+                                  isActive ? opt.activeCls : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                <div className="text-[11px] font-bold">{opt.label}</div>
+                                <div className={`text-[9px] ${isActive ? 'text-white/85' : 'text-slate-500'}`}>{opt.hint}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-100 space-y-2">
+                        <label className="text-[11px] font-bold text-slate-700 block">
+                          Siarkan Pemberitahuan Lewat ke Warga Sekitar:
+                        </label>
+                        <div className="flex gap-1.5">
+                          <input
+                            type="text"
+                            value={broadcastNoteInput}
+                            onChange={e => setBroadcastNoteInput(e.target.value)}
+                            placeholder="Contoh: Somay & sayur segar melintas Blok A-C!"
+                            className="flex-1 min-h-[40px] bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs text-slate-800"
+                          />
+                          <button
+                            onClick={handleSendKelilingAnnounce}
+                            className="min-h-[40px] px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold flex items-center gap-1 shrink-0"
+                          >
+                            <Megaphone className="w-3.5 h-3.5" />
+                            <span>Umumkan</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                        <label className="text-[11px] font-bold text-slate-700 block">
+                          Jadwal Wilayah & Jam Lewat (Untuk Pre-Order):
+                        </label>
+                        <div className="flex gap-1.5">
+                          <input
+                            type="text"
+                            value={routeScheduleDraft}
+                            onChange={e => setRouteScheduleDraft(e.target.value)}
+                            placeholder="Contoh: Blok A–D (06:30) · Sore Pasar (16:00)"
+                            className="flex-1 min-h-[38px] bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs text-slate-800"
+                          />
+                          <button
+                            onClick={handleSaveRouteSchedule}
+                            className="min-h-[38px] px-3 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-[11px] font-bold shrink-0"
+                          >
+                            Simpan Rute
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Location & Share Actions */}
                     <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
                       <div>
@@ -1893,9 +2884,11 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
       {activeTab === 'aktivitas' && (
         <ActivityPanel
           orders={orders}
+          pings={pings}
           favoriteLapaks={favoriteLapaks}
           myLapakId={myLapak.id}
           onUpdateOrderStatus={handleUpdateOrderStatus}
+          onUpdatePingStatus={handleUpdatePingStatus}
           onSelectLapakOnMap={lapak => {
             setSelectedLapak(lapak);
             setJelajahSubMode('peta');
@@ -2042,7 +3035,69 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
               })}
             </div>
 
-            <div className="pt-2 border-t border-slate-100 space-y-2">
+            <div className="pt-2 border-t border-slate-100 space-y-2.5">
+              {/* Order Mode: Pesan Sekarang vs Pre-Order Jam Lewat */}
+              <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setOrderKind('langsung')}
+                  className={`min-h-[34px] rounded-lg text-[11px] font-bold transition ${
+                    orderKind === 'langsung'
+                      ? 'bg-white text-emerald-800 shadow-xs'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  Pesan Sekarang
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOrderKind('preorder')}
+                  className={`min-h-[34px] rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition ${
+                    orderKind === 'preorder'
+                      ? 'bg-violet-700 text-white shadow-xs'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  <CalendarClock className="w-3.5 h-3.5" />
+                  <span>Pre-Order Jam Lewat</span>
+                </button>
+              </div>
+
+              {orderKind === 'preorder' && (
+                <div className="bg-violet-50 border border-violet-200 rounded-xl p-2.5 space-y-1.5">
+                  <label className="text-[10px] font-bold text-violet-900 block">
+                    Pilih / Tulis Jam Rute Lewat (Titip sebelum lewat):
+                  </label>
+                  <div className="flex flex-wrap gap-1">
+                    {[
+                      'Putaran Pagi (06:30–09:00)',
+                      'Putaran Siang (11:30–13:30)',
+                      'Putaran Sore (16:00–18:00)'
+                    ].map(slot => (
+                      <button
+                        key={slot}
+                        type="button"
+                        onClick={() => setScheduledSlot(slot)}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-bold border ${
+                          scheduledSlot === slot
+                            ? 'bg-violet-700 text-white border-violet-700'
+                            : 'bg-white text-violet-900 border-violet-200'
+                        }`}
+                      >
+                        {slot}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="text"
+                    value={scheduledSlot}
+                    onChange={e => setScheduledSlot(e.target.value)}
+                    placeholder="Atau ketik jam sendiri, mis. Jam 08:00 pagi"
+                    className="w-full min-h-[34px] bg-white border border-violet-200 rounded-lg px-2.5 text-[11px] text-slate-800"
+                  />
+                </div>
+              )}
+
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-600 font-medium">Total Pesanan:</span>
                 <span className="text-sm font-extrabold text-emerald-700 font-mono tabular-nums">
@@ -2057,7 +3112,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
                   className="min-h-[42px] bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
                 >
                   <Send className="w-3.5 h-3.5" />
-                  <span>Pesan AreaQu</span>
+                  <span>{orderKind === 'preorder' ? 'Kirim Pre-Order' : 'Pesan AreaQu'}</span>
                 </button>
 
                 <button
@@ -2070,6 +3125,106 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 4B. MODAL: PANGGIL / MINTA MAMPIR PEDAGANG KELILING                       */}
+      {/* ========================================================================= */}
+      {showPingModal && activeSelectedLapak && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-3">
+          <div className="bg-white rounded-2xl w-full max-w-sm p-4 space-y-3 shadow-2xl">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-violet-50 border border-violet-200 flex items-center justify-center text-lg shrink-0">
+                  {activeSelectedLapak.avatarIcon}
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-xs font-black text-slate-900 truncate">
+                    Panggil / Minta Mampir
+                  </h3>
+                  <p className="text-[10px] text-slate-500 truncate">
+                    Ke: {activeSelectedLapak.name} ({activeSelectedLapak.ownerName})
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setShowPingModal(false)} className="text-slate-400 hover:text-slate-700">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSendKelilingPing} className="space-y-2.5">
+              <div className="bg-slate-50 rounded-xl p-2.5 text-[11px] text-slate-700 border border-slate-200/80 space-y-1">
+                <div className="font-bold text-slate-900">
+                  Titik Anda: {consumerIdentity.addressDetail || gpsSourceLabel}
+                </div>
+                {consumerIdentity.landmark && (
+                  <div className="text-slate-600">Patokan: {consumerIdentity.landmark}</div>
+                )}
+                {activeSelectedLapak.distanceMeter !== undefined && (
+                  <div className="text-violet-700 font-semibold">
+                    Jarak pedagang saat ini: ±{activeSelectedLapak.distanceMeter} m
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                  Pesan Cepat ke Pedagang:
+                </label>
+                <div className="flex flex-wrap gap-1 mb-1.5">
+                  {[
+                    'Mampir ke depan pagar ya!',
+                    'Tunggu sebentar, saya keluar rumah.',
+                    'Beli somay/sayur/ayam, bawa mampir.'
+                  ].map(preset => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setPingNoteInput(preset)}
+                      className="px-2 py-1 rounded-lg bg-violet-50 hover:bg-violet-100 border border-violet-200 text-violet-900 text-[10px] font-semibold"
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  rows={2}
+                  value={pingNoteInput}
+                  onChange={e => setPingNoteInput(e.target.value)}
+                  placeholder="Contoh: Rumah pagar hijau sebelah pos satpam..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800"
+                />
+              </div>
+
+              <label className="flex items-center gap-2 text-[11px] text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={pingShareCoords}
+                  onChange={e => setPingShareCoords(e.target.checked)}
+                  className="rounded border-slate-300 text-violet-700"
+                />
+                <span>Sertakan titik koordinat GPS agar mudah ditemukan</span>
+              </label>
+
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowPingModal(false)}
+                  className="min-h-[42px] bg-slate-100 text-slate-700 rounded-xl text-xs font-bold"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="min-h-[42px] bg-violet-700 hover:bg-violet-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
+                >
+                  <BellRing className="w-3.5 h-3.5" />
+                  <span>Kirim Panggilan</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -2261,22 +3416,77 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
               </button>
             </div>
 
-            <button
-              onClick={() => {
-                handleAcquireRealGPS(false);
-                setShowGpsModal(false);
-              }}
-              className="w-full min-h-[48px] p-3 rounded-xl bg-emerald-700 text-white text-xs font-bold flex items-center justify-between"
-            >
-              <div className="flex items-center gap-2.5 text-left">
-                <RefreshCw className={`w-4 h-4 ${isGpsAcquiring ? 'animate-spin' : ''}`} />
-                <div>
-                  <div>Deteksi Otomatis Sensor GPS HP</div>
-                  <div className="text-[10px] text-emerald-100 font-normal">Ambil koordinat perangkat saat ini</div>
-                </div>
+            {/* Live Coordinate Readout */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 space-y-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-bold text-slate-700">Status Saat Ini:</span>
+                <span
+                  className={`font-bold ${
+                    gpsAccuracy && gpsAccuracy <= 35
+                      ? 'text-emerald-700'
+                      : gpsAccuracy && gpsAccuracy > 250
+                      ? 'text-amber-700'
+                      : 'text-slate-700'
+                  }`}
+                >
+                  {gpsSourceLabel}
+                </span>
               </div>
-              <ChevronDown className="w-4 h-4 -rotate-90" />
-            </button>
+              <div className="flex items-center justify-between text-[11px] font-mono tabular-nums text-slate-600">
+                <span>Lat: {userCoords[0].toFixed(6)}</span>
+                <span>Lng: {userCoords[1].toFixed(6)}</span>
+              </div>
+              {gpsAccuracy && gpsAccuracy > 150 && (
+                <p className="text-[10px] text-amber-700 leading-snug pt-0.5">
+                  Akurasi jaringan ±{gpsAccuracy}m bisa bergeser dari posisi sebenarnya (umum di laptop/dalam ruangan). Gunakan "Tandai di Peta" untuk presisi tepat ke bangunan.
+                </p>
+              )}
+              {gpsErrorDetail && (
+                <p className="text-[10px] text-rose-600 font-semibold leading-snug pt-0.5">
+                  {gpsErrorDetail}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <button
+                onClick={() => {
+                  handleAcquireRealGPS(false);
+                  setShowGpsModal(false);
+                }}
+                className="w-full min-h-[48px] p-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold flex items-center justify-between"
+              >
+                <div className="flex items-center gap-2.5 text-left">
+                  <RefreshCw className={`w-4 h-4 ${isGpsAcquiring ? 'animate-spin' : ''}`} />
+                  <div>
+                    <div>Deteksi Otomatis Sensor GPS HP</div>
+                    <div className="text-[10px] text-emerald-100 font-normal">Kunci ulang koordinat presisi perangkat</div>
+                  </div>
+                </div>
+                <ChevronDown className="w-4 h-4 -rotate-90" />
+              </button>
+
+              <button
+                onClick={() => {
+                  setIsSettingLapakPinOnMap(false);
+                  setIsSettingUserPinOnMap(true);
+                  setJelajahSubMode('peta');
+                  setActiveTab('jelajah');
+                  setShowGpsModal(false);
+                  showNotification('Ketuk titik lokasi Anda langsung pada peta');
+                }}
+                className="w-full min-h-[44px] p-3 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-900 text-xs font-bold flex items-center justify-between"
+              >
+                <div className="flex items-center gap-2.5 text-left">
+                  <Crosshair className="w-4 h-4 text-sky-700" />
+                  <div>
+                    <div>Tandai Langsung Titik Saya di Peta</div>
+                    <div className="text-[10px] text-sky-700 font-normal">Geser peta &amp; ketuk tepat di lokasi Anda</div>
+                  </div>
+                </div>
+                <ChevronDown className="w-4 h-4 -rotate-90 text-sky-700" />
+              </button>
+            </div>
 
             <div>
               <label className="text-[11px] font-bold text-slate-700 block mb-1.5">
@@ -2287,10 +3497,7 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
                   <button
                     key={idx}
                     onClick={() => {
-                      setUserCoords(preset.coords);
-                      setGpsSourceLabel(preset.name);
-                      localStorage.setItem('wargaqu_areaqu_user_coords', JSON.stringify(preset.coords));
-                      mapInstanceRef.current?.flyTo(preset.coords, 16);
+                      applyResolvedCoords(preset.coords, null, 'preset', preset.name);
                       setShowGpsModal(false);
                       showNotification(`Titik GPS dipindahkan ke ${preset.name}`);
                     }}
@@ -2307,17 +3514,32 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
             </div>
 
             <div className="pt-2 border-t border-slate-100 space-y-2">
-              <label className="text-[11px] font-bold text-slate-700 block">Input Manual Lat / Lng:</label>
+              <label className="text-[11px] font-bold text-slate-700 block">
+                Input Manual Lat / Lng (bisa tempel dari Google Maps):
+              </label>
               <div className="grid grid-cols-2 gap-2">
                 <input
                   type="text"
                   value={manualLatInput}
-                  onChange={e => setManualLatInput(e.target.value)}
+                  placeholder="-6.200000"
+                  onChange={e => {
+                    const val = e.target.value;
+                    if (val.includes(',')) {
+                      const parts = val.split(',').map(s => s.trim());
+                      if (parts.length >= 2 && !isNaN(parseFloat(parts[0])) && !isNaN(parseFloat(parts[1]))) {
+                        setManualLatInput(parts[0]);
+                        setManualLngInput(parts[1]);
+                        return;
+                      }
+                    }
+                    setManualLatInput(val);
+                  }}
                   className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-mono"
                 />
                 <input
                   type="text"
                   value={manualLngInput}
+                  placeholder="106.816666"
                   onChange={e => setManualLngInput(e.target.value)}
                   className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs font-mono"
                 />
@@ -2326,14 +3548,16 @@ export const AreaQuView: React.FC<AreaQuViewProps> = ({
                 onClick={() => {
                   const lat = parseFloat(manualLatInput);
                   const lng = parseFloat(manualLngInput);
-                  if (isNaN(lat) || isNaN(lng)) {
-                    showNotification('Format angka latitude / longitude tidak valid');
+                  if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+                    showNotification('Koordinat tidak valid (Lat -90..90, Lng -180..180)');
                     return;
                   }
-                  setUserCoords([lat, lng]);
-                  setGpsSourceLabel(`Manual: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
-                  localStorage.setItem('wargaqu_areaqu_user_coords', JSON.stringify([lat, lng]));
-                  mapInstanceRef.current?.flyTo([lat, lng], 16);
+                  applyResolvedCoords(
+                    [lat, lng],
+                    null,
+                    'manual',
+                    `Manual: ${lat.toFixed(4)}, ${lng.toFixed(4)}`
+                  );
                   setShowGpsModal(false);
                   showNotification('Koordinat GPS manual diterapkan');
                 }}

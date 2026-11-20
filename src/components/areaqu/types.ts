@@ -10,6 +10,10 @@ export type POICategory =
 
 export type LapakType = 'menetap' | 'keliling' | 'jasa_panggilan';
 
+export type MobileRigType = 'menetap' | 'gerobak' | 'sepeda' | 'motor' | 'mobil_pickup';
+
+export type MotionState = 'ngetem' | 'pelan' | 'melaju';
+
 export interface CatalogProduct {
   id: string;
   name: string;
@@ -28,6 +32,13 @@ export interface LapakItem {
   rtRw?: string;
   isVerifiedWarga?: boolean;
   lapakType?: LapakType;
+  rigType?: MobileRigType;
+  motionState?: MotionState;
+  speedKmh?: number;
+  headingDeg?: number;
+  lastLocationAt?: number;
+  routeSchedule?: string;
+  liveBroadcastNote?: string;
   category: POICategory;
   categoryLabel: string;
   lat: number;
@@ -67,6 +78,8 @@ export interface MerchantIdentity {
   lapakName: string;
   category: POICategory;
   lapakType: LapakType;
+  rigType?: MobileRigType;
+  routeSchedule?: string;
   baseAddress: string;
   phone: string;
   operationalHours: string;
@@ -100,24 +113,74 @@ export interface AreaOrderItem {
   total: number;
   note: string;
   status: OrderStatus;
+  orderKind?: 'langsung' | 'preorder';
+  scheduledSlot?: string;
   channel: 'areaqu' | 'whatsapp';
   createdAt: string;
   coords?: [number, number];
 }
 
+export type KelilingPingStatus = 'menunggu' | 'otw' | 'sampai' | 'selesai';
+
+export interface KelilingPingItem {
+  id: string;
+  lapakId: string;
+  lapakName: string;
+  lapakIcon: string;
+  lapakOwner: string;
+  senderName: string;
+  senderAddress: string;
+  senderLandmark: string;
+  senderPhone: string;
+  note: string;
+  status: KelilingPingStatus;
+  createdAt: string;
+  timestamp: number;
+  coords?: [number, number];
+}
+
 export const CATEGORY_OPTIONS: Array<{ id: POICategory; label: string; icon: string }> = [
-  { id: 'kuliner', label: 'Kuliner & Makanan', icon: '🍲' },
-  { id: 'warung', label: 'Warung & Sembako', icon: '🏪' },
-  { id: 'minuman', label: 'Minuman & Kopi', icon: '☕' },
-  { id: 'pkl', label: 'PKL & Kaki Lima', icon: '🍗' },
-  { id: 'keliling', label: 'Pedagang Keliling', icon: '🥦' },
+  { id: 'keliling', label: 'Pedagang Keliling', icon: '🛵' },
+  { id: 'kuliner', label: 'Kuliner & Bakso/Somay', icon: '🍜' },
+  { id: 'warung', label: 'Sayur, Ayam & Sembako', icon: '🥦' },
+  { id: 'minuman', label: 'Minuman & Es/Kopi', icon: '☕' },
+  { id: 'pkl', label: 'PKL & Kaki Lima', icon: '🍢' },
   { id: 'bengkel', label: 'Bengkel & Servis', icon: '🔧' },
   { id: 'jasa', label: 'Jasa Panggilan', icon: '❄️' },
-  { id: 'transportasi', label: 'Transportasi Warga', icon: '🛵' },
+  { id: 'transportasi', label: 'Transportasi Warga', icon: '🚕' },
 ];
 
-export const AVATAR_ICON_OPTIONS = ['🍲', '🏪', '☕', '🍗', '🥦', '🔧', '❄️', '🛵', '🍜', '🧁', '🧺', '📦'];
+export const RIG_TYPE_OPTIONS: Array<{
+  id: MobileRigType;
+  label: string;
+  icon: string;
+  speedHint: string;
+}> = [
+  { id: 'gerobak', label: 'Gerobak Dorong', icon: '🛒', speedHint: '±2–5 km/j' },
+  { id: 'sepeda', label: 'Sepeda / Rombong', icon: '🚲', speedHint: '±5–12 km/j' },
+  { id: 'motor', label: 'Motor Keliling', icon: '🛵', speedHint: '±12–35 km/j' },
+  { id: 'mobil_pickup', label: 'Mobil / Pickup', icon: '🛻', speedHint: '±15–45 km/j' },
+  { id: 'menetap', label: 'Kios / Mangkal Tetap', icon: '🏪', speedHint: '0 km/j' },
+];
+
+export const AVATAR_ICON_OPTIONS = [
+  '🥟', '🍜', '🥦', '🍗', '🍢', '🛵', '🚲', '🛒', '🛻', '☕', '🧊', '🏪', '🔧', '📦'
+];
 
 export function getCategoryLabel(category: POICategory): string {
   return CATEGORY_OPTIONS.find(c => c.id === category)?.label || 'Lapak Warga';
 }
+
+export function getRigMeta(rig?: MobileRigType) {
+  return RIG_TYPE_OPTIONS.find(r => r.id === rig) || RIG_TYPE_OPTIONS[4];
+}
+
+export function inferMotionState(speedKmh?: number, explicitState?: MotionState): MotionState {
+  if (typeof speedKmh === 'number' && !isNaN(speedKmh) && speedKmh >= 0) {
+    if (speedKmh >= 10) return 'melaju';
+    if (speedKmh >= 1.5) return 'pelan';
+    return 'ngetem';
+  }
+  return explicitState || 'ngetem';
+}
+
