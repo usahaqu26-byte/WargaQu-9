@@ -60,6 +60,8 @@ import {
   HelpCircle,
   ScanLine,
   Trophy,
+  Clock,
+  ShieldCheck,
 } from 'lucide-react';
 import { ModuleOnboardingService } from '../../services/moduleOnboardingService';
 import { InteractiveGridCanvasView } from './InteractiveGridCanvasView';
@@ -79,6 +81,7 @@ import {
 } from '../../services/devicePairingService';
 import { LeluhurBookModal } from './LeluhurBookModal';
 import { TrahQrCodeCard, TrahQrScannerModal } from './TrahInviteQrModal';
+import { NuclearFamilyHubModal } from './NuclearFamilyHubModal';
 import { MonetizationService } from '../../services/monetizationService';
 import { ModularFeeSheet } from '../monetization/ModularFeeSheet';
 import {
@@ -92,38 +95,41 @@ import {
   RELAY_REGISTER_CHANNELS_EVENT,
   setCustomPublicBaseUrl,
 } from '../../services/inviteRelayService';
+import {
+  applyMemberEditToHub,
+  canDeleteTrahMember,
+  canEditTrahMember,
+  canManageTrahAdmin,
+  FamilyMember,
+  formatInviteExpiryLabel,
+  getEffectiveTrahRole,
+  getLineageBadgeMeta,
+  getTrahCoreLinkStatus,
+  getTrahRoleMeta,
+  graftNuclearFamilyToTrah,
+  INVITE_EXPIRY_OPTIONS,
+  LINEAGE_OPTIONS,
+  LineageSide,
+  loadNuclearFamilyHub,
+  loadRevokedInviteVersions,
+  markInviteVersionRevoked,
+  NuclearFamilyHubData,
+  saveNuclearFamilyHub,
+  SpouseInfo,
+  syncHubAcrossTrahList,
+  TrahAccessRole,
+  TrahCategory,
+  TrahInvitePolicy,
+} from '../../services/leluhurCoreSyncService';
 
-export interface SpouseInfo {
-  id: string;
-  name: string;
-  orderIndex: number;
-  status: 'menikah' | 'cerai_hidup' | 'cerai_mati';
-  marriageYear?: string;
-  divorceYear?: string;
-  notes?: string;
-}
-
-export interface FamilyMember {
-  id: string;
-  name: string;
-  callName?: string;
-  birthYear?: string;
-  deathYear?: string;
-  city?: string;
-  isDeceased: boolean;
-  photoUrl?: string;
-  gender: 'L' | 'P';
-  notes?: string;
-  parentId?: string | null;
-  generationLevel: number;
-  orderIndex?: number;
-  spouses?: SpouseInfo[];
-  claimedByEmail?: string;
-  claimedByName?: string;
-  claimedAt?: string;
-}
-
-export type LineageSide = 'ayah_user' | 'ibu_user' | 'ayah_pasangan' | 'ibu_pasangan' | 'umum';
+export type {
+  SpouseInfo,
+  FamilyMember,
+  LineageSide,
+  TrahAccessRole,
+  TrahInvitePolicy,
+  TrahCategory,
+};
 
 export type LeluhurLogActionType =
   | 'claim'
@@ -149,15 +155,6 @@ export interface LeluhurActivityLog {
   summary: string;
   details?: string;
   createdAt: string;
-}
-
-export interface TrahCategory {
-  id: string;
-  name: string;
-  description: string;
-  members: FamilyMember[];
-  lineageSide?: LineageSide;
-  linkedSpouseName?: string;
 }
 
 export interface TrahComment {
@@ -299,10 +296,47 @@ function stripPhotosForInvite(members: FamilyMember[]): FamilyMember[] {
   }));
 }
 
-function encodeTrahInviteToken(trah: TrahCategory, inviterName: string): string {
+interface CompactInviteMeta {
+  r?: TrahAccessRole;
+  exp?: number;
+  v?: number;
+  ce?: string;
+}
+
+type DecodedTrahInviteResult =
+  | { status: 'ok'; trah: TrahCategory; inviter: string }
+  | { status: 'expired' | 'revoked'; trahName?: string }
+  | null;
+
+function buildCompactInviteMeta(
+  trah: TrahCategory,
+  overridePolicy?: Partial<TrahInvitePolicy>,
+  fallbackCreatorEmail?: string
+): CompactInviteMeta {
+  const role = overridePolicy?.role || trah.invitePolicy?.role || 'member';
+  const expiryHours = overridePolicy?.expiryHours ?? trah.invitePolicy?.expiryHours ?? 0;
+  const version = overridePolicy?.version || trah.invitePolicy?.version || 1;
+  const exp = expiryHours > 0 ? Date.now() + expiryHours * 3600 * 1000 : 0;
+  const creatorEmail = (trah.creatorEmail || fallbackCreatorEmail || '').trim().toLowerCase();
+  return {
+    r: role,
+    exp,
+    v: version,
+    ...(creatorEmail ? { ce: creatorEmail } : {}),
+  };
+}
+
+function encodeTrahInviteToken(
+  trah: TrahCategory,
+  inviterName: string,
+  overridePolicy?: Partial<TrahInvitePolicy>,
+  fallbackCreatorEmail?: string
+): string {
+  const meta = buildCompactInviteMeta(trah, overridePolicy, fallbackCreatorEmail);
   const compactPayload = {
     v: 1,
     inviter: inviterName || 'Keluarga',
+    meta,
     trah: {
       id: trah.id,
       name: trah.name,
@@ -317,7 +351,9 @@ function encodeTrahInviteToken(trah: TrahCategory, inviterName: string): string 
 
 async function encodeTrahInviteTokenCompact(
   trah: TrahCategory,
-  inviterName: string
+  inviterName: string,
+  overridePolicy?: Partial<TrahInvitePolicy>,
+  fallbackCreatorEmail?: string
 ): Promise<string> {
   const members = trah.members || [];
   const idxById = new Map<string, number>();
@@ -350,6 +386,7 @@ async function encodeTrahInviteTokenCompact(
     return tuple;
   });
 
+  const meta = buildCompactInviteMeta(trah, overridePolicy, fallbackCreatorEmail);
   const packed = [
     2,
     inviterName || 'Keluarga',
@@ -358,6 +395,7 @@ async function encodeTrahInviteTokenCompact(
     trah.description || '',
     trah.lineageSide || 'umum',
     tuples,
+    meta,
   ];
   const rawBytes = new TextEncoder().encode(JSON.stringify(packed));
 
@@ -374,7 +412,7 @@ async function encodeTrahInviteTokenCompact(
     // fallback below
   }
 
-  return encodeTrahInviteToken(trah, inviterName);
+  return encodeTrahInviteToken(trah, inviterName, overridePolicy, fallbackCreatorEmail);
 }
 
 function extractRawTokenFromInput(rawInput: string): string {
@@ -399,9 +437,33 @@ function extractRawTokenFromInput(rawInput: string): string {
   return trimmed;
 }
 
+function validateInviteMeta(
+  trahId: string,
+  trahName: string,
+  meta: CompactInviteMeta | undefined,
+  scopeKey: string
+): { ok: true; role: TrahAccessRole; version: number; creatorEmail?: string } | { ok: false; status: 'expired' | 'revoked'; trahName: string } {
+  const exp = meta?.exp || 0;
+  if (exp > 0 && Date.now() > exp) {
+    return { ok: false, status: 'expired', trahName };
+  }
+  const version = meta?.v || 1;
+  const revokedMap = loadRevokedInviteVersions(scopeKey);
+  if (revokedMap[trahId] && version < revokedMap[trahId]) {
+    return { ok: false, status: 'revoked', trahName };
+  }
+  return {
+    ok: true,
+    role: meta?.r || 'member',
+    version,
+    creatorEmail: meta?.ce,
+  };
+}
+
 async function decodeTrahInviteInputAsync(
-  rawInput: string
-): Promise<{ trah: TrahCategory; inviter: string } | null> {
+  rawInput: string,
+  scopeKey = 'guest'
+): Promise<DecodedTrahInviteResult> {
   const parsedHint = parseInviteInput(rawInput, 'trah');
   let resolvedInput = rawInput;
   if (parsedHint?.mode === 'short_code') {
@@ -452,11 +514,17 @@ async function decodeTrahInviteInputAsync(
         string,
         string,
         LineageSide,
-        CompactMemberTuple[]
+        CompactMemberTuple[],
+        CompactInviteMeta?
       ];
       if (!Array.isArray(arr) || arr.length < 7) return null;
-      const [, inviter, trahId, trahName, trahDesc, lineageSide, tuples] = arr;
+      const [, inviter, trahId, trahName, trahDesc, lineageSide, tuples, meta] = arr;
       if (!trahId || !trahName || !Array.isArray(tuples)) return null;
+
+      const check = validateInviteMeta(trahId, trahName, meta, scopeKey);
+      if (!check.ok) {
+        return { status: check.status, trahName: check.trahName };
+      }
 
       const members: FamilyMember[] = tuples.map((tp) => {
         const pIdx = tp[3];
@@ -484,6 +552,7 @@ async function decodeTrahInviteInputAsync(
       });
 
       return {
+        status: 'ok',
         inviter: inviter || 'Keluarga',
         trah: {
           id: trahId,
@@ -491,6 +560,9 @@ async function decodeTrahInviteInputAsync(
           description: trahDesc || 'Trah Undangan Keluarga',
           lineageSide: lineageSide || 'umum',
           members,
+          userRole: check.role,
+          creatorEmail: check.creatorEmail,
+          invitePolicy: { version: check.version, role: check.role, expiryHours: 0 },
         },
       };
     } catch {
@@ -505,11 +577,17 @@ async function decodeTrahInviteInputAsync(
       const parsed = JSON.parse(json) as {
         v?: number;
         inviter?: string;
+        meta?: CompactInviteMeta;
         trah?: Partial<TrahCategory>;
       };
       if (!parsed.trah || !parsed.trah.id || !parsed.trah.name) return null;
+      const check = validateInviteMeta(parsed.trah.id, parsed.trah.name, parsed.meta, scopeKey);
+      if (!check.ok) {
+        return { status: check.status, trahName: check.trahName };
+      }
       const rawMembers = Array.isArray(parsed.trah.members) ? parsed.trah.members : [];
       return {
+        status: 'ok',
         inviter: parsed.inviter || 'Keluarga',
         trah: {
           id: parsed.trah.id,
@@ -517,6 +595,9 @@ async function decodeTrahInviteInputAsync(
           description: parsed.trah.description || 'Trah Undangan Keluarga',
           lineageSide: parsed.trah.lineageSide || 'umum',
           members: rawMembers,
+          userRole: check.role,
+          creatorEmail: check.creatorEmail,
+          invitePolicy: { version: check.version, role: check.role, expiryHours: 0 },
         },
       };
     } catch {
@@ -1036,6 +1117,8 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   // Modal Undangan Silsilah Trah Medsos (WA / ChatQu / Salin Link / Barcode QR)
   const [isInviteModalOpen, setIsInviteModalOpen] = useState<boolean>(false);
   const [inviteTrahTarget, setInviteTrahTarget] = useState<TrahCategory | null>(null);
+  const [inviteAccessRole, setInviteAccessRole] = useState<TrahAccessRole>('member');
+  const [inviteExpiryHours, setInviteExpiryHours] = useState<number>(168);
   const [compactInviteToken, setCompactInviteToken] = useState<string>('');
   const [shortInviteUrl, setShortInviteUrl] = useState<string>('');
   const [inviteShareTab, setInviteShareTab] = useState<'barcode' | 'link'>('barcode');
@@ -1056,6 +1139,20 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     isSyncing: boolean;
   } | null>(null);
 
+  // Hub Keluarga Inti Terpusat (Isi 1x, Sinkron ke 4-8+ Trah)
+  const [nuclearHub, setNuclearHub] = useState<NuclearFamilyHubData>(() =>
+    loadNuclearFamilyHub(accountScope.scopeKey, {
+      name: accountProfile.fullName || accountProfile.displayName,
+      city: accountProfile.domicile,
+      photoUrl: accountProfile.avatarUrl,
+    })
+  );
+  const [isNuclearHubOpen, setIsNuclearHubOpen] = useState<boolean>(false);
+  const [nuclearHubPreselect, setNuclearHubPreselect] = useState<{
+    trahId: string;
+    parentId: string | null;
+  } | null>(null);
+
   // Log Aktivitas & Navigasi langsung ke Tab Pengaturan
   const [activityLogs, setActivityLogs] = useState<LeluhurActivityLog[]>(() =>
     loadActivityLogsForScope(accountScope.scopeKey)
@@ -1065,11 +1162,16 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     key: number;
   }>({ tab: 'account', key: 0 });
 
-  // Modal Tautkan Trah Pasangan (4 Pilar: Ayah User, Ibu User, Ayah Pasangan, Ibu Pasangan)
+  // Modal Tautkan Trah Pasangan (4–8+ Pilar: User + Pasangan & Kakek/Nenek)
   const [isSpouseModalOpen, setIsSpouseModalOpen] = useState<boolean>(false);
   const [spouseNameInput, setSpouseNameInput] = useState<string>('');
   const [spouseAyahNameInput, setSpouseAyahNameInput] = useState<string>('');
   const [spouseIbuNameInput, setSpouseIbuNameInput] = useState<string>('');
+  const [spouseGrandparentsExpanded, setSpouseGrandparentsExpanded] = useState<boolean>(false);
+  const [spouseKakekAyahInput, setSpouseKakekAyahInput] = useState<string>('');
+  const [spouseNenekAyahInput, setSpouseNenekAyahInput] = useState<string>('');
+  const [spouseKakekIbuInput, setSpouseKakekIbuInput] = useState<string>('');
+  const [spouseNenekIbuInput, setSpouseNenekIbuInput] = useState<string>('');
 
   // Modal Buku Leluhur PDF (Pratinjau A4/A5/A6 + Unduh PDF + Bagan Akhir Nama)
   const [isBookModalOpen, setIsBookModalOpen] = useState<boolean>(false);
@@ -1146,8 +1248,23 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   };
 
   const handleClaimMember = (member: FamilyMember) => {
+    const effRole = getEffectiveTrahRole(activeTrah, accountScope.email, accountScope.isOwner);
+    if (effRole === 'viewer') {
+      showNotification('Akses Anda di Trah ini adalah "Lihat Saja". Hubungi Pengurus Trah untuk izin klaim profil.');
+      return;
+    }
+
     const claimerName = accountProfile.displayName || accountProfile.fullName || 'Anggota Keluarga';
     const claimerEmail = accountScope.email || accountProfile.email || `akun-${accountScope.scopeKey}`;
+    if (
+      member.claimedByEmail &&
+      member.claimedByEmail.toLowerCase() !== claimerEmail.toLowerCase()
+    ) {
+      showNotification(
+        `Profil "${member.name}" sudah diklaim oleh ${member.claimedByName || member.claimedByEmail}. Minta Pengurus Trah melepas klaim lebih dulu jika keliru.`
+      );
+      return;
+    }
     const claimedAt = new Date().toISOString();
 
     setTrahList((prev) =>
@@ -1192,6 +1309,15 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   };
 
   const handleUnclaimMember = (member: FamilyMember) => {
+    const currentIdentity = accountScope.email || accountProfile.email || `akun-${accountScope.scopeKey}`;
+    const isSelfClaim =
+      (member.claimedByEmail || '').toLowerCase() === currentIdentity.toLowerCase();
+    const isAdmin = canManageTrahAdmin(activeTrah, accountScope.email, accountScope.isOwner);
+    if (!isSelfClaim && !isAdmin) {
+      showNotification('Hanya pemilik klaim atau Pengurus Trah yang dapat melepas klaim profil ini.');
+      return;
+    }
+
     setTrahList((prev) =>
       prev.map((t) =>
         t.id === activeTrah.id
@@ -1241,9 +1367,14 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
           const nextTrahs = loadTrahListForScope(nextScope);
           const nextPosts = loadPostsForScope(nextScope);
           const nextLogs = loadActivityLogsForScope(nextScope.scopeKey);
+          const accNow = AuthService.getAccount();
+          const nextHub = loadNuclearFamilyHub(nextScope.scopeKey, {
+            name: accNow ? AuthService.getDisplayName(accNow) : '',
+          });
           setTrahList(nextTrahs);
           setTrahPosts(nextPosts);
           setActivityLogs(nextLogs);
+          setNuclearHub(nextHub);
           setActiveTrahId(nextTrahs[0]?.id || '');
           setFeedPillarFilter('all');
         }
@@ -1275,9 +1406,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       const nextTrahs = loadTrahListForScope(nextScope);
       const nextPosts = loadPostsForScope(nextScope);
       const nextLogs = loadActivityLogsForScope(nextScope.scopeKey);
+      const nextHub = loadNuclearFamilyHub(nextScope.scopeKey);
       setTrahList(nextTrahs);
       setTrahPosts(nextPosts);
       setActivityLogs(nextLogs);
+      setNuclearHub(nextHub);
       setActiveTrahId((prevId) =>
         nextTrahs.some((t) => t.id === prevId) ? prevId : nextTrahs[0]?.id || ''
       );
@@ -1313,8 +1446,22 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       });
     }
 
-    const decoded = await decodeTrahInviteInputAsync(rawTokenOrUrl);
-    if (!decoded) {
+    const targetScope = getCurrentAccountScope();
+    const decoded = await decodeTrahInviteInputAsync(rawTokenOrUrl, targetScope.scopeKey);
+    if (!decoded || decoded.status !== 'ok') {
+      setPendingTrahSync(null);
+      if (decoded && decoded.status === 'expired') {
+        showNotification(
+          `Undangan${decoded.trahName ? ` "${decoded.trahName}"` : ''} sudah kedaluwarsa (expired). Minta Pengurus Trah membuat Barcode/Link baru.`
+        );
+        return false;
+      }
+      if (decoded && decoded.status === 'revoked') {
+        showNotification(
+          `QR / Link undangan lama${decoded.trahName ? ` "${decoded.trahName}"` : ''} sudah dimatikan oleh Pengurus Trah.`
+        );
+        return false;
+      }
       if (parsedHint?.mode === 'room_slug') {
         setPendingTrahSync({
           title: parsedHint.titleGuess,
@@ -1338,14 +1485,28 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       members: normalizeTrahMembers(rawInvited.members || [], false).members,
     };
 
-    const targetScope = getCurrentAccountScope();
     const targetKey = getScopedTrahStorageKey(targetScope.scopeKey);
 
     setTrahList((prev) => {
       const existsIdx = prev.findIndex((t) => t.id === normalizedInvited.id);
       const nextList =
         existsIdx !== -1
-          ? prev.map((t, i) => (i === existsIdx ? normalizedInvited : t))
+          ? prev.map((t, i) => {
+              if (i !== existsIdx) return t;
+              // Pertahankan hak akses admin jika user memang pembuat/owner Trah ini
+              const preserveAdmin =
+                targetScope.isOwner ||
+                t.userRole === 'admin' ||
+                (t.creatorEmail &&
+                  targetScope.email &&
+                  t.creatorEmail.toLowerCase() === targetScope.email.toLowerCase());
+              return {
+                ...normalizedInvited,
+                userRole: preserveAdmin ? 'admin' : normalizedInvited.userRole,
+                creatorEmail: t.creatorEmail || normalizedInvited.creatorEmail,
+                invitePolicy: t.invitePolicy || normalizedInvited.invitePolicy,
+              };
+            })
           : [normalizedInvited, ...prev];
       try {
         localStorage.setItem(targetKey, JSON.stringify(nextList));
@@ -1374,17 +1535,18 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       }
     }
 
+    const joinedRoleMeta = getTrahRoleMeta(normalizedInvited.userRole || 'member');
     appendActivityLog({
       trahId: normalizedInvited.id,
       trahName: normalizedInvited.name,
       actionType: 'invite_join',
       targetName: normalizedInvited.name,
-      summary: `Sinkronisasi & masuk Trah "${normalizedInvited.name}" via undangan ${inviter}`,
+      summary: `Sinkronisasi & masuk Trah "${normalizedInvited.name}" via undangan ${inviter} (${joinedRoleMeta.shortLabel})`,
       details: `${normalizedInvited.members.length} anggota silsilah dimuat ke akun ${targetScope.email || 'tamu'}.`,
     });
 
     showNotification(
-      `Sinkronisasi selesai! Masuk Trah "${normalizedInvited.name}" (${normalizedInvited.members.length} anggota).`
+      `Masuk Trah "${normalizedInvited.name}" (${normalizedInvited.members.length} anggota • Akses: ${joinedRoleMeta.shortLabel}).`
     );
     return true;
   };
@@ -1493,23 +1655,26 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   useEffect(() => {
     if (trahList.length === 0) return;
     const timer = window.setTimeout(() => {
-      for (const trah of trahList.slice(0, 6)) {
-        void encodeTrahInviteTokenCompact(trah, accountProfile.displayName || 'Keluarga').then(
-          (snapshot) => {
-            void InviteRelayService.publishRoomSnapshot({
-              kind: 'trah',
-              title: trah.name,
-              inviter: accountProfile.displayName || 'Keluarga',
-              snapshot,
-            });
-          }
-        );
+      for (const trah of trahList.slice(0, 8)) {
+        void encodeTrahInviteTokenCompact(
+          trah,
+          accountProfile.displayName || 'Keluarga',
+          trah.invitePolicy,
+          accountScope.email
+        ).then((snapshot) => {
+          void InviteRelayService.publishRoomSnapshot({
+            kind: 'trah',
+            title: trah.name,
+            inviter: accountProfile.displayName || 'Keluarga',
+            snapshot,
+          });
+        });
       }
     }, 1100);
     return () => window.clearTimeout(timer);
-  }, [trahList, accountProfile.displayName]);
+  }, [trahList, accountProfile.displayName, accountScope.email]);
 
-  // Hasilkan link judul (?trah=Nama-Trah) instan & kirim snapshot untuk sinkronisasi saat masuk
+  // Hasilkan link judul (?trah=Nama-Trah) instan & token bermuatan kebijakan akses + kedaluwarsa + versi
   useEffect(() => {
     if (!isInviteModalOpen || trahList.length === 0) return;
     let cancelled = false;
@@ -1517,22 +1682,39 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     const { url } = InviteRelayService.buildTitleInviteUrl('trah', target.name);
     setShortInviteUrl(url);
 
-    encodeTrahInviteTokenCompact(target, accountProfile.displayName || 'Keluarga').then(
-      async (tok) => {
-        if (cancelled) return;
-        setCompactInviteToken(tok);
-        await InviteRelayService.publishRoomSnapshot({
-          kind: 'trah',
-          title: target.name,
-          inviter: accountProfile.displayName || 'Keluarga',
-          snapshot: tok,
-        });
-      }
-    );
+    const policy: Partial<TrahInvitePolicy> = {
+      role: inviteAccessRole,
+      expiryHours: inviteExpiryHours,
+      version: target.invitePolicy?.version || 1,
+    };
+
+    encodeTrahInviteTokenCompact(
+      target,
+      accountProfile.displayName || 'Keluarga',
+      policy,
+      accountScope.email
+    ).then(async (tok) => {
+      if (cancelled) return;
+      setCompactInviteToken(tok);
+      await InviteRelayService.publishRoomSnapshot({
+        kind: 'trah',
+        title: target.name,
+        inviter: accountProfile.displayName || 'Keluarga',
+        snapshot: tok,
+      });
+    });
     return () => {
       cancelled = true;
     };
-  }, [isInviteModalOpen, inviteTrahTarget, trahList, accountProfile.displayName]);
+  }, [
+    isInviteModalOpen,
+    inviteTrahTarget,
+    trahList,
+    accountProfile.displayName,
+    inviteAccessRole,
+    inviteExpiryHours,
+    accountScope.email,
+  ]);
 
   useEffect(() => {
     try {
@@ -1620,6 +1802,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
   // Handlers
   const handleOpenQuickBatch = (targetParent?: FamilyMember) => {
+    const effRole = getEffectiveTrahRole(activeTrah, accountScope.email, accountScope.isOwner);
+    if (effRole === 'viewer') {
+      showNotification('Akses Anda di Trah ini adalah "Lihat Saja". Tidak dapat menambah/mengubah anggota.');
+      return;
+    }
     let defaultParentId = '';
     if (targetParent) {
       defaultParentId = targetParent.id;
@@ -1664,6 +1851,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   };
 
   const handleCreateQuickRoot = () => {
+    const effRole = getEffectiveTrahRole(activeTrah, accountScope.email, accountScope.isOwner);
+    if (effRole === 'viewer') {
+      showNotification('Akses Anda di Trah ini adalah "Lihat Saja".');
+      return;
+    }
     if (!quickNewRootName.trim()) {
       showNotification('Nama Ayah/Leluhur Utama tidak boleh kosong!');
       return;
@@ -1715,6 +1907,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     }
 
     const currentTrah = trahList.find((t) => t.id === activeTrahId) || activeTrah;
+    const effRole = getEffectiveTrahRole(currentTrah, accountScope.email, accountScope.isOwner);
+    if (effRole === 'viewer') {
+      showNotification('Akses Anda di Trah ini adalah "Lihat Saja".');
+      return;
+    }
     let updatedTrahMembers = [...currentTrah.members];
 
     // Jika belum ada parent yang dipilih atau parentId tidak cocok
@@ -1787,6 +1984,18 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       const deletedIds = new Set(
         existingChildren.filter((c) => !usedOldIds.has(c.id)).map((c) => c.id)
       );
+      if (!canManageTrahAdmin(currentTrah, accountScope.email, accountScope.isOwner)) {
+        const blockedClaimed = existingChildren.find((c) => {
+          const check = canEditTrahMember(currentTrah, c, accountScope.email, accountScope.isOwner);
+          return !check.ok && deletedIds.has(c.id);
+        });
+        if (blockedClaimed) {
+          showNotification(
+            `Tidak bisa menghapus/mengganti "${blockedClaimed.name}" karena profilnya sudah diklaim pihak lain.`
+          );
+          return;
+        }
+      }
       const oldChildIds = new Set(existingChildren.map((c) => c.id));
       const baseMembers = updatedTrahMembers.filter((m) => !oldChildIds.has(m.id));
 
@@ -1920,6 +2129,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
   // Standard Form Add/Edit
   const handleOpenAddRoot = () => {
+    const effRole = getEffectiveTrahRole(activeTrah, accountScope.email, accountScope.isOwner);
+    if (effRole === 'viewer') {
+      showNotification('Akses Anda di Trah ini adalah "Lihat Saja".');
+      return;
+    }
     setFormMode('add_root');
     setFormParentId(null);
     setFormMemberId(null);
@@ -1939,6 +2153,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   };
 
   const handleOpenAddChild = (parent: FamilyMember) => {
+    const effRole = getEffectiveTrahRole(activeTrah, accountScope.email, accountScope.isOwner);
+    if (effRole === 'viewer') {
+      showNotification('Akses Anda di Trah ini adalah "Lihat Saja".');
+      return;
+    }
     setFormMode('add_child');
     setFormParentId(parent.id);
     setFormMemberId(null);
@@ -1959,6 +2178,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   };
 
   const handleOpenEdit = (m: FamilyMember) => {
+    const editPerm = canEditTrahMember(activeTrah, m, accountScope.email, accountScope.isOwner);
+    if (!editPerm.ok) {
+      showNotification(editPerm.reason || 'Profil ini terkunci.');
+      return;
+    }
     setFormMode('edit');
     setFormParentId(m.parentId || null);
     setFormMemberId(m.id);
@@ -2044,19 +2268,138 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     }
   };
 
+  const propagateCoreMemberEdit = (
+    editedMember: FamilyMember | undefined,
+    baseTrahList: TrahCategory[]
+  ): TrahCategory[] => {
+    if (!editedMember?.coreRefId) return baseTrahList;
+    const { updatedHub, changed } = applyMemberEditToHub(nuclearHub, editedMember);
+    if (!changed) return baseTrahList;
+    setNuclearHub(updatedHub);
+    saveNuclearFamilyHub(accountScope.scopeKey, updatedHub);
+    const { updatedTrahList, syncedTrahCount } = syncHubAcrossTrahList(
+      baseTrahList,
+      updatedHub,
+      accountScope.email,
+      accountScope.isOwner
+    );
+    if (syncedTrahCount > 1) {
+      showNotification(
+        `Perubahan "${editedMember.name}" otomatis disinkronkan ke ${syncedTrahCount} Trah tertaut! 🔗`
+      );
+    }
+    return updatedTrahList;
+  };
+
+  const handleSaveAndSyncNuclearHubAll = (nextHub: NuclearFamilyHubData) => {
+    setNuclearHub(nextHub);
+    saveNuclearFamilyHub(accountScope.scopeKey, nextHub);
+    const { updatedTrahList, syncedTrahCount } = syncHubAcrossTrahList(
+      trahList,
+      nextHub,
+      accountScope.email,
+      accountScope.isOwner
+    );
+    const normalized = updatedTrahList.map((t) => ({
+      ...t,
+      members: normalizeTrahMembers(t.members, false).members,
+    }));
+    setTrahList(normalized);
+    flushTrahListToStorage(normalized);
+    if (syncedTrahCount > 0) {
+      appendActivityLog({
+        trahId: activeTrah.id || 'all',
+        trahName: activeTrah.name || 'Semua Trah',
+        actionType: 'member_update',
+        targetName: nextHub.self.name,
+        summary: `Menyinkronkan Hub Keluarga Inti ke ${syncedTrahCount} Trah`,
+        details: `${nextHub.children.length} anak • ${nextHub.spouses.length} pasangan`,
+      });
+      showNotification(
+        `Hub Keluarga Inti disimpan & disinkronkan ke ${syncedTrahCount} Trah sekaligus! ✨`
+      );
+    } else {
+      showNotification(
+        'Data Keluarga Inti tersimpan! Pilih "Tempel ke Trah" untuk menyambungkan ke silsilah manapun.'
+      );
+    }
+  };
+
+  const handleGraftNuclearHubToSingleTrah = (
+    nextHub: NuclearFamilyHubData,
+    trahId: string,
+    parentMemberId: string | null,
+    attachMode: 'self_branch' | 'spouse_branch'
+  ) => {
+    const targetTrah = trahList.find((t) => t.id === trahId);
+    if (!targetTrah) return;
+    if (getEffectiveTrahRole(targetTrah, accountScope.email, accountScope.isOwner) === 'viewer') {
+      showNotification('Akses Anda di Trah ini adalah "Lihat Saja".');
+      return;
+    }
+
+    setNuclearHub(nextHub);
+    saveNuclearFamilyHub(accountScope.scopeKey, nextHub);
+
+    const { updatedTrah } = graftNuclearFamilyToTrah(targetTrah, nextHub, {
+      parentMemberId,
+      attachMode,
+      ownerEmail: accountScope.email,
+      ownerName: accountProfile.displayName || accountProfile.fullName,
+    });
+    const normalizedMembers = normalizeTrahMembers(updatedTrah.members, false).members;
+    const syncedList = trahList.map((t) =>
+      t.id === trahId ? { ...updatedTrah, members: normalizedMembers } : t
+    );
+    const { updatedTrahList } = syncHubAcrossTrahList(
+      syncedList,
+      nextHub,
+      accountScope.email,
+      accountScope.isOwner
+    );
+    const finalList = updatedTrahList.map((t) => ({
+      ...t,
+      members: normalizeTrahMembers(t.members, false).members,
+    }));
+    setTrahList(finalList);
+    flushTrahListToStorage(finalList);
+    setActiveTrahId(trahId);
+
+    appendActivityLog({
+      trahId,
+      trahName: targetTrah.name,
+      actionType: 'member_add',
+      targetName: nextHub.self.name,
+      summary: `Menempelkan Hub Keluarga Inti (${attachMode === 'spouse_branch' ? 'Jalur Pasangan' : 'Jalur Saya'}) ke ${targetTrah.name}`,
+      details: `${nextHub.children.length} anak ikut tertempel & tersinkron otomatis.`,
+    });
+    showNotification(
+      `Keluarga Inti berhasil ditempel & disinkronkan ke "${targetTrah.name}"! 🔗✨`
+    );
+  };
+
   const handleQuickToggleMemberGender = (member: FamilyMember) => {
+    const editPerm = canEditTrahMember(activeTrah, member, accountScope.email, accountScope.isOwner);
+    if (!editPerm.ok) {
+      showNotification(editPerm.reason || 'Profil ini terkunci.');
+      return;
+    }
     const nextGender: 'L' | 'P' = member.gender === 'P' ? 'L' : 'P';
+    let updatedTarget: FamilyMember | undefined;
     const nextList = trahList.map((t) => {
       if (t.id !== activeTrah.id) return t;
       return {
         ...t,
-        members: t.members.map((m) =>
-          m.id === member.id ? { ...m, gender: nextGender } : m
-        ),
+        members: t.members.map((m) => {
+          if (m.id !== member.id) return m;
+          updatedTarget = { ...m, gender: nextGender };
+          return updatedTarget;
+        }),
       };
     });
-    setTrahList(nextList);
-    flushTrahListToStorage(nextList);
+    const finalList = propagateCoreMemberEdit(updatedTarget, nextList);
+    setTrahList(finalList);
+    flushTrahListToStorage(finalList);
     if (selectedMember?.id === member.id) {
       setSelectedMember({ ...member, gender: nextGender });
     }
@@ -2065,7 +2408,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     }
     if (isQuickBatchOpen && quickBatchMode === 'replace' && member.parentId === quickParentId) {
       const updatedParentChildren = (
-        nextList.find((t) => t.id === activeTrah.id)?.members || []
+        finalList.find((t) => t.id === activeTrah.id)?.members || []
       )
         .filter((m) => m.parentId === quickParentId)
         .sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
@@ -2090,6 +2433,16 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   const handleMoveSiblingOrder = (memberId: string, direction: 'up' | 'down') => {
     const targetMember = activeTrah.members.find((m) => m.id === memberId);
     if (!targetMember) return;
+    const editPerm = canEditTrahMember(
+      activeTrah,
+      targetMember,
+      accountScope.email,
+      accountScope.isOwner
+    );
+    if (!editPerm.ok) {
+      showNotification(editPerm.reason || 'Urutan profil ini terkunci.');
+      return;
+    }
     const parentKey = targetMember.parentId || null;
     const parentObj = parentKey
       ? activeTrah.members.find((m) => m.id === parentKey)
@@ -2192,6 +2545,14 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       city?: string;
     }
   ) => {
+    const existing = activeTrah.members.find((m) => m.id === memberId);
+    if (!existing) return;
+    const editPerm = canEditTrahMember(activeTrah, existing, accountScope.email, accountScope.isOwner);
+    if (!editPerm.ok) {
+      showNotification(editPerm.reason || 'Profil ini terkunci.');
+      return;
+    }
+
     let syncedMember: FamilyMember | undefined;
     const nextList = trahList.map((t) => {
       if (t.id !== activeTrah.id) return t;
@@ -2215,8 +2576,9 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       };
     });
     if (!syncedMember) return;
-    setTrahList(nextList);
-    flushTrahListToStorage(nextList);
+    const finalList = propagateCoreMemberEdit(syncedMember, nextList);
+    setTrahList(finalList);
+    flushTrahListToStorage(finalList);
     if (selectedMember?.id === memberId) {
       setSelectedMember(syncedMember);
     }
@@ -2226,6 +2588,14 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     e.preventDefault();
     if (!nameInput.trim()) {
       showNotification('Nama lengkap tidak boleh kosong!');
+      return;
+    }
+
+    if (
+      (formMode === 'add_root' || formMode === 'add_child') &&
+      getEffectiveTrahRole(activeTrah, accountScope.email, accountScope.isOwner) === 'viewer'
+    ) {
+      showNotification('Akses Anda di Trah ini adalah "Lihat Saja".');
       return;
     }
 
@@ -2303,6 +2673,20 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         summary: `Menambah anggota "${newMember.name}"${parent ? ` (anak dari ${parent.name})` : ''}`,
       });
     } else if (formMode === 'edit') {
+      const targetBefore = activeTrah.members.find((m) => m.id === formMemberId);
+      if (targetBefore) {
+        const editPerm = canEditTrahMember(
+          activeTrah,
+          targetBefore,
+          accountScope.email,
+          accountScope.isOwner
+        );
+        if (!editPerm.ok) {
+          showNotification(editPerm.reason || 'Profil ini terkunci.');
+          return;
+        }
+      }
+
       const isSanta =
         activeTrah.id === 'trah-ayah-user' ||
         activeTrah.name.toUpperCase().includes('SANTA');
@@ -2336,8 +2720,9 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         };
       });
 
-      setTrahList(nextList);
-      flushTrahListToStorage(nextList);
+      const finalList = propagateCoreMemberEdit(updatedTargetMember, nextList);
+      setTrahList(finalList);
+      flushTrahListToStorage(finalList);
       if (updatedTargetMember && selectedMember?.id === formMemberId) {
         setSelectedMember(updatedTargetMember);
       }
@@ -2359,6 +2744,10 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   };
 
   const handleRepairActiveTrahLineage = () => {
+    if (!canManageTrahAdmin(activeTrah, accountScope.email, accountScope.isOwner)) {
+      showNotification('Hanya Pengurus Trah yang berhak menjalankan perbaikan garis nasab.');
+      return;
+    }
     const isSanta =
       activeTrah.id === 'trah-ayah-user' ||
       activeTrah.name.toUpperCase().includes('SANTA');
@@ -2384,11 +2773,15 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   };
 
   const handleDeleteMember = (member: FamilyMember) => {
-    if (
-      !window.confirm(
-        `Yakin ingin menghapus "${member.name}" beserta seluruh cabang keturunannya dari silsilah? Tindakan ini tidak dapat dibatalkan.`
-      )
-    ) {
+    const delPerm = canDeleteTrahMember(
+      activeTrah,
+      member,
+      activeTrah.members,
+      accountScope.email,
+      accountScope.isOwner
+    );
+    if (!delPerm.ok) {
+      showNotification(delPerm.reason || 'Anggota ini tidak dapat dihapus.');
       return;
     }
 
@@ -2399,8 +2792,31 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         .filter((m) => m.parentId === id)
         .forEach((child) => collectDescendants(child.id));
     };
-
     collectDescendants(member.id);
+
+    // Lindungi node ter-klaim di dalam cabang agar non-owner tidak menghapusnya tanpa sadar
+    if (!canManageTrahAdmin(activeTrah, accountScope.email, accountScope.isOwner)) {
+      const claimedDesc = activeTrah.members.find(
+        (m) =>
+          toDeleteIds.has(m.id) &&
+          m.claimedByEmail &&
+          m.claimedByEmail.toLowerCase() !== accountScope.email.toLowerCase()
+      );
+      if (claimedDesc) {
+        showNotification(
+          `Cabang ini memuat profil ter-klaim "${claimedDesc.name}". Hanya Pengurus Trah yang dapat menghapusnya.`
+        );
+        return;
+      }
+    }
+
+    if (
+      !window.confirm(
+        `Yakin ingin menghapus "${member.name}" beserta seluruh cabang keturunannya (${toDeleteIds.size} anggota) dari silsilah? Tindakan ini tidak dapat dibatalkan.`
+      )
+    ) {
+      return;
+    }
 
     setTrahList((prev) =>
       prev.map((t) => {
@@ -2489,6 +2905,9 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       description: descText,
       lineageSide: newTrahLineage,
       members: initialMembers,
+      creatorEmail: accountScope.email || accountProfile.email || undefined,
+      userRole: 'admin',
+      invitePolicy: { version: 1, role: 'member', expiryHours: 168 },
     };
 
     setTrahList((prev) => [...prev, newTrah]);
@@ -2572,18 +2991,24 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     const existingAyahPasangan = trahList.find((t) => t.lineageSide === 'ayah_pasangan');
     const existingIbuPasangan = trahList.find((t) => t.lineageSide === 'ibu_pasangan');
 
+    const nowBase = Date.now();
     let updatedList = [...trahList];
+    let addedCount = 0;
 
     if (!existingAyahPasangan) {
-      const trahAyahPasangan: TrahCategory = {
-        id: `trah_ap_${Date.now()}`,
+      addedCount++;
+      updatedList.push({
+        id: `trah_ap_${nowBase}`,
         name: `TRAH AYAH PASANGAN (${ayahName})`,
         description: `Garis Silsilah Ayah Mertua dari ${sName}`,
         lineageSide: 'ayah_pasangan',
         linkedSpouseName: sName,
+        creatorEmail: accountScope.email || undefined,
+        userRole: 'admin',
+        invitePolicy: { version: 1, role: 'member', expiryHours: 168 },
         members: [
           {
-            id: `map_${Date.now()}_1`,
+            id: `map_${nowBase}_1`,
             name: ayahName,
             callName: `Bapak Mertua (${ayahName.split(' ')[0]})`,
             gender: 'L',
@@ -2591,23 +3016,26 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             parentId: null,
             generationLevel: 0,
             orderIndex: 1,
-            notes: `Ayah kandung dari ${sName}`
-          }
-        ]
-      };
-      updatedList.push(trahAyahPasangan);
+            notes: `Ayah kandung dari ${sName}`,
+          },
+        ],
+      });
     }
 
     if (!existingIbuPasangan) {
-      const trahIbuPasangan: TrahCategory = {
-        id: `trah_ip_${Date.now() + 1}`,
+      addedCount++;
+      updatedList.push({
+        id: `trah_ip_${nowBase + 1}`,
         name: `TRAH IBU PASANGAN (${ibuName})`,
         description: `Garis Silsilah Ibu Mertua dari ${sName}`,
         lineageSide: 'ibu_pasangan',
         linkedSpouseName: sName,
+        creatorEmail: accountScope.email || undefined,
+        userRole: 'admin',
+        invitePolicy: { version: 1, role: 'member', expiryHours: 168 },
         members: [
           {
-            id: `mip_${Date.now()}_2`,
+            id: `mip_${nowBase}_2`,
             name: ibuName,
             callName: `Ibu Mertua (${ibuName.split(' ')[0]})`,
             gender: 'P',
@@ -2615,25 +3043,110 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             parentId: null,
             generationLevel: 0,
             orderIndex: 1,
-            notes: `Ibunda kandung dari ${sName}`
-          }
-        ]
+            notes: `Ibunda kandung dari ${sName}`,
+          },
+        ],
+      });
+    }
+
+    // Tambahan opsional 4 jalur Kakek/Nenek Pasangan (Total 8+ Pilar Trah)
+    const grandparentSpecs: Array<{
+      side: LineageSide;
+      input: string;
+      gender: 'L' | 'P';
+      titlePrefix: string;
+      desc: string;
+    }> = [
+      {
+        side: 'kakek_ayah_pasangan',
+        input: spouseKakekAyahInput,
+        gender: 'L',
+        titlePrefix: 'TRAH KAKEK AYAH PASANGAN',
+        desc: `Kakek dari pihak Ayah ${sName}`,
+      },
+      {
+        side: 'nenek_ayah_pasangan',
+        input: spouseNenekAyahInput,
+        gender: 'P',
+        titlePrefix: 'TRAH NENEK AYAH PASANGAN',
+        desc: `Nenek dari pihak Ayah ${sName}`,
+      },
+      {
+        side: 'kakek_ibu_pasangan',
+        input: spouseKakekIbuInput,
+        gender: 'L',
+        titlePrefix: 'TRAH KAKEK IBU PASANGAN',
+        desc: `Kakek dari pihak Ibu ${sName}`,
+      },
+      {
+        side: 'nenek_ibu_pasangan',
+        input: spouseNenekIbuInput,
+        gender: 'P',
+        titlePrefix: 'TRAH NENEK IBU PASANGAN',
+        desc: `Nenek dari pihak Ibu ${sName}`,
+      },
+    ];
+
+    grandparentSpecs.forEach((spec, idx) => {
+      const cleanName = spec.input.trim();
+      if (!cleanName) return;
+      if (updatedList.some((t) => t.lineageSide === spec.side)) return;
+      addedCount++;
+      updatedList.push({
+        id: `trah_gp_${nowBase}_${idx + 3}`,
+        name: `${spec.titlePrefix} (${cleanName})`,
+        description: spec.desc,
+        lineageSide: spec.side,
+        linkedSpouseName: sName,
+        creatorEmail: accountScope.email || undefined,
+        userRole: 'admin',
+        invitePolicy: { version: 1, role: 'member', expiryHours: 168 },
+        members: [
+          {
+            id: `mgp_${nowBase}_${idx + 3}`,
+            name: cleanName,
+            gender: spec.gender,
+            isDeceased: true,
+            parentId: null,
+            generationLevel: 0,
+            orderIndex: 1,
+            notes: spec.desc,
+          },
+        ],
+      });
+    });
+
+    // Pastikan nama pasangan juga tercatat di Hub Keluarga Inti jika belum ada
+    if (!nuclearHub.spouses.some((sp) => sp.name.trim().toLowerCase() === sName.toLowerCase())) {
+      const nextHub: NuclearFamilyHubData = {
+        ...nuclearHub,
+        updatedAt: new Date().toISOString(),
+        spouses: [
+          ...nuclearHub.spouses,
+          { id: `sp_${nowBase}`, name: sName, status: 'menikah' },
+        ],
       };
-      updatedList.push(trahIbuPasangan);
+      setNuclearHub(nextHub);
+      saveNuclearFamilyHub(accountScope.scopeKey, nextHub);
     }
 
     setTrahList(updatedList);
-    try {
-      localStorage.setItem(activeTrahStorageKey, JSON.stringify(updatedList));
-    } catch (err) {
-      console.warn(err);
-    }
+    flushTrahListToStorage(updatedList);
 
     setIsSpouseModalOpen(false);
-    showNotification(`4 Pilar Trah Lengkap Terhubung! (Trah Ayah & Ibu User + Trah Ayah & Ibu ${sName}) 💍✨`);
+    setSpouseGrandparentsExpanded(false);
+    setSpouseKakekAyahInput('');
+    setSpouseNenekAyahInput('');
+    setSpouseKakekIbuInput('');
+    setSpouseNenekIbuInput('');
+    showNotification(
+      addedCount > 0
+        ? `${updatedList.length} Pilar Trah aktif & terhubung dengan keluarga ${sName}! 💍✨`
+        : `Trah pasangan ${sName} sudah terhubung (${updatedList.length} Trah).`
+    );
   };
 
-  // Handlers untuk Medsos TrahBook (Feed 4 Trah)
+  // Handlers untuk Medsos TrahBook
   const handleCreatePost = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPostContent.trim()) {
@@ -2642,11 +3155,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     }
 
     const currentLineage = activeTrah.lineageSide || 'ayah_user';
-    let authorKinship = `Keluarga ${activeTrah.name}`;
-    if (currentLineage === 'ayah_user') authorKinship = 'Keluarga Trah Ayah';
-    else if (currentLineage === 'ibu_user') authorKinship = 'Keluarga Trah Ibu';
-    else if (currentLineage === 'ayah_pasangan') authorKinship = 'Keluarga Besan Ayah';
-    else if (currentLineage === 'ibu_pasangan') authorKinship = 'Keluarga Besan Ibu';
+    const lineageMeta = getLineageBadgeMeta(currentLineage);
+    const authorKinship =
+      currentLineage === 'umum'
+        ? `Keluarga ${activeTrah.name}`
+        : `Keluarga ${lineageMeta.shortTag}`;
 
     const newPost: TrahPost = {
       id: `post_${Date.now()}`,
@@ -2712,6 +3225,10 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   };
 
   const handleMoveActiveTrahToAyah = () => {
+    if (!canManageTrahAdmin(activeTrah, accountScope.email, accountScope.isOwner)) {
+      showNotification('Hanya Pengurus Trah yang berhak memindahkan pilar Trah.');
+      return;
+    }
     const updated = trahList.map((t) => {
       if (t.id === activeTrah.id) {
         return {
@@ -2749,6 +3266,10 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     updates: Partial<Pick<TrahCategory, 'name' | 'description' | 'lineageSide'>>
   ) => {
     const targetBefore = trahList.find((t) => t.id === trahId);
+    if (targetBefore && !canManageTrahAdmin(targetBefore, accountScope.email, accountScope.isOwner)) {
+      showNotification('Hanya Pengurus Trah yang berhak mengubah info Trah ini.');
+      return;
+    }
     setTrahList((prev) =>
       prev.map((t) => (t.id === trahId ? { ...t, ...updates } : t))
     );
@@ -2829,10 +3350,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
     const payload = {
       app: 'LeluhurQu',
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       accountProfile,
       appPreferences,
+      nuclearHub,
       trahList,
       trahPosts,
       activityLogs,
@@ -2896,6 +3418,10 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       setTrahList(normalizedImported);
       setActiveTrahId(normalizedImported[0].id);
 
+      if (parsed.nuclearHub && typeof parsed.nuclearHub === 'object' && parsed.nuclearHub.self) {
+        setNuclearHub(parsed.nuclearHub);
+        saveNuclearFamilyHub(accountScope.scopeKey, parsed.nuclearHub);
+      }
       if (Array.isArray(parsed.trahPosts)) {
         setTrahPosts(parsed.trahPosts);
       }
@@ -3176,43 +3702,28 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       </header>
 
       {/* ========================================================= */}
-      {/* 2. BAR 4 PILAR TRAH: AYAH USER, IBU USER, AYAH PASANGAN, IBU PASANGAN */}
+      {/* 2. BAR PILAR TRAH (4–8+ JALUR: USER, PASANGAN & MODULAR)  */}
       {/* ========================================================= */}
       {appPreferences.showPillarBar && (
       <div className="bg-emerald-950/90 text-white px-3 py-1.5 border-b border-emerald-900 flex items-center justify-between gap-2 overflow-x-auto no-scrollbar shrink-0 text-xs">
         <div className="flex items-center gap-1.5 shrink-0 font-bold text-[11px] text-emerald-300">
           <Layers className="w-3.5 h-3.5 text-amber-300" />
-          <span>Pilar Trah:</span>
+          <span>Pilar Trah ({trahList.length}):</span>
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
           {trahList.map((t) => {
             const isActive = t.id === activeTrah.id;
-            let badgeIcon = '👨';
-            let roleTag = 'Ayah';
+            const linMeta = getLineageBadgeMeta(t.lineageSide);
             let label = t.name;
-
-            if (t.lineageSide === 'ibu_user' || t.id === 'trah-ibu-user') {
-              badgeIcon = '👩';
-              roleTag = 'Ibu';
-              label = t.name.includes('ROHANI') ? 'Trah Rohani (Ibu)' : t.name;
-            } else if (t.lineageSide === 'ayah_user' || t.id === 'trah-ayah-user' || t.id === 'trah-santa' || t.name.toUpperCase().includes('SANTA')) {
-              badgeIcon = '👨';
-              roleTag = 'Ayah';
-              label = t.name.toUpperCase().includes('SANTA') ? 'Trah Santa (Ayah)' : t.name;
-            } else if (t.lineageSide === 'ayah_pasangan') {
-              badgeIcon = '💍👨';
-              roleTag = 'Ayah Besan';
-              label = t.name.split('(')[0].trim() || 'Trah Ayah Pasangan';
-            } else if (t.lineageSide === 'ibu_pasangan') {
-              badgeIcon = '💍👩';
-              roleTag = 'Ibu Besan';
-              label = t.name.split('(')[0].trim() || 'Trah Ibu Pasangan';
-            } else {
-              badgeIcon = '🌳';
-              roleTag = 'Modular';
-              label = t.name;
+            if (t.lineageSide === 'ibu_user' && t.name.includes('ROHANI')) {
+              label = 'Trah Rohani (Ibu)';
+            } else if (t.lineageSide === 'ayah_user' && t.name.toUpperCase().includes('SANTA')) {
+              label = 'Trah Santa (Ayah)';
+            } else if (t.lineageSide !== 'umum' && t.name.includes('(')) {
+              label = t.name.split('(')[0].trim() || t.name;
             }
+            const coreLinked = getTrahCoreLinkStatus(t).linked;
 
             return (
               <button
@@ -3227,14 +3738,36 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                     : 'bg-emerald-900/60 hover:bg-emerald-900 text-emerald-100 hover:text-white border border-emerald-800'
                 }`}
               >
-                <span>{badgeIcon}</span>
+                <span>{linMeta.icon}</span>
                 <span className="whitespace-nowrap font-black">{label}</span>
+                {coreLinked && (
+                  <span title="Tersinkron Hub Keluarga Inti" className="text-[9px]">
+                    🔗
+                  </span>
+                )}
                 <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${isActive ? 'bg-stone-900 text-amber-300' : 'bg-emerald-950 text-emerald-300'}`}>
-                  {roleTag} • {t.members.length}
+                  {linMeta.shortTag} • {t.members.length}
                 </span>
               </button>
             );
           })}
+
+          <button
+            onClick={() => {
+              setNuclearHubPreselect(null);
+              setIsNuclearHubOpen(true);
+            }}
+            className="py-1 px-2.5 rounded-xl bg-teal-500/90 hover:bg-teal-400 text-stone-950 text-[11px] font-extrabold flex items-center gap-1 shrink-0 shadow-2xs"
+            title="Isi 1x Data Keluarga Inti (Anda, Pasangan & Anak) lalu Sinkron Otomatis ke Semua Trah"
+          >
+            <Users className="w-3 h-3" />
+            <span>Keluarga Inti</span>
+            {trahList.some((t) => getTrahCoreLinkStatus(t).linked) && (
+              <span className="text-[9px] bg-stone-950 text-teal-300 px-1 rounded-full font-black">
+                {trahList.filter((t) => getTrahCoreLinkStatus(t).linked).length}
+              </span>
+            )}
+          </button>
 
           <button
             onClick={() => setIsAddTrahModalOpen(true)}
@@ -3248,7 +3781,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
           <button
             onClick={() => setIsSpouseModalOpen(true)}
             className="py-1 px-2 rounded-xl bg-emerald-800/80 hover:bg-emerald-700 text-white text-[11px] font-bold flex items-center gap-1 border border-emerald-700 shrink-0"
-            title="Kelola Pasangan & Hubungkan 4 Trah"
+            title="Kelola Pasangan & Hubungkan 4–8+ Pilar Trah"
           >
             <Plus className="w-3 h-3 text-amber-300" />
             <span>Taut Pasangan</span>
@@ -3270,7 +3803,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       {/* 3. SUB-TOOLBAR KANVAS AKTIF                               */}
       {/* ========================================================= */}
       <div className="bg-white border-b border-stone-200 px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 shrink-0 shadow-xs z-20">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {viewMode === 'grid' && (
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-extrabold">
               <Move className="w-3.5 h-3.5 text-amber-600" />
@@ -3298,9 +3831,23 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
           {viewMode === 'settings' && (
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-stone-100 border border-stone-300 text-stone-800 text-[11px] font-extrabold">
               <Settings className="w-3.5 h-3.5 text-emerald-700" />
-              <span>Pengaturan Akun, 4 Pilar Trah & Cadangan Data</span>
+              <span>Pengaturan Akun, Pilar Trah (4–8+) & Cadangan Data</span>
             </div>
           )}
+
+          {trahList.length > 0 && viewMode !== 'settings' && (() => {
+            const effRole = getEffectiveTrahRole(activeTrah, accountScope.email, accountScope.isOwner);
+            const roleMeta = getTrahRoleMeta(effRole);
+            return (
+              <span
+                title={roleMeta.description}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border text-[10px] font-extrabold ${roleMeta.badgeClass}`}
+              >
+                <ShieldCheck className="w-3 h-3 shrink-0" />
+                <span>Akses: {roleMeta.shortLabel}</span>
+              </span>
+            );
+          })()}
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
@@ -3794,11 +4341,21 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                                       &ldquo;{m.callName}&rdquo;
                                     </div>
                                   )}
-                                  {m.claimedByName && (
-                                    <div className="mt-0.5">
-                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800 text-[9px] font-bold">
-                                        ✓ Diklaim: {m.claimedByName}
-                                      </span>
+                                  {(m.claimedByName || m.coreRefId) && (
+                                    <div className="mt-0.5 flex flex-wrap gap-1">
+                                      {m.claimedByName && (
+                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800 text-[9px] font-bold">
+                                          ✓ Diklaim: {m.claimedByName}
+                                        </span>
+                                      )}
+                                      {m.coreRefId && (
+                                        <span
+                                          title="Tersinkron otomatis dengan Hub Keluarga Inti"
+                                          className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-md bg-teal-50 border border-teal-200 text-teal-800 text-[9px] font-bold"
+                                        >
+                                          🔗 Inti
+                                        </span>
+                                      )}
                                     </div>
                                   )}
                                 </button>
@@ -3916,27 +4473,60 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                               </span>
                             </td>
                             <td className="py-2.5 px-3 text-center">
-                              <div className="flex justify-center gap-1">
-                                <button
-                                  onClick={() => {
-                                    setViewMode('grid');
-                                    showNotification(`Beralih ke Kanvas Grid untuk ${m.name} ✋`);
-                                  }}
-                                  className="p-1 hover:bg-amber-100 rounded text-amber-700"
-                                  title="Lihat di Kanvas Grid"
-                                >
-                                  <Move className="w-3 h-3" />
-                                </button>
-                                <button onClick={() => handleOpenQuickBatch(m)} className="p-1 hover:bg-amber-100 rounded text-amber-700" title="Isi Cepat Anak">
-                                  <Zap className="w-3 h-3 fill-amber-500" />
-                                </button>
-                                <button onClick={() => handleOpenEdit(m)} className="p-1 hover:bg-stone-200 rounded text-stone-700" title="Edit Data & Orang Tua">
-                                  <Edit3 className="w-3 h-3" />
-                                </button>
-                                <button onClick={() => handleDeleteMember(m)} className="p-1 hover:bg-rose-100 rounded text-rose-700" title="Hapus">
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
-                              </div>
+                              {(() => {
+                                const rowEditPerm = canEditTrahMember(
+                                  activeTrah,
+                                  m,
+                                  accountScope.email,
+                                  accountScope.isOwner
+                                );
+                                const rowDeletePerm = canDeleteTrahMember(
+                                  activeTrah,
+                                  m,
+                                  activeTrah.members,
+                                  accountScope.email,
+                                  accountScope.isOwner
+                                );
+                                return (
+                                  <div className="flex justify-center gap-1">
+                                    <button
+                                      onClick={() => {
+                                        setViewMode('grid');
+                                        showNotification(`Beralih ke Kanvas Grid untuk ${m.name} ✋`);
+                                      }}
+                                      className="p-1 hover:bg-amber-100 rounded text-amber-700"
+                                      title="Lihat di Kanvas Grid"
+                                    >
+                                      <Move className="w-3 h-3" />
+                                    </button>
+                                    <button onClick={() => handleOpenQuickBatch(m)} className="p-1 hover:bg-amber-100 rounded text-amber-700" title="Isi Cepat Anak">
+                                      <Zap className="w-3 h-3 fill-amber-500" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleOpenEdit(m)}
+                                      className={`p-1 rounded ${
+                                        rowEditPerm.ok
+                                          ? 'hover:bg-stone-200 text-stone-700'
+                                          : 'text-stone-400 hover:bg-stone-100 opacity-70'
+                                      }`}
+                                      title={rowEditPerm.ok ? 'Edit Data & Orang Tua' : rowEditPerm.reason}
+                                    >
+                                      {rowEditPerm.ok ? <Edit3 className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteMember(m)}
+                                      className={`p-1 rounded ${
+                                        rowDeletePerm.ok
+                                          ? 'hover:bg-rose-100 text-rose-700'
+                                          : 'text-stone-400 hover:bg-stone-100 opacity-60'
+                                      }`}
+                                      title={rowDeletePerm.ok ? 'Hapus' : rowDeletePerm.reason}
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                );
+                              })()}
                             </td>
                           </tr>
                         );
@@ -4012,21 +4602,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
               {trahList.map((t) => {
                 const isSelected = feedPillarFilter === t.id;
-                let emoji = '🌳';
-                let activeColor = 'bg-emerald-600 text-white shadow-xs';
-                if (t.lineageSide === 'ayah_user') {
-                  emoji = '👨';
-                  activeColor = 'bg-sky-600 text-white shadow-xs';
-                } else if (t.lineageSide === 'ibu_user') {
-                  emoji = '👩';
-                  activeColor = 'bg-rose-600 text-white shadow-xs';
-                } else if (t.lineageSide === 'ayah_pasangan') {
-                  emoji = '💍👨';
-                  activeColor = 'bg-amber-600 text-white shadow-xs';
-                } else if (t.lineageSide === 'ibu_pasangan') {
-                  emoji = '💍👩';
-                  activeColor = 'bg-purple-600 text-white shadow-xs';
-                }
+                const linMeta = getLineageBadgeMeta(t.lineageSide);
 
                 const countForTrah = trahPosts.filter(
                   (p) => p.trahId === t.id || (!trahList.some((x) => x.id === p.trahId) && p.lineageSide === t.lineageSide)
@@ -4041,10 +4617,10 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                       setActiveTrahId(t.id);
                     }}
                     className={`py-1.5 px-3 rounded-xl font-bold flex items-center gap-1 shrink-0 transition ${
-                      isSelected ? activeColor : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                      isSelected ? linMeta.feedActiveClass : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                     }`}
                   >
-                    <span>{emoji}</span>
+                    <span>{linMeta.icon}</span>
                     <span className="max-w-[140px] truncate">{t.name.split('(')[0].trim()}</span>
                     <span className="text-[10px] opacity-80">({countForTrah})</span>
                   </button>
@@ -4150,31 +4726,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                 .map((post) => {
                   const matchedTrah = trahList.find((t) => t.id === post.trahId);
                   const displayTrahLabel = post.trahName || matchedTrah?.name;
-                  let badgePillar = {
-                    label: displayTrahLabel || 'Trah Modular',
-                    bg: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+                  const linMeta = getLineageBadgeMeta(post.lineageSide);
+                  const badgePillar = {
+                    label: displayTrahLabel || linMeta.label,
+                    bg: linMeta.lightBadgeClass,
                   };
-                  if (post.lineageSide === 'ayah_user') {
-                    badgePillar = {
-                      label: displayTrahLabel || 'Trah Ayah',
-                      bg: 'bg-sky-100 text-sky-800 border-sky-300',
-                    };
-                  } else if (post.lineageSide === 'ibu_user') {
-                    badgePillar = {
-                      label: displayTrahLabel || 'Trah Ibu',
-                      bg: 'bg-rose-100 text-rose-800 border-rose-300',
-                    };
-                  } else if (post.lineageSide === 'ayah_pasangan') {
-                    badgePillar = {
-                      label: displayTrahLabel || 'Ayah Pasangan',
-                      bg: 'bg-amber-100 text-amber-800 border-amber-300',
-                    };
-                  } else if (post.lineageSide === 'ibu_pasangan') {
-                    badgePillar = {
-                      label: displayTrahLabel || 'Ibu Pasangan',
-                      bg: 'bg-purple-100 text-purple-800 border-purple-300',
-                    };
-                  }
 
                   let catLabel = '🤝 Silaturahmi';
                   if (post.category === 'kabar_gembira') catLabel = '🎉 Kabar Gembira';
@@ -4362,9 +4918,18 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             savedDesignsCount={countSavedGridDesigns}
             activityLogs={activityLogs}
             onClearActivityLogs={() => {
+              const hasAnyAdmin =
+                accountScope.isOwner ||
+                trahList.some((t) => canManageTrahAdmin(t, accountScope.email, accountScope.isOwner));
+              if (!hasAnyAdmin) {
+                showNotification('Log aktivitas dikunci anti-hapus untuk akun Anggota/Lihat Saja.');
+                return;
+              }
               setActivityLogs([]);
               showNotification('Log aktivitas silsilah telah dibersihkan.');
             }}
+            currentEmail={accountScope.email}
+            isOwner={accountScope.isOwner}
             initialSectionTab={settingsSectionTrigger.tab}
             sectionTriggerKey={settingsSectionTrigger.key}
             showNotification={showNotification}
@@ -4446,12 +5011,12 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             <span className="text-[10px] tracking-tight mt-1 leading-none font-bold">Tabel</span>
           </button>
 
-          {/* 3. Medsos 4 Trah */}
+          {/* 3. Medsos TrahBook */}
           <button
             type="button"
             onClick={() => {
               setViewMode('feed');
-              showNotification('Beralih ke Medsos Khusus 4 Trah 💬');
+              showNotification('Beralih ke Medsos TrahBook 💬');
             }}
             className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-2xl transition-all duration-150 active:scale-95 relative ${
               viewMode === 'feed'
@@ -4611,6 +5176,24 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                   <button
                     onClick={() => {
                       setIsSidebarOpen(false);
+                      setNuclearHubPreselect(null);
+                      setIsNuclearHubOpen(true);
+                    }}
+                    className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 hover:to-emerald-500 text-stone-950 font-black text-xs flex items-center justify-between shadow-xs active:scale-95 transition"
+                    title="Isi 1x Data Keluarga Inti lalu sinkronkan ke semua 4–8+ Trah tanpa ketik ulang"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Users className="w-3.5 h-3.5 text-stone-950" />
+                      <span>Keluarga Inti (Isi 1×)</span>
+                    </span>
+                    <span className="text-[9px] bg-stone-950/20 px-1.5 py-0.5 rounded font-bold">
+                      {trahList.filter((t) => getTrahCoreLinkStatus(t).linked).length} Trah
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsSidebarOpen(false);
                       if (trahList.length === 0) {
                         setIsAddTrahModalOpen(true);
                         showNotification('Buat Trah keluarga pertama Anda terlebih dahulu!');
@@ -4634,11 +5217,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                       setIsSpouseModalOpen(true);
                     }}
                     className="w-full py-2 px-3 rounded-xl bg-emerald-800/80 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-between border border-emerald-600/60 shadow-xs active:scale-95 transition"
-                    title="Tautkan Pasangan (Aktifkan 4 Pilar Trah: Ayah & Ibu User + Ayah & Ibu Pasangan)"
+                    title="Tautkan Pasangan (Aktifkan 4–8+ Pilar Trah: Ayah, Ibu & Kakek/Nenek User + Pasangan)"
                   >
                     <span className="flex items-center gap-2">
                       <HeartHandshake className="w-3.5 h-3.5 text-rose-300" />
-                      <span>Tautkan Pasangan (4 Trah)</span>
+                      <span>Tautkan Pasangan (4–8+ Trah)</span>
                     </span>
                     <span className="text-[9px] bg-emerald-950/50 text-emerald-200 px-1.5 py-0.5 rounded font-bold">Besan</span>
                   </button>
@@ -4782,27 +5365,10 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                   )}
                   {trahList.map((t) => {
                     const isCurrent = t.id === activeTrah.id;
-                    let iconEmoji = '🌳';
-                    let badgeLabel = 'Trah Modular';
-                    let badgeColor = 'bg-emerald-950 text-emerald-300 border-emerald-700';
-
-                    if (t.lineageSide === 'ayah_user') {
-                      iconEmoji = '👨';
-                      badgeLabel = 'Trah Ayah';
-                      badgeColor = 'bg-sky-950 text-sky-300 border-sky-700';
-                    } else if (t.lineageSide === 'ibu_user') {
-                      iconEmoji = '👩';
-                      badgeLabel = 'Trah Ibu';
-                      badgeColor = 'bg-rose-950 text-rose-300 border-rose-700';
-                    } else if (t.lineageSide === 'ayah_pasangan') {
-                      iconEmoji = '💍👨';
-                      badgeLabel = 'Ayah Besan';
-                      badgeColor = 'bg-amber-950 text-amber-300 border-amber-700';
-                    } else if (t.lineageSide === 'ibu_pasangan') {
-                      iconEmoji = '💍👩';
-                      badgeLabel = 'Ibu Besan';
-                      badgeColor = 'bg-purple-950 text-purple-300 border-purple-700';
-                    }
+                    const linMeta = getLineageBadgeMeta(t.lineageSide);
+                    const effRole = getEffectiveTrahRole(t, accountScope.email, accountScope.isOwner);
+                    const roleMeta = getTrahRoleMeta(effRole);
+                    const coreLinked = getTrahCoreLinkStatus(t).linked;
 
                     return (
                       <button
@@ -4821,12 +5387,20 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                       >
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
-                            <span>{iconEmoji}</span>
+                            <span>{linMeta.icon}</span>
                             <span className="font-extrabold text-xs block truncate">{t.name}</span>
+                            {coreLinked && (
+                              <span title="Tersinkron Hub Keluarga Inti" className="text-[10px]">
+                                🔗
+                              </span>
+                            )}
                           </div>
-                          <div className="flex items-center gap-1 mt-0.5">
-                            <span className={`text-[9px] font-bold px-1.5 rounded border ${badgeColor}`}>
-                              {badgeLabel}
+                          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                            <span className={`text-[9px] font-bold px-1.5 rounded border ${linMeta.darkBadgeClass}`}>
+                              {linMeta.shortTag}
+                            </span>
+                            <span className="text-[9px] font-bold px-1.5 rounded bg-stone-800 text-stone-300 border border-stone-700">
+                              {roleMeta.shortLabel}
                             </span>
                             <span className="text-[10px] text-stone-400 font-mono">
                               {t.members.length} Anggota
@@ -5730,7 +6304,24 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
               )}
             </div>
 
-            {/* Klaim Identitas Diri di Silsilah */}
+            {/* Klaim Identitas Diri & Sinkron Hub Keluarga Inti */}
+            {selectedMember.coreRefId && (
+              <div className="px-3 py-2 rounded-xl bg-teal-50 border border-teal-200 text-teal-900 text-[11px] font-bold flex items-center justify-between gap-2">
+                <span>🔗 Terhubung ke Hub Keluarga Inti (Edit otomatis sinkron lintas Trah)</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsDetailModalOpen(false);
+                    setNuclearHubPreselect(null);
+                    setIsNuclearHubOpen(true);
+                  }}
+                  className="px-2 py-0.5 rounded-lg bg-teal-700 text-white text-[10px] font-extrabold shrink-0"
+                >
+                  Buka Hub
+                </button>
+              </div>
+            )}
+
             <div className="p-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 space-y-2">
               {selectedMember.claimedByName ? (
                 <div className="flex items-center justify-between gap-2">
@@ -5744,7 +6335,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                     </p>
                   </div>
                   {(selectedMember.claimedByEmail === (accountScope.email || accountProfile.email || `akun-${accountScope.scopeKey}`) ||
-                    accountScope.isOwner) && (
+                    canManageTrahAdmin(activeTrah, accountScope.email, accountScope.isOwner)) && (
                     <button
                       type="button"
                       onClick={() => handleUnclaimMember(selectedMember)}
@@ -5758,7 +6349,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <p className="text-[11px] font-bold text-stone-800">Apakah ini profil Anda?</p>
-                    <p className="text-[10px] text-stone-500">Tandai sebagai akun Anda &amp; catat di Log Aktivitas.</p>
+                    <p className="text-[10px] text-stone-500">Tandai sebagai akun Anda &amp; kunci edit dari akun non-pengurus.</p>
                   </div>
                   <button
                     type="button"
@@ -5773,28 +6364,69 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             </div>
 
             {/* Aksi */}
-            <div className="flex gap-2 pt-1">
-              <button
-                onClick={() => {
-                  handleOpenEdit(selectedMember);
-                  setIsDetailModalOpen(false);
-                }}
-                className="flex-1 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-stone-950 font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-                <span>Ganti Foto / Edit Data</span>
-              </button>
-              <button
-                onClick={() => {
-                  handleOpenQuickBatch(selectedMember);
-                  setIsDetailModalOpen(false);
-                }}
-                className="py-2 px-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center justify-center gap-1 transition active:scale-95"
-              >
-                <Zap className="w-3.5 h-3.5 fill-white" />
-                <span>+ Anak</span>
-              </button>
-            </div>
+            {(() => {
+              const detailEditPerm = canEditTrahMember(
+                activeTrah,
+                selectedMember,
+                accountScope.email,
+                accountScope.isOwner
+              );
+              const detailRole = getEffectiveTrahRole(
+                activeTrah,
+                accountScope.email,
+                accountScope.isOwner
+              );
+              return (
+                <div className="space-y-2 pt-1">
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        handleOpenEdit(selectedMember);
+                        if (detailEditPerm.ok) setIsDetailModalOpen(false);
+                      }}
+                      title={detailEditPerm.ok ? 'Ubah foto atau biodata' : detailEditPerm.reason}
+                      className={`flex-1 py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95 ${
+                        detailEditPerm.ok
+                          ? 'bg-amber-400 hover:bg-amber-500 text-stone-950'
+                          : 'bg-stone-200 text-stone-500'
+                      }`}
+                    >
+                      {detailEditPerm.ok ? <Edit3 className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                      <span>{detailEditPerm.ok ? 'Ganti Foto / Edit Data' : 'Edit Terkunci'}</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        handleOpenQuickBatch(selectedMember);
+                        if (detailRole !== 'viewer') setIsDetailModalOpen(false);
+                      }}
+                      className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition active:scale-95 ${
+                        detailRole === 'viewer'
+                          ? 'bg-stone-200 text-stone-500'
+                          : 'bg-emerald-700 hover:bg-emerald-800 text-white'
+                      }`}
+                    >
+                      <Zap className="w-3.5 h-3.5 fill-current" />
+                      <span>+ Anak</span>
+                    </button>
+                  </div>
+
+                  {detailRole !== 'viewer' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsDetailModalOpen(false);
+                        setNuclearHubPreselect({ trahId: activeTrah.id, parentId: selectedMember.id });
+                        setIsNuclearHubOpen(true);
+                      }}
+                      className="w-full py-2 px-3 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200 font-extrabold text-[11px] flex items-center justify-center gap-1.5 transition"
+                    >
+                      <Users className="w-3.5 h-3.5 text-teal-700" />
+                      <span>Tempel Keluarga Inti Saya sebagai Anak dari {selectedMember.name}</span>
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -5903,20 +6535,20 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
               <label className="text-[11px] font-bold text-stone-700 block mb-1.5">
                 Pilih Trah yang Diundang:
               </label>
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-0.5">
                 {trahList.map((t) => {
                   const isSel = (inviteTrahTarget || activeTrah)?.id === t.id;
-                  let iconEmoji = '🌳';
-                  if (t.lineageSide === 'ayah_user') iconEmoji = '👨';
-                  else if (t.lineageSide === 'ibu_user') iconEmoji = '👩';
-                  else if (t.lineageSide === 'ayah_pasangan') iconEmoji = '💍👨';
-                  else if (t.lineageSide === 'ibu_pasangan') iconEmoji = '💍👩';
+                  const linMeta = getLineageBadgeMeta(t.lineageSide);
 
                   return (
                     <button
                       key={t.id}
                       type="button"
-                      onClick={() => setInviteTrahTarget(t)}
+                      onClick={() => {
+                        setInviteTrahTarget(t);
+                        setInviteAccessRole(t.invitePolicy?.role || 'member');
+                        setInviteExpiryHours(t.invitePolicy?.expiryHours ?? 168);
+                      }}
                       className={`p-2 rounded-xl border text-left transition ${
                         isSel
                           ? 'bg-emerald-50 border-emerald-600 text-emerald-900 font-extrabold ring-1 ring-emerald-500'
@@ -5924,17 +6556,116 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                       }`}
                     >
                       <div className="flex items-center gap-1 text-xs">
-                        <span>{iconEmoji}</span>
+                        <span>{linMeta.icon}</span>
                         <span className="truncate">{t.name.split('(')[0]}</span>
                       </div>
                       <span className="text-[9px] text-stone-500 block truncate">
-                        {t.members.length} anggota tercatat
+                        {linMeta.shortTag} • {t.members.length} anggota
                       </span>
                     </button>
                   );
                 })}
               </div>
             </div>
+
+            {/* Kontrol Keamanan Undangan: Hak Akses, Masa Berlaku & Putar Versi QR */}
+            {(() => {
+              const target = inviteTrahTarget || activeTrah;
+              const isTargetAdmin = canManageTrahAdmin(target, accountScope.email, accountScope.isOwner);
+              const currentVersion = target.invitePolicy?.version || 1;
+              return (
+                <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-extrabold text-stone-800 uppercase tracking-wider flex items-center gap-1">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>Hak Akses &amp; Masa Berlaku Undangan</span>
+                    </span>
+                    <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-stone-200 text-stone-700">
+                      Versi QR v{currentVersion}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-1">
+                    {(['viewer', 'member', 'admin'] as TrahAccessRole[]).map((roleKey) => {
+                      const rm = getTrahRoleMeta(roleKey);
+                      const isPicked = inviteAccessRole === roleKey;
+                      return (
+                        <button
+                          key={roleKey}
+                          type="button"
+                          disabled={!isTargetAdmin}
+                          onClick={() => setInviteAccessRole(roleKey)}
+                          className={`py-1.5 px-2 rounded-xl border text-center transition disabled:opacity-60 ${
+                            isPicked
+                              ? 'bg-emerald-700 text-white border-emerald-700 font-extrabold shadow-2xs'
+                              : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-100 font-semibold'
+                          }`}
+                        >
+                          <div className="text-[10px] leading-tight">{rm.shortLabel}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-stone-500 leading-snug">
+                    {getTrahRoleMeta(inviteAccessRole).description}
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                    <div className="flex items-center gap-1 flex-1 min-w-[150px]">
+                      <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <select
+                        disabled={!isTargetAdmin}
+                        value={inviteExpiryHours}
+                        onChange={(e) => setInviteExpiryHours(Number(e.target.value))}
+                        className="w-full px-2 py-1 text-[11px] bg-white border border-stone-300 rounded-xl font-bold text-stone-800 outline-hidden disabled:opacity-60"
+                      >
+                        {INVITE_EXPIRY_OPTIONS.map((opt) => (
+                          <option key={opt.hours} value={opt.hours}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {isTargetAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextVer = currentVersion + 1;
+                          markInviteVersionRevoked(accountScope.scopeKey, target.id, nextVer);
+                          const updatedPolicy: TrahInvitePolicy = {
+                            role: inviteAccessRole,
+                            expiryHours: inviteExpiryHours,
+                            version: nextVer,
+                          };
+                          const nextList = trahList.map((item) =>
+                            item.id === target.id ? { ...item, invitePolicy: updatedPolicy } : item
+                          );
+                          setTrahList(nextList);
+                          flushTrahListToStorage(nextList);
+                          const updatedTarget = nextList.find((item) => item.id === target.id) || target;
+                          setInviteTrahTarget(updatedTarget);
+                          appendActivityLog({
+                            trahId: target.id,
+                            trahName: target.name,
+                            actionType: 'invite_share',
+                            targetName: `QR v${nextVer}`,
+                            summary: `Mematikan QR/Link lama & memutar kode undangan ke v${nextVer}`,
+                            details: `Semua undangan sebelum versi v${nextVer} ditolak otomatis.`,
+                          });
+                          showNotification(`QR & Link lama dimatikan! Kode undangan baru v${nextVer} aktif. 🔄`);
+                        }}
+                        className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[10px] font-extrabold flex items-center gap-1 shrink-0 transition"
+                        title="Batalkan semua QR/link yang sebelumnya dibagikan"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Matikan QR Lama &amp; Putar</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Tab Pilihan: Barcode QR vs Link Undangan */}
             <div className="grid grid-cols-2 gap-1.5 p-1 bg-stone-100 rounded-2xl border border-stone-200">
@@ -5966,9 +6697,16 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
             {(() => {
               const target = inviteTrahTarget || activeTrah;
+              const inviteMetaPolicy: Partial<TrahInvitePolicy> = {
+                role: inviteAccessRole,
+                expiryHours: inviteExpiryHours,
+                version: target.invitePolicy?.version || 1,
+              };
               const fallbackToken = encodeTrahInviteToken(
                 target,
-                accountProfile.displayName || 'Keluarga'
+                accountProfile.displayName || 'Keluarga',
+                inviteMetaPolicy,
+                accountScope.email
               );
               const activeToken = compactInviteToken || fallbackToken;
               const titleLinkObj = InviteRelayService.buildTitleInviteUrl('trah', target.name);
@@ -5990,7 +6728,9 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
               const isQrSelfContained =
                 selfContainedLink.length <= 1950 || activeToken.length <= 2200;
 
-              const inviteText = `Undangan Silsilah *${target.name}* (${target.members.length} anggota) di LeluhurQu.\nKlik link berikut untuk langsung membuka silsilah:\n${inviteLink}`;
+              const roleLabelText = getTrahRoleMeta(inviteAccessRole).shortLabel;
+              const expiryLabelText = formatInviteExpiryLabel(inviteExpiryHours);
+              const inviteText = `Undangan Silsilah *${target.name}* (${target.members.length} anggota) di LeluhurQu.\nHak Akses: ${roleLabelText} • ${expiryLabelText}\nKlik link berikut untuk langsung membuka silsilah:\n${inviteLink}`;
 
               const recordShareLog = (channel: string) => {
                 appendActivityLog({
@@ -5998,8 +6738,8 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                   trahName: target.name,
                   actionType: 'invite_share',
                   targetName: channel,
-                  summary: `Membagikan undangan Trah "${target.name}" via ${channel}`,
-                  details: `${target.members.length} anggota disertakan.`,
+                  summary: `Membagikan undangan Trah "${target.name}" (${roleLabelText}, ${expiryLabelText}) via ${channel}`,
+                  details: `${target.members.length} anggota • QR v${target.invitePolicy?.version || 1}.`,
                 });
               };
 
@@ -6011,6 +6751,8 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                       memberCount={target.members.length}
                       qrPayload={qrPayload}
                       isSelfContained={isQrSelfContained}
+                      roleLabel={roleLabelText}
+                      expiryLabel={expiryLabelText}
                       onNotify={showNotification}
                       onAfterDownload={() => recordShareLog('Barcode QR PNG')}
                     />
@@ -6156,7 +6898,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       )}
 
       {/* ========================================================= */}
-      {/* 9. MODAL TAUTKAN PASANGAN (MENJADIKAN TOTAL 4 PILAR TRAH) */}
+      {/* 9. MODAL TAUTKAN PASANGAN (4 HINGGA 8+ PILAR TRAH)        */}
       {/* ========================================================= */}
       {isSpouseModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
@@ -6178,10 +6920,10 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
               </div>
               <div>
                 <h3 className="font-extrabold text-sm sm:text-base text-stone-900">
-                  Tautkan Silsilah Pasangan (4 Trah)
+                  Tautkan Silsilah Pasangan (4–8+ Trah)
                 </h3>
                 <p className="text-[11px] text-stone-500">
-                  Menghubungkan 4 pilar keluarga: Ayah & Ibu Anda + Ayah & Ibu Pasangan
+                  Menghubungkan Trah Ayah &amp; Ibu Pasangan hingga jalur Kakek/Nenek (Total 8+ Pilar)
                 </p>
               </div>
             </div>
@@ -6189,13 +6931,13 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             <div className="p-3 bg-gradient-to-br from-amber-50 to-rose-50 rounded-2xl border border-amber-200 space-y-1.5 text-xs">
               <span className="font-bold text-amber-950 flex items-center gap-1">
                 <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                <span>Struktur 4 Pilar Silsilah:</span>
+                <span>Struktur Pilar Silsilah (4 Utama + Opsional 4 Kakek/Nenek):</span>
               </span>
               <ul className="list-disc pl-4 space-y-0.5 text-stone-700 text-[11px]">
-                <li><strong className="text-sky-800">Pilar 1:</strong> Trah Ayah Anda (Garis Patrilineal User)</li>
-                <li><strong className="text-rose-800">Pilar 2:</strong> Trah Ibu Anda (Garis Matrilineal User)</li>
+                <li><strong className="text-sky-800">Pilar 1–2:</strong> Trah Ayah &amp; Ibu Anda (termasuk jalur Kakek/Nenek User)</li>
                 <li><strong className="text-amber-800">Pilar 3:</strong> Trah Ayah Pasangan (Mertua Laki-laki)</li>
                 <li><strong className="text-purple-800">Pilar 4:</strong> Trah Ibu Pasangan (Mertua Perempuan)</li>
+                <li><strong className="text-teal-800">Pilar 5–8+:</strong> Jalur Kakek/Nenek dari Ayah &amp; Ibu Pasangan</li>
               </ul>
             </div>
 
@@ -6239,6 +6981,63 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                   className="w-full px-3 py-2 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:border-emerald-500 focus:bg-white outline-hidden"
                 />
               </div>
+
+              {/* Ekspansi Opsional 4 Jalur Kakek/Nenek Pasangan (Total 8 Trah) */}
+              <div className="rounded-2xl border border-stone-200 bg-stone-50 p-2.5 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setSpouseGrandparentsExpanded((v) => !v)}
+                  className="w-full flex items-center justify-between text-[11px] font-extrabold text-emerald-900"
+                >
+                  <span>💍 Tambah 4 Jalur Kakek &amp; Nenek Pasangan (Opsional → 8 Trah)</span>
+                  {spouseGrandparentsExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                </button>
+
+                {spouseGrandparentsExpanded && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-stone-200">
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-600 block mb-0.5">Kakek dari Ayah Pasangan</label>
+                      <input
+                        type="text"
+                        value={spouseKakekAyahInput}
+                        onChange={(e) => setSpouseKakekAyahInput(e.target.value)}
+                        placeholder="Opsional: Mbah ... "
+                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-200 rounded-xl outline-hidden"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-600 block mb-0.5">Nenek dari Ayah Pasangan</label>
+                      <input
+                        type="text"
+                        value={spouseNenekAyahInput}
+                        onChange={(e) => setSpouseNenekAyahInput(e.target.value)}
+                        placeholder="Opsional: Nyai ... "
+                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-200 rounded-xl outline-hidden"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-600 block mb-0.5">Kakek dari Ibu Pasangan</label>
+                      <input
+                        type="text"
+                        value={spouseKakekIbuInput}
+                        onChange={(e) => setSpouseKakekIbuInput(e.target.value)}
+                        placeholder="Opsional: Mbah ... "
+                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-200 rounded-xl outline-hidden"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-600 block mb-0.5">Nenek dari Ibu Pasangan</label>
+                      <input
+                        type="text"
+                        value={spouseNenekIbuInput}
+                        onChange={(e) => setSpouseNenekIbuInput(e.target.value)}
+                        placeholder="Opsional: Nyai ... "
+                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-200 rounded-xl outline-hidden"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex gap-2 pt-2 border-t border-stone-200">
@@ -6247,7 +7046,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                 className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-700 hover:from-emerald-800 hover:to-teal-800 text-white font-extrabold text-xs shadow-md transition active:scale-98 flex items-center justify-center gap-1.5"
               >
                 <Check className="w-4 h-4" />
-                <span>Simpan & Aktifkan 4 Pilar Trah</span>
+                <span>Simpan &amp; Aktifkan Pilar Trah</span>
               </button>
               <button
                 type="button"
@@ -6310,11 +7109,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                   onChange={(e) => setNewTrahLineage(e.target.value as LineageSide)}
                   className="w-full px-2.5 py-2 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:border-emerald-500 font-bold outline-hidden"
                 >
-                  <option value="ayah_user">👨 Trah Ayah (User)</option>
-                  <option value="ibu_user">👩 Trah Ibu (User)</option>
-                  <option value="ayah_pasangan">💍👨 Trah Ayah Pasangan</option>
-                  <option value="ibu_pasangan">💍👩 Trah Ibu Pasangan</option>
-                  <option value="umum">🌳 Trah Modular / Umum</option>
+                  {LINEAGE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.icon} {opt.label}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -6496,6 +7295,23 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         onClose={() => setIsBookModalOpen(false)}
         activeTrah={activeTrah}
         accountProfile={accountProfile}
+        showNotification={showNotification}
+      />
+
+      <NuclearFamilyHubModal
+        isOpen={isNuclearHubOpen}
+        onClose={() => {
+          setIsNuclearHubOpen(false);
+          setNuclearHubPreselect(null);
+        }}
+        hub={nuclearHub}
+        trahList={trahList}
+        currentEmail={accountScope.email}
+        isOwner={accountScope.isOwner}
+        preselectTarget={nuclearHubPreselect}
+        onCompressPhoto={(file) => compressImageFile(file, 400, 0.82)}
+        onSaveAndSyncAll={handleSaveAndSyncNuclearHubAll}
+        onGraftToSingleTrah={handleGraftNuclearHubToSingleTrah}
         showNotification={showNotification}
       />
 

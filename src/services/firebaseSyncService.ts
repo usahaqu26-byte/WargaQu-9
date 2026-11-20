@@ -212,8 +212,17 @@ export const FirebaseSyncService = {
       if (user && user.email) {
         const cleanEmail = user.email.trim().toLowerCase();
         const existingLocal = AuthService.getAccount();
-        if (!existingLocal || existingLocal.email.toLowerCase() !== cleanEmail) {
-          AuthService.login(cleanEmail, existingLocal?.phone || '0800-0000-0000');
+        const binding = AuthService.getDeviceBinding();
+        const isLockedToOther =
+          Boolean(binding?.boundEmail) && binding!.boundEmail.toLowerCase() !== cleanEmail;
+        if (!isLockedToOther) {
+          if (!existingLocal || existingLocal.email.toLowerCase() !== cleanEmail) {
+            AuthService.login(
+              cleanEmail,
+              existingLocal?.phone || binding?.boundPhone || '0800-0000-0000'
+            );
+          }
+          AuthService.markGoogleVerified(Boolean(user.emailVerified));
         }
         startAuthenticatedListeners(user);
         void this.syncMyAccountRegistry();
@@ -260,12 +269,25 @@ export const FirebaseSyncService = {
     }
     const user = cred.user;
     if (user.email) {
+      const cleanEmail = user.email.trim().toLowerCase();
+      const binding = AuthService.getDeviceBinding();
+      if (binding?.boundEmail && binding.boundEmail.toLowerCase() !== cleanEmail) {
+        setCachedDriveAccessToken(null);
+        stopAuthenticatedListeners();
+        await signOut(auth);
+        throw new Error(
+          `Perangkat ini sudah terikat ke ${AuthService.maskEmail(binding.boundEmail)}. Lepas ikatan perangkat terlebih dahulu sebelum menghubungkan Google akun lain.`
+        );
+      }
+
       const existing = AuthService.getAccount();
       const chosenPhone =
+        (binding?.boundPhone && binding.boundPhone !== '0800-0000-0000' ? binding.boundPhone : '') ||
         (phoneHint && phoneHint.trim()) ||
         (existing?.phone && existing.phone !== '0800-0000-0000' ? existing.phone : '') ||
         '0800-0000-0000';
       AuthService.login(user.email, chosenPhone);
+      AuthService.markGoogleVerified(Boolean(user.emailVerified));
     }
     await this.syncMyAccountRegistry(undefined, true);
     emitFirebaseAuthSync();

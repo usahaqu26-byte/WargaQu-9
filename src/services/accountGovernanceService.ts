@@ -6,6 +6,7 @@ import { ZeroTrustService, maskDeviceFingerprint } from './zeroTrustService';
 import { SmartCareService } from './smartCareService';
 import { RealtimeRelayService } from './realtimeRelayService';
 import type { MonetizableModuleId } from './monetizationService';
+import { buildApiUrl } from './appOriginService';
 
 export type AccountModerationStatus = 'normal' | 'free' | 'warning' | 'banned';
 
@@ -292,7 +293,7 @@ export const AccountGovernanceService = {
     if (broadcast) {
       RealtimeRelayService.publish('admin:policy', 'admin:account_policies', next);
       if (typeof fetch !== 'undefined') {
-        void fetch('/api/relay-policy', {
+        void fetch(buildApiUrl('/api/relay-policy'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ accountPolicies: next }),
@@ -377,7 +378,7 @@ export const AccountGovernanceService = {
 
   async syncPolicyFromServer(): Promise<void> {
     try {
-      const resp = await fetch('/api/relay-policy');
+      const resp = await fetch(buildApiUrl('/api/relay-policy'));
       if (!resp.ok) return;
       const data = (await resp.json()) as { accountPolicies?: unknown };
       if (data?.accountPolicies) {
@@ -652,7 +653,7 @@ export const AccountGovernanceService = {
     this.ingestRemotePresence({ ...presence, source: 'online_relay' });
     RealtimeRelayService.publish('admin:policy', 'presence:heartbeat', presence);
     if (typeof fetch !== 'undefined') {
-      void fetch('/api/relay-presence', {
+      void fetch(buildApiUrl('/api/relay-presence'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...presence, source: 'online_relay' }),
@@ -666,7 +667,7 @@ export const AccountGovernanceService = {
 
   async fetchVolatileServerPresence(): Promise<{ connectedClients: number; count: number }> {
     try {
-      const resp = await fetch('/api/relay-presence');
+      const resp = await fetch(buildApiUrl('/api/relay-presence'));
       if (!resp.ok) return { connectedClients: 0, count: 0 };
       const data = (await resp.json()) as {
         connectedClients?: number;

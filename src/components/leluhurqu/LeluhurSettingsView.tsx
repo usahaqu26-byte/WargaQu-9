@@ -35,6 +35,13 @@ import {
   LeluhurLogActionType,
   compressImageFile,
 } from './LeluhurQuView';
+import {
+  LINEAGE_OPTIONS,
+  getLineageBadgeMeta,
+  getEffectiveTrahRole,
+  getTrahRoleMeta,
+  canManageTrahAdmin,
+} from '../../services/leluhurCoreSyncService';
 import { EncryptedBackupPanel } from '../common/EncryptedBackupPanel';
 
 export interface LeluhurAccountProfile {
@@ -80,18 +87,12 @@ interface LeluhurSettingsViewProps {
   onClearActivityLogs: () => void;
   initialSectionTab?: SettingsSectionTab;
   sectionTriggerKey?: number;
+  currentEmail?: string;
+  isOwner?: boolean;
   showNotification: (msg: string) => void;
 }
 
 export type SettingsSectionTab = 'account' | 'trah' | 'logs' | 'backup' | 'preferences';
-
-const LINEAGE_OPTIONS: Array<{ value: LineageSide; label: string; icon: string }> = [
-  { value: 'ayah_user', label: 'Pilar 1: Trah Ayah (User)', icon: '👨' },
-  { value: 'ibu_user', label: 'Pilar 2: Trah Ibu (User)', icon: '👩' },
-  { value: 'ayah_pasangan', label: 'Pilar 3: Trah Ayah Pasangan', icon: '💍👨' },
-  { value: 'ibu_pasangan', label: 'Pilar 4: Trah Ibu Pasangan', icon: '💍👩' },
-  { value: 'umum', label: 'Trah Keluarga Umum / Tambahan', icon: '🌳' },
-];
 
 export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
   accountProfile,
@@ -115,6 +116,8 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
   onClearActivityLogs,
   initialSectionTab = 'account',
   sectionTriggerKey = 0,
+  currentEmail,
+  isOwner = false,
   showNotification,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsSectionTab>(initialSectionTab);
@@ -250,7 +253,7 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
                 {accountProfile.domicile ? ` • ${accountProfile.domicile}` : ''}
               </p>
               <p className="text-[10px] text-stone-300 mt-0.5 line-clamp-1">
-                Identitas ini otomatis dipakai di Medsos 4 Trah & keterangan cetak Grid.
+                Identitas ini otomatis dipakai di Medsos TrahBook &amp; keterangan cetak Grid.
               </p>
             </div>
           </div>
@@ -556,9 +559,9 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
         <div className="bg-white rounded-3xl border border-stone-200 p-4 sm:p-5 shadow-xs space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 pb-3">
             <div>
-              <h4 className="font-black text-sm text-stone-900">Manajemen Daftar & 4 Pilar Trah</h4>
+              <h4 className="font-black text-sm text-stone-900">Manajemen Daftar &amp; Pilar Trah (4–8+ Jalur)</h4>
               <p className="text-[11px] text-stone-500">
-                Ubah nama trah, tetapkan kategori pilar, tautkan besan, atau bersihkan daftar trah dari sini.
+                Ubah nama trah, tetapkan kategori pilar (hingga 8+ jalur kakek/nenek), tautkan besan, atau kelola hak akses.
               </p>
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -568,7 +571,7 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
                 className="py-1.5 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 font-bold text-xs flex items-center gap-1.5 transition"
               >
                 <HeartHandshake className="w-3.5 h-3.5" />
-                <span>Tautkan Pasangan (4 Pilar)</span>
+                <span>Tautkan Pasangan (4–8+ Pilar)</span>
               </button>
               <button
                 type="button"
@@ -596,9 +599,10 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
               const isActive = t.id === activeTrahId;
               const isEditing = editingTrahId === t.id;
               const isConfirmDelete = confirmDeleteTrahId === t.id;
-              const lineageMeta =
-                LINEAGE_OPTIONS.find((opt) => opt.value === (t.lineageSide || 'umum')) ||
-                LINEAGE_OPTIONS[4];
+              const lineageMeta = getLineageBadgeMeta(t.lineageSide);
+              const effRole = getEffectiveTrahRole(t, currentEmail, isOwner);
+              const roleMeta = getTrahRoleMeta(effRole);
+              const isTrahAdmin = canManageTrahAdmin(t, currentEmail, isOwner);
 
               return (
                 <div
@@ -685,6 +689,9 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-white border border-stone-200 text-stone-600">
                             {t.members.length} Anggota
                           </span>
+                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${roleMeta.badgeClass}`}>
+                            {roleMeta.shortLabel}
+                          </span>
                         </div>
                         <p className="text-[11px] text-stone-600 line-clamp-1">{t.description}</p>
                         <p className="text-[10px] text-stone-500 font-semibold">{lineageMeta.label}</p>
@@ -703,23 +710,26 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
                             Aktifkan
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => startEditTrah(t)}
-                          className="py-1.5 px-2.5 rounded-lg bg-white hover:bg-stone-100 text-stone-700 border border-stone-300 text-[11px] font-bold flex items-center gap-1"
-                        >
-                          <Edit3 className="w-3 h-3" />
-                          <span>Ubah</span>
-                        </button>
+                        {isTrahAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => startEditTrah(t)}
+                            className="py-1.5 px-2.5 rounded-lg bg-white hover:bg-stone-100 text-stone-700 border border-stone-300 text-[11px] font-bold flex items-center gap-1"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                            <span>Ubah</span>
+                          </button>
+                        )}
 
                         {!isConfirmDelete && (
                           <button
                             type="button"
                             onClick={() => setConfirmDeleteTrahId(t.id)}
                             className="py-1.5 px-2.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-bold flex items-center gap-1"
+                            title={isTrahAdmin ? 'Hapus Trah' : 'Keluar / Hapus Trah ini dari perangkat saya'}
                           >
                             <Trash2 className="w-3 h-3" />
-                            <span>Hapus</span>
+                            <span>{isTrahAdmin ? 'Hapus' : 'Keluar'}</span>
                           </button>
                         )}
 
@@ -877,7 +887,7 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
               {[
                 { id: 'grid' as const, label: 'Kanvas Grid' },
                 { id: 'excel' as const, label: 'Tabel Excel' },
-                { id: 'feed' as const, label: 'Medsos 4 Trah' },
+                { id: 'feed' as const, label: 'Medsos TrahBook' },
               ].map((opt) => (
                 <button
                   key={opt.id}
@@ -928,14 +938,14 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
             </div>
           </div>
 
-          {/* Toggle Bar 4 Pilar di Atas Layar */}
+          {/* Toggle Bar Pilar Trah di Atas Layar */}
           <div className="pt-2 border-t border-stone-100 flex items-center justify-between gap-3">
             <div>
               <div className="text-xs font-extrabold text-stone-800">
-                Tampilkan Bar Cepat 4 Pilar Trah di Atas Layar
+                Tampilkan Bar Cepat Pilar Trah di Atas Layar
               </div>
               <p className="text-[11px] text-stone-500">
-                Matikan jika ingin area kanvas Grid & Tabel lebih luas (ganti Trah tetap tersedia di Sidebar & Pengaturan).
+                Matikan jika ingin area kanvas Grid &amp; Tabel lebih luas (ganti Trah tetap tersedia di Sidebar &amp; Pengaturan).
               </p>
             </div>
             <button
@@ -944,7 +954,7 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
                 const nextVal = !preferences.showPillarBar;
                 onUpdatePreferences({ ...preferences, showPillarBar: nextVal });
                 showNotification(
-                  nextVal ? 'Bar 4 Pilar ditampilkan di atas layar' : 'Bar 4 Pilar disembunyikan agar kanvas lebih lega'
+                  nextVal ? 'Bar Pilar Trah ditampilkan di atas layar' : 'Bar Pilar Trah disembunyikan agar kanvas lebih lega'
                 );
               }}
               className={`py-1.5 px-3 rounded-xl font-bold text-xs flex items-center gap-1.5 border shrink-0 transition ${
@@ -1040,34 +1050,41 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
                 </p>
               </div>
               {activityLogs.length > 0 && (
-                !confirmClearLogs ? (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmClearLogs(true)}
-                    className="py-1.5 px-2.5 rounded-xl bg-stone-100 hover:bg-rose-50 text-stone-600 hover:text-rose-700 border border-stone-200 text-[11px] font-bold transition"
-                  >
-                    Bersihkan Log
-                  </button>
+                isOwner || trahList.length === 0 || trahList.every((t) => canManageTrahAdmin(t, currentEmail, isOwner)) ? (
+                  !confirmClearLogs ? (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmClearLogs(true)}
+                      className="py-1.5 px-2.5 rounded-xl bg-stone-100 hover:bg-rose-50 text-stone-600 hover:text-rose-700 border border-stone-200 text-[11px] font-bold transition"
+                    >
+                      Bersihkan Log
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClearActivityLogs();
+                          setConfirmClearLogs(false);
+                        }}
+                        className="py-1 px-2.5 rounded-lg bg-rose-600 text-white text-[10px] font-bold"
+                      >
+                        Ya, Hapus Semua
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmClearLogs(false)}
+                        className="py-1 px-2.5 rounded-lg bg-stone-200 text-stone-700 text-[10px] font-bold"
+                      >
+                        Batal
+                      </button>
+                    </div>
+                  )
                 ) : (
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onClearActivityLogs();
-                        setConfirmClearLogs(false);
-                      }}
-                      className="py-1 px-2.5 rounded-lg bg-rose-600 text-white text-[10px] font-bold"
-                    >
-                      Ya, Hapus Semua
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmClearLogs(false)}
-                      className="py-1 px-2.5 rounded-lg bg-stone-200 text-stone-700 text-[10px] font-bold"
-                    >
-                      Batal
-                    </button>
-                  </div>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-[10px] font-bold text-emerald-800">
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>Log Terkunci (Anti-Hapus)</span>
+                  </span>
                 )
               )}
             </div>

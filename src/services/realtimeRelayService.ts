@@ -1,4 +1,4 @@
-import { AuthService } from './authService';
+import { AUTH_SYNC_EVENT, AuthService } from './authService';
 import {
   canonicalInviteSlug,
   getSyncChannelName,
@@ -7,6 +7,7 @@ import {
 } from './inviteRelayService';
 import { RT_SYNC_EVENT, RtSiagaStorage } from './rtSiagaStorage';
 import { SIAGA_CIRCLE_SYNC_EVENT, SiagaCircleService } from './siagaCircleService';
+import { buildApiUrl, buildWsRelayUrl } from './appOriginService';
 
 export type RelayConnectionState = 'connecting' | 'connected' | 'offline';
 
@@ -62,12 +63,12 @@ function normalizeChannelPart(raw: string): string {
     .replace(/^-|-$/g, '') || 'default';
 }
 
+export function getAccountSessionChannel(email: string): string {
+  return `acct:${normalizeChannelPart(email)}`;
+}
+
 function getWsEndpoint(): string {
-  const custom = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_WS_RELAY_URL;
-  if (custom && custom.trim()) return custom.trim();
-  if (typeof window === 'undefined') return 'ws://localhost:3000/ws-relay';
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.host}/ws-relay`;
+  return buildWsRelayUrl();
 }
 
 function getDeviceShortHash(): string {
@@ -97,7 +98,7 @@ class RealtimeRelayManager {
   async fetchHealthTelemetry(): Promise<ServerTelemetryPayload | null> {
     if (typeof fetch === 'undefined') return this.lastTelemetry;
     try {
-      const resp = await fetch('/api/relay-health');
+      const resp = await fetch(buildApiUrl('/api/relay-health'));
       if (!resp.ok) return this.lastTelemetry;
       const data = (await resp.json()) as Partial<ServerTelemetryPayload>;
       const telemetry: ServerTelemetryPayload = {
@@ -152,6 +153,10 @@ class RealtimeRelayManager {
         channels.add(`circle:${c.inviteCode.toUpperCase()}`);
       }
     }
+    const acc = AuthService.getAccount();
+    if (acc?.email) {
+      channels.add(getAccountSessionChannel(acc.email));
+    }
     for (const extra of this.extraChannels) {
       channels.add(extra);
     }
@@ -170,6 +175,7 @@ class RealtimeRelayManager {
     if (typeof window === 'undefined') return;
     if (!this.started) {
       this.started = true;
+      window.addEventListener(AUTH_SYNC_EVENT, () => this.joinCurrentChannels());
       window.addEventListener(RT_SYNC_EVENT, () => this.joinCurrentChannels());
       window.addEventListener(SIAGA_CIRCLE_SYNC_EVENT, () => this.joinCurrentChannels());
       window.addEventListener(RELAY_REGISTER_CHANNELS_EVENT, ((ev: CustomEvent<{ channels?: string[] }>) => {

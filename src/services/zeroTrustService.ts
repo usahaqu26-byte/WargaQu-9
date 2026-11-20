@@ -226,19 +226,50 @@ export const ZeroTrustService = {
     return rec?.status === 'frozen_lost';
   },
 
-  registerOrTouchCurrentDevice(email: string, phone: string, label = 'Perangkat Utama'): DeviceTrustRecord {
+  registerOrTouchCurrentDevice(
+    email: string,
+    phone: string,
+    label = 'Perangkat Utama',
+    options?: { allowOverwrite?: boolean }
+  ): DeviceTrustRecord {
     const deviceId = AuthService.getHiddenDeviceId();
     const list = this.getDevices();
     const now = new Date().toISOString();
     const idx = list.findIndex(d => d.deviceId === deviceId);
     const cleanEmail = email.trim().toLowerCase();
     const cleanPhone = phone.trim();
+    const policy = this.getPolicy();
 
     if (idx >= 0) {
+      const existing = list[idx];
+      const existingEmail = (existing.email || '').trim().toLowerCase();
+      const isDifferentEmail = Boolean(existingEmail && cleanEmail && existingEmail !== cleanEmail);
+
+      if (policy.strictDeviceBinding && isDifferentEmail && !options?.allowOverwrite) {
+        const untouched: DeviceTrustRecord = {
+          ...existing,
+          lastActiveAt: now,
+        };
+        list[idx] = untouched;
+        saveJson(DEVICES_KEY, list);
+        this.appendAudit(
+          cleanEmail || 'Unknown',
+          'Pergantian Akun Tanpa Prosedur Ditolak',
+          `${existing.maskedFingerprint} masih terikat ke ${AuthService.maskEmail(existingEmail)}`,
+          'warning'
+        );
+        emitZeroTrustSync();
+        return untouched;
+      }
+
       const updated: DeviceTrustRecord = {
-        ...list[idx],
-        email: cleanEmail || list[idx].email,
-        phone: cleanPhone || list[idx].phone,
+        ...existing,
+        email: cleanEmail || existing.email,
+        phone:
+          options?.allowOverwrite || !existing.phone || existing.phone === '0800-0000-0000'
+            ? cleanPhone || existing.phone
+            : existing.phone,
+        label: options?.allowOverwrite ? label : existing.label,
         lastActiveAt: now,
       };
       list[idx] = updated;
@@ -261,6 +292,34 @@ export const ZeroTrustService = {
     this.appendAudit(cleanEmail || 'Warga', 'Perangkat Terdaftar', `${created.maskedFingerprint} diikat ke akun`, 'info');
     emitZeroTrustSync();
     return created;
+  },
+
+  recordAuthorizedPhoneChange(email: string, oldPhone: string, newPhone: string, reason = ''): void {
+    this.registerOrTouchCurrentDevice(email, newPhone, 'Perangkat Utama', { allowOverwrite: true });
+    this.appendAudit(
+      email,
+      'Prosedur Ganti No. HP Disetujui',
+      `${AuthService.maskPhone(oldPhone)} → ${AuthService.maskPhone(newPhone)}${reason ? ` (${reason})` : ''}`,
+      'info'
+    );
+    emitZeroTrustSync();
+  },
+
+  recordAuthorizedBindingRelease(oldEmail: string, reason = 'Lepas Ikatan Perangkat'): void {
+    const deviceId = AuthService.getHiddenDeviceId();
+    const list = this.getDevices().map(d =>
+      d.deviceId === deviceId
+        ? { ...d, email: '', phone: '', label: 'Perangkat Dilepas (Siap Ikat Ulang)', lastActiveAt: new Date().toISOString() }
+        : d
+    );
+    saveJson(DEVICES_KEY, list);
+    this.appendAudit(
+      oldEmail || 'Pemilik Perangkat',
+      'Prosedur Lepas Ikatan Perangkat',
+      `${maskDeviceFingerprint(deviceId)} dilepas (${reason})`,
+      'warning'
+    );
+    emitZeroTrustSync();
   },
 
   setDeviceStatus(deviceId: string, status: DeviceTrustStatus, reason?: string): void {
@@ -397,6 +456,15 @@ export const ZeroTrustService = {
     emitZeroTrustSync();
   },
 
+  verifyRecoveryCode(emailInput: string, recoveryCodeInput: string): boolean {
+    const cleanEmail = emailInput.trim().toLowerCase();
+    const cleanCode = recoveryCodeInput.trim().toUpperCase();
+    if (!cleanEmail || !cleanCode) return false;
+    const map = loadJson<Record<string, { code: string; guardianContact: string }>>(RECOVERY_KEY_MAP, {});
+    const stored = map[cleanEmail];
+    return Boolean(stored && stored.code.toUpperCase() === cleanCode);
+  },
+
   recoverWithCode(
     emailInput: string,
     phoneInput: string,
@@ -427,8 +495,11 @@ export const ZeroTrustService = {
     );
     saveJson(DEVICES_KEY, devices);
 
+    AuthService.releaseDeviceBinding({ bypassQuota: true });
     AuthService.login(cleanEmail, cleanPhone);
-    this.registerOrTouchCurrentDevice(cleanEmail, cleanPhone, 'Perangkat Baru (Hasil Pemulihan)');
+    this.registerOrTouchCurrentDevice(cleanEmail, cleanPhone, 'Perangkat Baru (Hasil Pemulihan)', {
+      allowOverwrite: true,
+    });
     // Rotate recovery code after use (Zero Trust one-time recovery)
     this.regenerateRecoveryCode(cleanEmail);
 
@@ -516,6 +587,7 @@ export const ZeroTrustService = {
       saveJson(DEVICES_KEY, devices);
 
       if (target.newDeviceId === AuthService.getHiddenDeviceId()) {
+        AuthService.releaseDeviceBinding({ bypassQuota: true });
         AuthService.login(target.email, target.phone);
       }
     }

@@ -15,7 +15,8 @@ import {
   Mic,
   GitFork,
   LogIn,
-  Wallet
+  Wallet,
+  Store
 } from 'lucide-react';
 import { PWAInstallBanner } from '../pwa/PWAInstallBanner';
 import { WargaQuLogoIcon } from '../common/WargaQuLogo';
@@ -42,6 +43,7 @@ interface WargaDashboardProps {
   onOpenAreaQu: (tab?: 'jelajah' | 'lapak' | 'aktivitas' | 'identitas') => void;
   onOpenEmptyModule: (moduleId: string) => void;
   onOpenLogin?: (reason?: string) => void;
+  onOpenStorePreview?: () => void;
   activeOrderCount?: number;
 }
 
@@ -69,6 +71,7 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
   onOpenAreaQu,
   onOpenEmptyModule,
   onOpenLogin,
+  onOpenStorePreview,
   activeOrderCount = 0,
 }) => {
   // Default mata tertutup agar saldo pribadi tidak terlihat orang di sekitar
@@ -164,6 +167,18 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
                 <span>Akun Saya</span>
               </button>
 
+              {onOpenStorePreview && (
+                <button
+                  type="button"
+                  onClick={onOpenStorePreview}
+                  className="px-3 py-2 min-h-[40px] rounded-xl bg-emerald-800/75 hover:bg-emerald-900 border border-emerald-300/35 text-white font-bold text-xs inline-flex items-center gap-1.5 transition whitespace-nowrap shrink-0 active:scale-95"
+                  title="Buka Halaman Pratinjau & Unduh (ala Play Store)"
+                >
+                  <Store className="w-3.5 h-3.5 text-[#5eead4]" />
+                  <span>Store</span>
+                </button>
+              )}
+
               {!authAccount && onOpenLogin && (
                 <button
                   type="button"
@@ -205,7 +220,10 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
         <div className="max-w-6xl mx-auto space-y-4 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-6 lg:items-start">
           {/* KOLOM KIRI DI DESKTOP: PWA BANNER & DOMPETQU */}
           <div className="space-y-4 lg:col-span-5">
-            <PWAInstallBanner showToast={showToast} />
+            <PWAInstallBanner
+              showToast={showToast}
+              onOpenStorePreview={onOpenStorePreview}
+            />
 
             {/* DOMPETQU: SATU-SATUNYA WADAH RINGKASAN & AKSES DOMPET PRIBADI */}
             <div className="bg-white rounded-2xl p-4 lg:p-5 shadow-sm border border-emerald-100/90 relative overflow-hidden">

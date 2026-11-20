@@ -18,6 +18,8 @@ interface TrahQrCodeCardProps {
   memberCount: number;
   qrPayload: string;
   isSelfContained: boolean;
+  roleLabel?: string;
+  expiryLabel?: string;
   onNotify: (msg: string) => void;
   onAfterDownload?: () => void;
 }
@@ -27,6 +29,8 @@ export const TrahQrCodeCard: React.FC<TrahQrCodeCardProps> = ({
   memberCount,
   qrPayload,
   isSelfContained,
+  roleLabel,
+  expiryLabel,
   onNotify,
   onAfterDownload,
 }) => {
@@ -100,7 +104,10 @@ export const TrahQrCodeCard: React.FC<TrahQrCodeCardProps> = ({
 
       ctx.fillStyle = '#a7f3d0';
       ctx.font = '12px sans-serif';
-      ctx.fillText(`${memberCount} Anggota Tercatat`, width / 2, 84);
+      const subParts = [`${memberCount} Anggota Tercatat`];
+      if (roleLabel) subParts.push(`Akses: ${roleLabel}`);
+      if (expiryLabel) subParts.push(expiryLabel);
+      ctx.fillText(subParts.join(' • '), width / 2, 84);
 
       // QR frame
       ctx.strokeStyle = '#d1fae5';
@@ -151,15 +158,27 @@ export const TrahQrCodeCard: React.FC<TrahQrCodeCardProps> = ({
             Barcode / QR Undangan
           </span>
         </div>
-        <span
-          className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full border ${
-            isSelfContained
-              ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-              : 'bg-amber-100 text-amber-800 border-amber-300'
-          }`}
-        >
-          {isSelfContained ? 'Mandiri Offline' : 'Sinkronisasi'}
-        </span>
+        <div className="flex items-center gap-1 flex-wrap justify-end">
+          {roleLabel && (
+            <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full border bg-sky-100 text-sky-800 border-sky-300">
+              {roleLabel}
+            </span>
+          )}
+          {expiryLabel && (
+            <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full border bg-stone-100 text-stone-700 border-stone-300">
+              {expiryLabel}
+            </span>
+          )}
+          <span
+            className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full border ${
+              isSelfContained
+                ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                : 'bg-amber-100 text-amber-800 border-amber-300'
+            }`}
+          >
+            {isSelfContained ? 'Mandiri Offline' : 'Sinkronisasi'}
+          </span>
+        </div>
       </div>
 
       {qrError ? (

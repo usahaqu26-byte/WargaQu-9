@@ -66,8 +66,13 @@ async function deriveAesKey(password: string, salt: Uint8Array): Promise<CryptoK
 }
 
 function shouldIncludeKey(key: string, scope: BackupScope): boolean {
-  // Hidden device token tetap unik per perangkat fisik
-  if (key === 'wargaqu_hidden_device_token_v1') return false;
+  // Hidden device token & physical device binding tetap unik per perangkat fisik
+  if (
+    key === 'wargaqu_hidden_device_token_v1' ||
+    key === 'wargaqu_device_binding_v1'
+  ) {
+    return false;
+  }
 
   if (scope === 'leluhurqu') {
     return key.startsWith('wargaqu_leluhur_') || key.startsWith('leluhurqu_grid_');
@@ -117,7 +122,12 @@ export const EncryptedBackupService = {
   ): number {
     let restoredKeys = 0;
     Object.entries(entries).forEach(([k, v]) => {
-      if (k === 'wargaqu_hidden_device_token_v1') return;
+      if (
+        k === 'wargaqu_hidden_device_token_v1' ||
+        k === 'wargaqu_device_binding_v1'
+      ) {
+        return;
+      }
       if (typeof v === 'string') {
         try {
           localStorage.setItem(k, v);

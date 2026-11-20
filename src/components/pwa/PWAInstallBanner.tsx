@@ -15,13 +15,15 @@ import { usePWAInstall } from '../../hooks/usePWAInstall';
 interface PWAInstallBannerProps {
   onDismiss?: () => void;
   showToast?: (msg: string) => void;
+  onOpenStorePreview?: () => void;
 }
 
 export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
   onDismiss,
-  showToast
+  showToast,
+  onOpenStorePreview
 }) => {
-  const { isInstallable, isInstalled, isIOS, isAndroid, install } = usePWAInstall();
+  const { isInstallable, isInstalled, isNativeApk, isIOS, install } = usePWAInstall();
   const [showGuideModal, setShowGuideModal] = useState<boolean>(false);
   const [isDismissed, setIsDismissed] = useState<boolean>(() => {
     try {
@@ -31,8 +33,8 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
     }
   });
 
-  // If already installed, don't show the banner
-  if (isInstalled || isDismissed) {
+  // If already installed (or running inside native APK), don't show the banner
+  if (isInstalled || isNativeApk || isDismissed) {
     return null;
   }
 
@@ -94,9 +96,20 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
 
         {/* Action Buttons */}
         <div className="flex items-center gap-1.5 shrink-0">
+          {onOpenStorePreview && (
+            <button
+              type="button"
+              onClick={onOpenStorePreview}
+              className="bg-emerald-800/80 hover:bg-emerald-700 text-emerald-100 border border-emerald-400/30 font-bold text-[11px] px-2.5 py-1.5 rounded-xl transition whitespace-nowrap"
+              title="Lihat Halaman Pratinjau ala Play Store"
+            >
+              Pratinjau
+            </button>
+          )}
           <button
+            type="button"
             onClick={handleInstallClick}
-            className="bg-gradient-to-r from-[#34d399] to-[#2dd4bf] hover:from-[#5eead4] hover:to-[#34d399] text-[#064e3b] font-black text-xs px-3 py-1.5 rounded-xl shadow-md active:scale-95 transition flex items-center gap-1"
+            className="bg-gradient-to-r from-[#34d399] to-[#2dd4bf] hover:from-[#5eead4] hover:to-[#34d399] text-[#064e3b] font-black text-xs px-3 py-1.5 rounded-xl shadow-md active:scale-95 transition flex items-center gap-1 whitespace-nowrap"
             title="Install ke HP Sekarang"
           >
             <Download className="w-3.5 h-3.5" />

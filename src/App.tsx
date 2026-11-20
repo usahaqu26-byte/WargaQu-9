@@ -44,6 +44,7 @@ import {
   REALTIME_RELAY_EVENT,
   RelayIncomingEvent,
   RealtimeRelayService,
+  getAccountSessionChannel,
 } from './services/realtimeRelayService';
 import { FirebaseSyncService } from './services/firebaseSyncService';
 import { AutoBackupService } from './services/autoBackupService';
@@ -70,7 +71,9 @@ function isStorePreviewUrlRequested(): boolean {
       store === 'true' ||
       hash === '#store' ||
       hash.startsWith('#store?') ||
-      window.location.pathname.toLowerCase().endsWith('/store')
+      window.location.pathname.toLowerCase().endsWith('/store') ||
+      window.location.pathname.toLowerCase().endsWith('/store/') ||
+      window.location.pathname.toLowerCase().endsWith('/store.html')
     );
   } catch {
     return false;
@@ -116,6 +119,7 @@ export default function App() {
 
   // Global Toast Notification State
   const [notification, setNotification] = useState<string | null>(null);
+  const lastBroadcastSessionNonceRef = useRef<string>('');
 
   // Initial Data Load & Hidden Device ID Init
   useEffect(() => {
@@ -264,6 +268,25 @@ export default function App() {
     };
     window.addEventListener('hashchange', onHashInviteCheck);
 
+    const broadcastActiveSessionIfNeeded = (acc: AuthAccount | null) => {
+      if (!acc || !acc.email || !acc.sessionNonce) return;
+      // Laptop hasil scan QR pairing sengaja berbagi sesi dengan HP host -> jangan tendang HP host
+      if (DevicePairingService.getPairedHost()) return;
+      if (lastBroadcastSessionNonceRef.current === acc.sessionNonce) return;
+      lastBroadcastSessionNonceRef.current = acc.sessionNonce;
+      RealtimeRelayService.joinCurrentChannels();
+      RealtimeRelayService.publish(
+        getAccountSessionChannel(acc.email),
+        'auth:session_active',
+        {
+          email: acc.email.trim().toLowerCase(),
+          deviceId: acc.deviceId,
+          sessionNonce: acc.sessionNonce,
+          issuedAt: acc.loggedInAt,
+        }
+      );
+    };
+
     AuthService.getHiddenDeviceId(); // ensure persistent hidden device token exists
     const currentAcc = AuthService.getAccount();
     if (currentAcc) {
@@ -292,6 +315,16 @@ export default function App() {
           StorageService.saveProfile(updated);
           return updated;
         });
+        broadcastActiveSessionIfNeeded(nextAcc);
+      } else {
+        lastBroadcastSessionNonceRef.current = '';
+        setTables(StorageService.getTables());
+        setMenuList(StorageService.getMenu());
+        setIngredients(StorageService.getIngredients());
+        setHistory(StorageService.getHistory());
+        setActiveOrders(StorageService.getActiveOrders());
+        setProfile(StorageService.getProfile());
+        setPrinterConfig(StorageService.getPrinterConfig());
       }
       if (!ZeroTrustService.isAdminEmail(nextAcc?.email) && currentScreenRef.current === 'admin_zero_trust') {
         ZeroTrustService.lockAdminSession();
@@ -326,6 +359,9 @@ export default function App() {
     DevicePairingService.startLiveSync(showNotification);
     FirebaseSyncService.init();
     AutoBackupService.startAutoBackupMonitor();
+    if (currentAcc) {
+      broadcastActiveSessionIfNeeded(currentAcc);
+    }
     void AccountGovernanceService.syncPolicyFromServer();
     AccountGovernanceService.publishCurrentPresence(currentScreenRef.current);
     const presenceInterval = window.setInterval(() => {
@@ -389,6 +425,35 @@ export default function App() {
         showNotification(
           `Order MuamalahQu baru dari ${p.buyerName || 'Warga'} (Rp ${(p.total || 0).toLocaleString('id-ID')})`
         );
+      } else if (detail.eventName === 'auth:session_active' && detail.payload && typeof detail.payload === 'object') {
+        const p = detail.payload as {
+          email?: string;
+          deviceId?: string;
+          sessionNonce?: string;
+        };
+        const activeAcc = AuthService.getAccount();
+        const isCompanionLaptop = Boolean(DevicePairingService.getPairedHost());
+        if (
+          activeAcc &&
+          !isCompanionLaptop &&
+          p.email &&
+          p.email.trim().toLowerCase() === activeAcc.email.trim().toLowerCase() &&
+          p.deviceId &&
+          p.deviceId !== activeAcc.deviceId &&
+          p.sessionNonce &&
+          p.sessionNonce !== activeAcc.sessionNonce
+        ) {
+          AuthService.logout();
+          ZeroTrustService.appendAudit(
+            activeAcc.email,
+            'Sesi Tunggal Ditutup (Login di Perangkat Lain)',
+            'Sesi di perangkat ini otomatis ditutup karena akun masuk dari perangkat lain',
+            'info'
+          );
+          showNotification(
+            'Akun Anda baru saja masuk di perangkat lain. Sesi di HP ini ditutup otomatis (Sesi Tunggal ala WhatsApp).'
+          );
+        }
       } else if (detail.eventName === 'smartcare:ticket' && detail.payload && typeof detail.payload === 'object') {
         if (SmartCareService.isDeveloperOrAdmin() || ZeroTrustService.isAdminSessionActive()) {
           const entry = detail.payload as SmartCareLogEntry;
@@ -477,7 +542,7 @@ export default function App() {
         localStorage.getItem('wargaqu_pending_rt_invite_v1') ||
         localStorage.getItem(PENDING_PAIR_TOKEN_KEY)
     );
-    if (!hasPendingInvite) {
+    if (!hasPendingInvite && !isStorePreviewUrlRequested()) {
       window.history.replaceState({ screen: 'warga' }, '', '#warga');
     }
 
@@ -786,6 +851,7 @@ export default function App() {
           onOpenAreaQu={handleOpenAreaQu}
           onOpenEmptyModule={handleOpenEmptyModule}
           onOpenLogin={handleOpenLogin}
+          onOpenStorePreview={handleOpenStorePreview}
           activeOrderCount={activeOrderCount}
         />
       )}

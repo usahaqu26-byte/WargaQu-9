@@ -10,6 +10,7 @@ import { SIAGA_CIRCLE_SYNC_EVENT } from './siagaCircleService';
 import { ZERO_TRUST_SYNC_EVENT, ZeroTrustService } from './zeroTrustService';
 import { MONETIZATION_SYNC_EVENT } from './monetizationService';
 import { ACCOUNT_GOV_SYNC_EVENT } from './accountGovernanceService';
+import { buildApiUrl, getPublicShareOrigin } from './appOriginService';
 
 export const LINKED_DEVICES_STORAGE_KEY = 'wargaqu_linked_devices_v1';
 export const PAIRED_HOST_STORAGE_KEY = 'wargaqu_paired_host_v1';
@@ -375,7 +376,7 @@ async function registerSessionEcdh(sessionId: string): Promise<void> {
     );
     const pubJwk = await crypto.subtle.exportKey('jwk', kp.publicKey);
     sessionEcdhKeys.set(sessionId, kp.privateKey);
-    await fetch('/api/pair-session', {
+    await fetch(buildApiUrl('/api/pair-session'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, pubJwk }),
@@ -435,7 +436,7 @@ export const DevicePairingService = {
     crypto.getRandomValues(secretBytes);
     const secretHex = bytesToHex(secretBytes);
     const shortToken = `WQP1:${sessionId}:${secretHex}`;
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const origin = getPublicShareOrigin();
     const qrUrl = `${origin}/?pair=${encodeURIComponent(`${sessionId}.${secretHex}`)}`;
     const now = Date.now();
     const channel = `pair:${sessionId}`;
@@ -575,7 +576,7 @@ export const DevicePairingService = {
           restoredKeys,
         };
         publishRelay(session.channel, 'pair:ack', ackBody);
-        void fetch(`/api/pair-relay/${encodeURIComponent(session.sessionId)}/ack`, {
+        void fetch(buildApiUrl(`/api/pair-relay/${encodeURIComponent(session.sessionId)}/ack`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(ackBody),
@@ -611,7 +612,7 @@ export const DevicePairingService = {
     const pollHttp = async () => {
       if (disposed || settledLinkId) return;
       try {
-        const res = await fetch(`/api/pair-relay/${encodeURIComponent(session.sessionId)}`);
+        const res = await fetch(buildApiUrl(`/api/pair-relay/${encodeURIComponent(session.sessionId)}`));
         if (!res.ok || disposed || settledLinkId) return;
         const data = (await res.json()) as {
           found?: boolean;
@@ -664,7 +665,7 @@ export const DevicePairingService = {
 
     // Jika user mengetik 6-huruf Kode Sesi secara langsung (tanpa QR/secretHex), lakukan ECDH P-256
     if (!transportSecretHex) {
-      const sessRes = await fetch(`/api/pair-session/${encodeURIComponent(parsedToken.sessionId)}`);
+      const sessRes = await fetch(buildApiUrl(`/api/pair-session/${encodeURIComponent(parsedToken.sessionId)}`));
       if (!sessRes.ok) {
         const errBody = (await sessRes.json().catch(() => ({}))) as { error?: string };
         throw new Error(
@@ -741,7 +742,7 @@ export const DevicePairingService = {
       httpPollTimer = window.setInterval(async () => {
         try {
           const res = await fetch(
-            `/api/pair-relay/${encodeURIComponent(parsedToken.sessionId)}/ack`
+            buildApiUrl(`/api/pair-relay/${encodeURIComponent(parsedToken.sessionId)}/ack`)
           );
           if (!res.ok) return;
           const data = (await res.json()) as {
@@ -760,7 +761,7 @@ export const DevicePairingService = {
 
     // Dual-transport send: HTTP RAM Relay + WebSocket Relay simultaneously
     const httpPostPromise = fetch(
-      `/api/pair-relay/${encodeURIComponent(parsedToken.sessionId)}`,
+      buildApiUrl(`/api/pair-relay/${encodeURIComponent(parsedToken.sessionId)}`),
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -858,7 +859,7 @@ export const DevicePairingService = {
 
           let nextSeq = dev.lastSeq ?? 0;
           try {
-            const res = await fetch(`/api/pair-live/${encodeURIComponent(dev.linkId)}`, {
+            const res = await fetch(buildApiUrl(`/api/pair-live/${encodeURIComponent(dev.linkId)}`), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ senderDeviceId: myDeviceId, encrypted }),
@@ -900,7 +901,7 @@ export const DevicePairingService = {
 
         let nextSeq = pairedHost.lastSeq ?? 0;
         try {
-          const res = await fetch(`/api/pair-live/${encodeURIComponent(pairedHost.linkId)}`, {
+          const res = await fetch(buildApiUrl(`/api/pair-live/${encodeURIComponent(pairedHost.linkId)}`), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ senderDeviceId: myDeviceId, encrypted }),
@@ -961,7 +962,9 @@ export const DevicePairingService = {
     for (const t of targets) {
       try {
         const res = await fetch(
-          `/api/pair-live/${encodeURIComponent(t.linkId)}?sinceSeq=${t.lastSeq}&deviceId=${encodeURIComponent(myDeviceId)}`
+          buildApiUrl(
+            `/api/pair-live/${encodeURIComponent(t.linkId)}?sinceSeq=${t.lastSeq}&deviceId=${encodeURIComponent(myDeviceId)}`
+          )
         );
         if (!res.ok) continue;
         const data = (await res.json()) as {

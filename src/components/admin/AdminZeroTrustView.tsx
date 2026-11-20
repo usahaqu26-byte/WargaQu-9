@@ -1333,6 +1333,24 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
                           <span>Aktifkan Lagi</span>
                         </button>
                       )}
+                      {dev.deviceId === AuthService.getHiddenDeviceId() && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            AuthService.resetSwitchQuotaByAdmin();
+                            ZeroTrustService.appendAudit(
+                              'Admin Zero Trust',
+                              'Kuota & Jeda Ganti Akun Direset',
+                              `${dev.maskedFingerprint} dibuka kembali kuota & jeda 24 jam ganti akun`,
+                              'info'
+                            );
+                            showNotification(`Kuota & jeda ganti akun ${dev.maskedFingerprint} direset.`);
+                          }}
+                          className="min-h-[34px] px-3 border border-sky-300 text-sky-700 hover:bg-sky-50 rounded-lg text-[11px] font-bold"
+                        >
+                          Reset Kuota &amp; Jeda Ganti Akun
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))

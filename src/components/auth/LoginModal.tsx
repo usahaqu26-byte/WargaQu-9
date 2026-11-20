@@ -33,9 +33,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   reasonMessage,
 }) => {
   const existing = AuthService.getAccount();
+  const binding = AuthService.getDeviceBinding();
+  const hasBoundOwner = Boolean(binding?.boundEmail);
+  const hasPin = Boolean(binding?.pinHash);
   const [mode, setMode] = useState<'login' | 'qr' | 'recover'>('login');
-  const [email, setEmail] = useState<string>(existing?.email || '');
-  const [phone, setPhone] = useState<string>(existing?.phone || '');
+  const [email, setEmail] = useState<string>(existing?.email || binding?.boundEmail || '');
+  const [phone, setPhone] = useState<string>(existing?.phone || binding?.boundPhone || '');
+  const [pin, setPin] = useState<string>('');
   const [recoveryReason, setRecoveryReason] = useState<'hp_hilang' | 'hp_rusak'>('hp_rusak');
   const [recoveryCode, setRecoveryCode] = useState<string>('');
   const [guardianContact, setGuardianContact] = useState<string>('');
@@ -50,7 +54,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
   const isCurrentFrozen = ZeroTrustService.isCurrentDeviceFrozen();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanEmail = email.trim();
     const cleanPhone = phone.trim();
@@ -71,10 +75,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       return;
     }
 
-    const account = AuthService.login(cleanEmail, cleanPhone);
+    const res = await AuthService.bindAndLogin({
+      email: cleanEmail,
+      phone: cleanPhone,
+      pin,
+    });
+    if (!res.ok || !res.account) {
+      showNotification(res.message);
+      return;
+    }
+
+    const account = res.account;
+    setPin('');
     RtSiagaStorage.syncAuthAccount(account);
     ZeroTrustService.registerOrTouchCurrentDevice(account.email, account.phone);
-    showNotification(`Masuk sebagai ${account.email}`);
+    showNotification(res.message);
     onSuccess(account);
   };
 
@@ -298,6 +313,29 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 />
               </div>
             </div>
+
+            {(!hasBoundOwner || hasPin) && (
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  {hasBoundOwner && hasPin
+                    ? 'PIN Keamanan Pemilik (6 Digit)'
+                    : 'PIN Keamanan 6 Digit (Opsional)'}
+                </label>
+                <div className="relative">
+                  <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    required={hasBoundOwner && hasPin}
+                    value={pin}
+                    onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder={hasBoundOwner ? '••••••' : 'Kosongkan untuk masuk cepat'}
+                    className="w-full min-h-[44px] border border-slate-300 rounded-xl pl-9 pr-3 text-xs font-mono tracking-widest focus:outline-none focus:border-emerald-700"
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="flex items-start gap-2 pt-1 text-[11px] text-slate-500">
               <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />

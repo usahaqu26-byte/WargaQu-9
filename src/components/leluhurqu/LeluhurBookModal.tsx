@@ -24,6 +24,7 @@ import {
   sortMembersHierarchically,
 } from './LeluhurQuView';
 import { LeluhurAccountProfile } from './LeluhurSettingsView';
+import { getLineageBadgeMeta } from '../../services/leluhurCoreSyncService';
 import { WargaQuLogoIcon } from '../common/WargaQuLogo';
 import { MonetizationService } from '../../services/monetizationService';
 import { ModularFeeSheet } from '../monetization/ModularFeeSheet';
@@ -91,18 +92,9 @@ interface LeluhurBookModalProps {
 }
 
 function getLineagePillarTitle(side?: TrahCategory['lineageSide']): string {
-  switch (side) {
-    case 'ayah_user':
-      return 'Pilar Keluarga Ayah';
-    case 'ibu_user':
-      return 'Pilar Keluarga Ibu';
-    case 'ayah_pasangan':
-      return 'Pilar Keluarga Ayah Pasangan';
-    case 'ibu_pasangan':
-      return 'Pilar Keluarga Ibu Pasangan';
-    default:
-      return 'Arsip Silsilah Trah';
-  }
+  if (!side || side === 'umum') return 'Arsip Silsilah Trah';
+  const meta = getLineageBadgeMeta(side);
+  return meta.label.replace(/^Pilar \d+[AB]?:\s*/i, 'Pilar ');
 }
 
 function getInitials(name: string): string {

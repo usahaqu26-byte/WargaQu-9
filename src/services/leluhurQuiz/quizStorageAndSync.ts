@@ -2,6 +2,7 @@ import { AuthService } from '../authService';
 import { canonicalInviteSlug, REALTIME_RELAY_EVENT_NAME, RELAY_REGISTER_CHANNELS_EVENT } from '../inviteRelayService';
 import { RealtimeRelayService } from '../realtimeRelayService';
 import { MAX_HOURLY_QUIZ_QUOTA } from './quizSchedulerService';
+import { buildApiUrl } from '../appOriginService';
 import type {
   QuizAccessPolicy,
   QuizParticipantEntry,
@@ -66,7 +67,7 @@ export async function fetchServerQuizRounds(trahName: string): Promise<QuizRound
   if (typeof fetch === 'undefined') return [];
   try {
     const slug = canonicalInviteSlug(trahName || 'umum');
-    const resp = await fetch(`/api/quiz-rounds/${encodeURIComponent(slug)}`);
+    const resp = await fetch(buildApiUrl(`/api/quiz-rounds/${encodeURIComponent(slug)}`));
     if (!resp.ok) return [];
     const data = (await resp.json()) as { found?: boolean; rounds?: QuizRound[] };
     if (!data.found || !Array.isArray(data.rounds)) return [];
@@ -81,7 +82,7 @@ export async function pushServerQuizRounds(trahName: string, rounds: QuizRound[]
   try {
     const slug = canonicalInviteSlug(trahName || 'umum');
     const cleanRounds = rounds.filter((r) => !r.id?.startsWith('round-seed-'));
-    await fetch(`/api/quiz-rounds/${encodeURIComponent(slug)}`, {
+    await fetch(buildApiUrl(`/api/quiz-rounds/${encodeURIComponent(slug)}`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rounds: cleanRounds }),

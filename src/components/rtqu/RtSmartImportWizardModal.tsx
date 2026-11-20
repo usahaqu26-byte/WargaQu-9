@@ -33,6 +33,7 @@ import {
 import { AuthService } from '../../services/authService';
 import { InviteRelayService } from '../../services/inviteRelayService';
 import { RtGovernanceCloudService } from '../../services/rtGovernanceCloudService';
+import { buildApiUrl } from '../../services/appOriginService';
 import { RtInviteQrBlock } from './RtInviteQrBlock';
 
 interface RtSmartImportWizardModalProps {
@@ -487,7 +488,7 @@ export const RtSmartImportWizardModal: React.FC<RtSmartImportWizardModalProps> =
       }
 
       setAnalyzeStatusText('Membaca nama warga, iuran, pengurus & mutasi kas dengan Smart AI...');
-      const resp = await fetch('/api/rtqu/smart-import', {
+      const resp = await fetch(buildApiUrl('/api/rtqu/smart-import'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: requestBodyStr,

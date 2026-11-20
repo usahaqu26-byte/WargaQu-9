@@ -22,6 +22,7 @@ import {
 import { WargaQuLogoIcon } from '../common/WargaQuLogo';
 import { LegalNoticeModal, LegalTab } from '../common/LegalNoticeModal';
 import { usePWAInstall } from '../../hooks/usePWAInstall';
+import { getPublicShareOrigin, isNativeCapacitorApk } from '../../services/appOriginService';
 
 export type PreviewTargetScreen =
   | 'warga'
@@ -140,7 +141,8 @@ function inferGitHubRepoSlug(): string {
 
 function buildStoreShareUrl(repoSlug: string): string {
   if (typeof window === 'undefined') return '';
-  const url = new URL(window.location.href);
+  const baseHref = isNativeCapacitorApk() ? getPublicShareOrigin() : window.location.href;
+  const url = new URL(baseHref);
   url.searchParams.set('preview', 'store');
   if (repoSlug) {
     url.searchParams.set('repo', repoSlug);
@@ -153,7 +155,7 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
   onEnterApp,
   showNotification,
 }) => {
-  const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
+  const { isInstallable, isInstalled, isNativeApk, isIOS, install } = usePWAInstall();
 
   const [repoSlug, setRepoSlug] = useState<string>(() => inferGitHubRepoSlug());
   const [repoDraft, setRepoDraft] = useState<string>(() => inferGitHubRepoSlug());
@@ -404,7 +406,9 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
             >
               <Smartphone className="w-4 h-4" />
               <span>
-                {isInstalled
+                {isNativeApk
+                  ? 'Aplikasi Android Terpasang · Buka Sekarang'
+                  : isInstalled
                   ? 'Aplikasi Terpasang · Buka Sekarang'
                   : isIOS
                   ? 'Pasang di iPhone / iPad (PWA)'
@@ -420,9 +424,9 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
                 className="min-h-[48px] px-5 py-3 rounded-xl border border-slate-300 hover:border-emerald-700 hover:bg-emerald-50/40 text-slate-900 text-sm font-bold flex items-center justify-center gap-2 transition whitespace-nowrap"
               >
                 <Download className="w-4 h-4 text-emerald-700" />
-                <span>Unduh Android (.apk)</span>
+                <span>{isNativeApk ? 'Cek Pembaruan APK (.apk)' : 'Unduh Android (.apk)'}</span>
               </a>
-            ) : (
+            ) : !isNativeApk ? (
               <button
                 type="button"
                 onClick={() => setEditingRepo(true)}
@@ -431,16 +435,18 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
                 <Download className="w-4 h-4 text-emerald-700" />
                 <span>Hubungkan Link APK GitHub</span>
               </button>
-            )}
+            ) : null}
 
-            <button
-              type="button"
-              onClick={() => onEnterApp('warga')}
-              className="min-h-[48px] px-5 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-sm font-bold flex items-center justify-center gap-2 transition whitespace-nowrap"
-            >
-              <span>Coba Pratinjau Web</span>
-              <ArrowUpRight className="w-4 h-4" />
-            </button>
+            {!isNativeApk && (
+              <button
+                type="button"
+                onClick={() => onEnterApp('warga')}
+                className="min-h-[48px] px-5 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-sm font-bold flex items-center justify-center gap-2 transition whitespace-nowrap"
+              >
+                <span>Coba Pratinjau Web</span>
+                <ArrowUpRight className="w-4 h-4" />
+              </button>
+            )}
 
             <button
               type="button"

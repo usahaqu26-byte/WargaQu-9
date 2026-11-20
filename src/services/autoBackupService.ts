@@ -10,6 +10,8 @@ import { ZERO_TRUST_SYNC_EVENT, ZeroTrustService } from './zeroTrustService';
 import { MONETIZATION_SYNC_EVENT } from './monetizationService';
 import { ACCOUNT_GOV_SYNC_EVENT } from './accountGovernanceService';
 import { FirebaseSyncService } from './firebaseSyncService';
+import { DOMPETQU_SYNC_EVENT } from './dompetQuStorage';
+import { DEVICE_PAIRING_SYNC_EVENT } from './devicePairingService';
 
 export const DRIVE_BACKUP_FILENAME = 'WargaQu_AutoBackup_SemuaData.wqbak.json';
 export const AUTO_BACKUP_SYNC_EVENT = 'wargaqu-autobackup-sync';
@@ -20,6 +22,16 @@ const IDB_STORE = 'snapshots';
 const SLOT_AUTO_OVERWRITE = 'hp_auto_overwrite';
 const SLOT_PRE_RESET = 'hp_pre_reset';
 const SLOT_PHONE_FILE_HANDLE = 'phone_file_handle';
+
+const PRESERVED_INFRA_KEYS = new Set([
+  'wargaqu_hidden_device_token_v1',
+  'wargaqu_device_binding_v1',
+  PREFS_KEY,
+  'wargaqu_zt_policy_v1',
+  'wargaqu_zt_audit_logs_v1',
+  'wargaqu_server_origin_v1',
+  'wargaqu_github_repo_slug_v1',
+]);
 
 export interface DirectBackupEnvelope {
   app: 'WargaQu-DirectBackup';
@@ -571,7 +583,8 @@ export const AutoBackupService = {
         k.startsWith('wargaqu_') ||
         k.startsWith('leluhurqu_grid_') ||
         k.startsWith('uq_') ||
-        k.startsWith('baksoqu_')
+        k.startsWith('baksoqu_') ||
+        k.startsWith('siagaqu_')
       ) {
         keysToRemove.push(k);
       }
@@ -593,14 +606,73 @@ export const AutoBackupService = {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent(AUTH_SYNC_EVENT));
       window.dispatchEvent(new CustomEvent(RT_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(DOMPETQU_SYNC_EVENT));
       window.dispatchEvent(new CustomEvent(SIAGA_CIRCLE_SYNC_EVENT));
       window.dispatchEvent(new CustomEvent(ZERO_TRUST_SYNC_EVENT));
       window.dispatchEvent(new CustomEvent(MONETIZATION_SYNC_EVENT));
       window.dispatchEvent(new CustomEvent(ACCOUNT_GOV_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(DEVICE_PAIRING_SYNC_EVENT));
     }
 
     emitAutoBackupSync();
     return { clearedKeys: keysToRemove.length, preResetSaved };
+  },
+
+  /**
+   * Sapu bersih data modul lokal ala WhatsApp sebelum akun baru masuk ke perangkat ini.
+   * Menyimpan cadangan otomatis ke slot pre_reset dan tetap menjaga token fisik + kebijakan Zero Trust.
+   */
+  async wipeLocalAccountDataForSwitch(
+    oldEmail: string,
+    options?: { savePreSwitchBackup?: boolean }
+  ): Promise<{ clearedKeys: number; preSwitchBackupSaved: boolean }> {
+    let preSwitchBackupSaved = false;
+    if (options?.savePreSwitchBackup !== false) {
+      try {
+        await this.saveLocalAutoOverwrite(
+          `Cadangan Sebelum Ganti Akun (${oldEmail || 'Pemilik Lama'})`,
+          'pre_reset'
+        );
+        preSwitchBackupSaved = true;
+      } catch {
+        // lanjutkan pembersihan meski penyimpanan IndexedDB gagal
+      }
+    }
+
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const k = localStorage.key(i);
+      if (!k || PRESERVED_INFRA_KEYS.has(k)) continue;
+      if (
+        k.startsWith('wargaqu_') ||
+        k.startsWith('leluhurqu_grid_') ||
+        k.startsWith('uq_') ||
+        k.startsWith('baksoqu_') ||
+        k.startsWith('siagaqu_')
+      ) {
+        keysToRemove.push(k);
+      }
+    }
+
+    for (const k of keysToRemove) {
+      localStorage.removeItem(k);
+    }
+
+    lastLocalSignature = '';
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(AUTH_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(RT_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(DOMPETQU_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(SIAGA_CIRCLE_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(ZERO_TRUST_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(MONETIZATION_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(ACCOUNT_GOV_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(DEVICE_PAIRING_SYNC_EVENT));
+    }
+
+    emitAutoBackupSync();
+    return { clearedKeys: keysToRemove.length, preSwitchBackupSaved };
   },
 
   // =========================================================================

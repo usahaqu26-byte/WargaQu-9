@@ -1,4 +1,5 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -123,6 +124,25 @@ function formatFriendlyGeminiError(err: unknown, fallback: string): { status: nu
 
 async function startServer() {
   const app = express();
+
+  // CORS for /api/* so Capacitor Android APK (https://localhost, capacitor://localhost)
+  // and static PWA hosts (*.github.io, *.pages.dev, *.web.app) share the same live relay & AI APIs.
+  app.use('/api', (req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    } else {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
 
   // Stateless Gemini Multimodal Smart Import for RTQu / PaguyubanQu / Komunitas
   // Registered BEFORE global 256kb parser so multi-photo/PDF base64 payloads work cleanly.
@@ -1180,6 +1200,58 @@ ATURAN EKSTRAKSI:
       volatileAccountPolicies = body.accountPolicies;
     }
     res.json({ ok: true });
+  });
+
+  const volatileDeviceBindingGuards = new Map<
+    string,
+    { accountHash: string; switchCount: number; windowStartMs: number; lastSeenMs: number }
+  >();
+  const DEVICE_SWITCH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+  const MAX_SERVER_DEVICE_SWITCHES = 2;
+
+  app.post('/api/relay-device-binding', (req, res) => {
+    const body = req.body as {
+      deviceId?: string;
+      emailHashHint?: string;
+      action?: 'bind' | 'switch' | 'phone_change';
+    };
+    const rawDeviceId = String(body?.deviceId || '').trim();
+    const rawEmail = String(body?.emailHashHint || '').trim().toLowerCase();
+    if (!rawDeviceId || !rawEmail) {
+      res.status(400).json({ error: 'Invalid device binding check payload' });
+      return;
+    }
+
+    const deviceHash = crypto.createHash('sha256').update(`dev:${rawDeviceId}`).digest('hex').slice(0, 32);
+    const accountHash = crypto.createHash('sha256').update(`acc:${rawEmail}`).digest('hex').slice(0, 32);
+    const now = Date.now();
+
+    const prev = volatileDeviceBindingGuards.get(deviceHash);
+    let switchCount = 0;
+    let windowStartMs = now;
+    if (prev && now - prev.windowStartMs < DEVICE_SWITCH_WINDOW_MS) {
+      switchCount = prev.switchCount;
+      windowStartMs = prev.windowStartMs;
+    }
+
+    if (body?.action === 'switch' || (prev && prev.accountHash !== accountHash && body?.action === 'bind')) {
+      switchCount += 1;
+    }
+
+    volatileDeviceBindingGuards.set(deviceHash, {
+      accountHash,
+      switchCount,
+      windowStartMs,
+      lastSeenMs: now,
+    });
+
+    const allowed = switchCount <= MAX_SERVER_DEVICE_SWITCHES;
+    res.json({
+      ok: true,
+      allowed,
+      switchCount,
+      maxSwitches: MAX_SERVER_DEVICE_SWITCHES,
+    });
   });
 
   // Lightweight health endpoint (zero citizen PII)

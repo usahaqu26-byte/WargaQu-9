@@ -1,4 +1,5 @@
 import { AuthService } from './authService';
+import { buildApiUrl } from './appOriginService';
 
 export type DompetWalletKind = 'cash' | 'bank' | 'ewallet' | 'tabungan';
 export type DompetTxType = 'masuk' | 'keluar' | 'transfer';
@@ -698,7 +699,7 @@ export const DompetQuStorage = {
     if (!cleanText) return { items: [], usedAi: false };
 
     try {
-      const resp = await fetch('/api/dompetqu/parse-speech', {
+      const resp = await fetch(buildApiUrl('/api/dompetqu/parse-speech'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

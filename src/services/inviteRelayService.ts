@@ -3,6 +3,7 @@ const ISSUED_ROOM_SNAPSHOTS_KEY = 'wargaqu_issued_room_snapshots_v1';
 export const REALTIME_RELAY_EVENT_NAME = 'wargaqu-realtime-relay';
 export const RELAY_PUBLISH_CMD_EVENT = 'wargaqu-relay-publish-cmd';
 export const RELAY_REGISTER_CHANNELS_EVENT = 'wargaqu-relay-register-channels';
+import { buildApiUrl, getPublicShareOrigin, isNativeCapacitorApk } from './appOriginService';
 
 interface StoredShortInvite {
   code: string;
@@ -362,8 +363,15 @@ export function getCurrentAppBaseUrl(): string {
   const override = getCustomPublicBaseUrl();
   if (override) return override;
   const { origin, pathname } = window.location;
-  if (!origin || origin === 'null' || origin.startsWith('capacitor://') || origin.startsWith('file://')) {
-    return 'https://wargaqu.app/';
+  if (
+    isNativeCapacitorApk() ||
+    !origin ||
+    origin === 'null' ||
+    origin.startsWith('capacitor://') ||
+    origin.startsWith('file://')
+  ) {
+    const pub = getPublicShareOrigin();
+    return pub.endsWith('/') ? pub : `${pub}/`;
   }
   let cleanPath = (pathname || '/')
     .replace(/\/index\.html$/i, '/')
@@ -462,7 +470,7 @@ export const InviteRelayService = {
     });
 
     try {
-      const res = await fetch('/api/invite-room', {
+      const res = await fetch(buildApiUrl('/api/invite-room'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -550,7 +558,9 @@ export const InviteRelayService = {
     } | null> => {
       try {
         const res = await fetch(
-          `/api/invite-room/${encodeURIComponent(params.kind)}/${encodeURIComponent(canonicalSlug)}`
+          buildApiUrl(
+            `/api/invite-room/${encodeURIComponent(params.kind)}/${encodeURIComponent(canonicalSlug)}`
+          )
         );
         if (!res.ok) return null;
         const data = (await res.json()) as {
@@ -624,7 +634,7 @@ export const InviteRelayService = {
     const fallbackUrl = `${baseUrl}?${queryKey}=${encodeURIComponent(fullCompressedToken)}`;
 
     try {
-      const res = await fetch('/api/relay-ticket', {
+      const res = await fetch(buildApiUrl('/api/relay-ticket'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prefix, payload: fullCompressedToken }),
@@ -661,7 +671,7 @@ export const InviteRelayService = {
 
     // 2. Fetch from ephemeral RAM relay ticket endpoint
     try {
-      const res = await fetch(`/api/relay-ticket/${encodeURIComponent(shortCode)}`);
+      const res = await fetch(buildApiUrl(`/api/relay-ticket/${encodeURIComponent(shortCode)}`));
       if (res.ok) {
         const data = (await res.json()) as { payload?: string };
         if (data?.payload) {
