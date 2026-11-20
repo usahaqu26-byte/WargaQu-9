@@ -936,7 +936,7 @@ export const ModularQuView: React.FC<ModularQuViewProps> = ({
             <button
               onClick={onOpenBaksoQu}
               className="text-[10px] bg-emerald-950/80 hover:bg-emerald-900/90 text-emerald-300 border border-emerald-500/40 px-2 py-1 rounded-xl flex items-center gap-1 font-bold"
-              title="Buka Bakso Qu Resto & Meja"
+              title="Buka Resto Qu & Denah Meja"
             >
               <Store className="w-3.5 h-3.5 text-emerald-400" />
               <span>Resto Meja</span>

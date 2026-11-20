@@ -179,7 +179,7 @@ export const EmptyModuleView: React.FC<EmptyModuleViewProps> = ({
           <div className="flex items-start gap-2.5">
             <Inbox className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
             <div className="text-[11px] text-slate-600">
-              <span className="font-semibold text-slate-800">Status Modul:</span> Sesuai instruksi, menu ini dibiarkan kosong. Modul aktif dengan sistem POS & Kasir lengkap tersedia di <span className="font-bold text-emerald-700">UsahaQu (Bakso Qu)</span>.
+              <span className="font-semibold text-slate-800">Status Modul:</span> Sesuai instruksi, menu ini dibiarkan kosong. Modul aktif dengan sistem POS &amp; Kasir lengkap tersedia di <span className="font-bold text-emerald-700">UsahaQu POS (Resto Qu &amp; ModularQu)</span>.
             </div>
           </div>
         </div>
@@ -191,7 +191,7 @@ export const EmptyModuleView: React.FC<EmptyModuleViewProps> = ({
             className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-[#047857] to-[#059669] hover:from-[#065f46] hover:to-[#047857] text-white font-bold text-xs shadow-md shadow-emerald-700/20 active:scale-98 transition flex items-center justify-center gap-2"
           >
             <ShoppingBag className="w-4 h-4 text-[#5eead4]" />
-            <span>Buka UsahaQu (Bakso Qu)</span>
+            <span>Buka UsahaQu POS</span>
           </button>
 
           <button

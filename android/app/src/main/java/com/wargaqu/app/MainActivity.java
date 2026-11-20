@@ -1,4 +1,4 @@
-package com.baksoqu.pos;
+package com.wargaqu.app;
 
 import com.getcapacitor.BridgeActivity;
 

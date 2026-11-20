@@ -630,7 +630,7 @@ export const MuamalahQuView: React.FC<MuamalahQuViewProps> = ({
           <div className="bg-white py-2 px-3 shadow-xs border-y border-slate-100 flex gap-2 overflow-x-auto no-scrollbar">
             {[
               { id: 'all', label: 'Semua Produk' },
-              { id: 'usahaqu', label: '🍜 UsahaQu (Bakso Qu)' },
+              { id: 'usahaqu', label: '🍜 UsahaQu POS' },
               { id: 'kuliner', label: '🍛 Kuliner Warga' },
               { id: 'sembako', label: '🌾 Sembako & Sayur' },
               { id: 'jasa', label: '🛠️ Jasa & Servis' }

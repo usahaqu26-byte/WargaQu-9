@@ -65,7 +65,7 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
           </button>
 
           <div className="w-12 h-12 rounded-2xl bg-amber-500 text-stone-950 flex items-center justify-center font-black text-xl shadow-lg mb-3 ring-2 ring-amber-400/30">
-            BQ
+            {profile.name ? profile.name.slice(0, 2).toUpperCase() : 'RQ'}
           </div>
           <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-1.5">
             {profile.name}
@@ -87,7 +87,7 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
             <div className="mx-1 mb-3 p-2.5 rounded-xl bg-gradient-to-r from-emerald-950/80 to-stone-900 border border-emerald-500/30 flex items-center justify-between">
               <div>
                 <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">Mode POS</p>
-                <p className="text-xs font-bold text-white">Bakso Qu (Resto)</p>
+                <p className="text-xs font-bold text-white">Resto Qu (POS Meja)</p>
               </div>
               <button
                 onClick={() => {
@@ -176,7 +176,7 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
 
         {/* Drawer Footer */}
         <div className="p-3 text-center border-t border-stone-800 text-[10px] text-stone-400">
-          Bakso Qu 1.0 · Android Native POS
+          UsahaQu POS · Ekosistem WargaQu
         </div>
       </div>
     </div>

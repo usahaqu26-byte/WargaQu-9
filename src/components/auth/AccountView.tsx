@@ -15,6 +15,8 @@ import {
   Smartphone,
   Cloud,
   Monitor,
+  FileText,
+  Copyright,
 } from 'lucide-react';
 import { AUTH_SYNC_EVENT, AuthAccount, AuthService } from '../../services/authService';
 import { RT_SYNC_EVENT, RtSiagaStorage, WargaMember } from '../../services/rtSiagaStorage';
@@ -25,6 +27,7 @@ import {
 } from '../../services/firebaseSyncService';
 import { EncryptedBackupPanel } from '../common/EncryptedBackupPanel';
 import { AutoBackupResetPanel } from '../common/AutoBackupResetPanel';
+import { LegalNoticeModal, LegalTab } from '../common/LegalNoticeModal';
 import { LinkedDevicesSection } from './DevicePairingPanel';
 import { DevicePairingService } from '../../services/devicePairingService';
 import {
@@ -71,6 +74,10 @@ export const AccountView: React.FC<AccountViewProps> = ({
   const [viewportMode, setViewportMode] = useState<DesktopViewportMode>(() =>
     ViewportLayoutService.getMode()
   );
+  const [legalModal, setLegalModal] = useState<{ open: boolean; tab: LegalTab }>({
+    open: false,
+    tab: 'privasi',
+  });
 
   useEffect(() => {
     const sync = () => {
@@ -562,9 +569,85 @@ export const AccountView: React.FC<AccountViewProps> = ({
             </div>
           ))}
         </section>
+
+        {/* TENTANG APLIKASI, PRIVASI & HAK CIPTA */}
+        <section className="divide-y divide-slate-200 border-t border-slate-200">
+          <div className="px-4 py-3 flex items-center justify-between gap-2 bg-slate-50/70">
+            <div>
+              <h2 className="text-xs font-extrabold uppercase tracking-wider text-slate-600">
+                Tentang Aplikasi, Privasi &amp; Hak Cipta
+              </h2>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Kebijakan privasi, disclaimer darurat SiagaQu &amp; status rilis WargaQu v1.5.7
+              </p>
+            </div>
+            <span className="text-[10px] font-bold text-emerald-700 shrink-0">v1.5.7</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setLegalModal({ open: true, tab: 'privasi' })}
+            className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-slate-50"
+          >
+            <div className="flex items-start gap-2.5 min-w-0">
+              <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0 text-emerald-700" />
+              <div>
+                <div className="text-xs font-bold text-slate-900">Kebijakan Privasi &amp; Data Warga</div>
+                <div className="text-[11px] text-slate-500">
+                  Transparansi GPS AreaQu, enkripsi backup &amp; sinkronisasi perangkat
+                </div>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setLegalModal({ open: true, tab: 'ketentuan' })}
+            className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-slate-50"
+          >
+            <div className="flex items-start gap-2.5 min-w-0">
+              <FileText className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+              <div>
+                <div className="text-xs font-bold text-slate-900">
+                  Syarat, Ketentuan &amp; Disclaimer SiagaQu
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Bukan pengganti layanan darurat resmi 110 / 112 / 118 / 119 / 113
+                </div>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setLegalModal({ open: true, tab: 'hakcipta' })}
+            className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-slate-50"
+          >
+            <div className="flex items-start gap-2.5 min-w-0">
+              <Copyright className="w-4 h-4 mt-0.5 shrink-0 text-slate-700" />
+              <div>
+                <div className="text-xs font-bold text-slate-900">
+                  Hak Cipta &amp; Orisinalitas Karya WargaQu
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  © 2026 WargaQu · Ekosistem Cerdas Warga, Keluarga &amp; UMKM
+                </div>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+          </button>
+        </section>
         </div>
         </div>
       </main>
+
+      <LegalNoticeModal
+        isOpen={legalModal.open}
+        onClose={() => setLegalModal((prev) => ({ ...prev, open: false }))}
+        initialTab={legalModal.tab}
+      />
     </div>
   );
 };

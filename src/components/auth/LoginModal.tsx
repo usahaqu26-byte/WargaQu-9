@@ -15,6 +15,7 @@ import { RtSiagaStorage } from '../../services/rtSiagaStorage';
 import { ZeroTrustService } from '../../services/zeroTrustService';
 import { FirebaseSyncService } from '../../services/firebaseSyncService';
 import { LaptopQrWaitCard } from './DevicePairingPanel';
+import { LegalNoticeModal, LegalTab } from '../common/LegalNoticeModal';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -40,6 +41,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [guardianContact, setGuardianContact] = useState<string>('');
   const [recoveryNote, setRecoveryNote] = useState<string>('');
   const [googleLoading, setGoogleLoading] = useState<boolean>(false);
+  const [legalModal, setLegalModal] = useState<{ open: boolean; tab: LegalTab }>({
+    open: false,
+    tab: 'privasi',
+  });
 
   if (!isOpen) return null;
 
@@ -427,8 +432,40 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             </div>
           </form>
         )}
+
+          <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/70 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[10px] text-slate-500">
+            <button
+              type="button"
+              onClick={() => setLegalModal({ open: true, tab: 'privasi' })}
+              className="font-semibold hover:text-emerald-700 underline-offset-2 hover:underline"
+            >
+              Kebijakan Privasi
+            </button>
+            <span>·</span>
+            <button
+              type="button"
+              onClick={() => setLegalModal({ open: true, tab: 'ketentuan' })}
+              className="font-semibold hover:text-emerald-700 underline-offset-2 hover:underline"
+            >
+              Ketentuan &amp; Disclaimer
+            </button>
+            <span>·</span>
+            <button
+              type="button"
+              onClick={() => setLegalModal({ open: true, tab: 'hakcipta' })}
+              className="font-semibold hover:text-emerald-700 underline-offset-2 hover:underline"
+            >
+              © 2026 WargaQu
+            </button>
+          </div>
         </div>
       </div>
+
+      <LegalNoticeModal
+        isOpen={legalModal.open}
+        onClose={() => setLegalModal((prev) => ({ ...prev, open: false }))}
+        initialTab={legalModal.tab}
+      />
     </div>
   );
 };

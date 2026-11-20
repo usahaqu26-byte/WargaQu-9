@@ -210,7 +210,7 @@ export const ExportService = {
   </table>
 
   <div class="footer">
-    Dicetak otomatis melalui Aplikasi Android Kasir Bakso Qu 1.0 · Laporan Resmi Keuangan Restoran
+    Dicetak otomatis melalui Aplikasi UsahaQu POS · Ekosistem WargaQu · Laporan Resmi Keuangan Usaha
   </div>
 
   <script>

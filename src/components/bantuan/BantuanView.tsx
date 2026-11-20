@@ -17,6 +17,7 @@ import {
   Edit3,
   Layers,
   BookOpen,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   SMART_CARE_SYNC_EVENT,
@@ -27,6 +28,7 @@ import { AUTH_SYNC_EVENT } from '../../services/authService';
 import { ZERO_TRUST_SYNC_EVENT, ZeroTrustService } from '../../services/zeroTrustService';
 import { SmartCareAdminTriagePanel } from './SmartCareAdminTriagePanel';
 import { SmartCareModuleGuidesPanel } from './SmartCareModuleGuidesPanel';
+import { LegalNoticeModal, LegalTab } from '../common/LegalNoticeModal';
 
 interface BantuanViewProps {
   onBackToWarga: () => void;
@@ -81,6 +83,10 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
 }) => {
   const [isAdmin, setIsAdmin] = useState<boolean>(() => checkIsAdmin());
   const [activeViewTab, setActiveViewTab] = useState<SmartCareViewTab>('lapor');
+  const [legalModal, setLegalModal] = useState<{ open: boolean; tab: LegalTab }>({
+    open: false,
+    tab: 'privasi',
+  });
 
   // Voice & Editable Entry States
   const initialDraft = !checkIsAdmin() ? loadUserDraft() : { text: '', entryId: null };
@@ -434,10 +440,21 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
             </div>
           </div>
 
-          <span className="bg-emerald-900/60 text-emerald-400 text-[10px] px-2.5 py-1 rounded-full font-mono border border-emerald-500/30 flex items-center gap-1 shrink-0">
-            <Bot className="w-3.5 h-3.5" />
-            <span className="font-bold">AI Active</span>
-          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setLegalModal({ open: true, tab: 'privasi' })}
+              className="bg-slate-700/80 hover:bg-slate-700 text-slate-200 text-[10px] px-2.5 py-1 rounded-full font-bold border border-slate-600 flex items-center gap-1 transition active:scale-95"
+              title="Kebijakan Privasi, Disclaimer & Hak Cipta WargaQu"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Legal</span>
+            </button>
+            <span className="bg-emerald-900/60 text-emerald-400 text-[10px] px-2.5 py-1 rounded-full font-mono border border-emerald-500/30 flex items-center gap-1">
+              <Bot className="w-3.5 h-3.5" />
+              <span className="font-bold">AI Active</span>
+            </span>
+          </div>
         </div>
 
         {/* Mode Tabs: User hanya Entry/Rekam-Simpan-Kirim & Panduan Modul; Log & Prompt khusus Admin */}
@@ -909,6 +926,12 @@ export const BantuanView: React.FC<BantuanViewProps> = ({
           </>
         )}
       </main>
+
+      <LegalNoticeModal
+        isOpen={legalModal.open}
+        onClose={() => setLegalModal((prev) => ({ ...prev, open: false }))}
+        initialTab={legalModal.tab}
+      />
     </div>
   );
 };

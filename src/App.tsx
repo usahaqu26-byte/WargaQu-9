@@ -528,7 +528,7 @@ export default function App() {
     showNotification(
       mode === 'modular'
         ? 'Membuka UsahaQu: Mode POS Modular Voice AI ⚡'
-        : 'Membuka UsahaQu: Mode Restoran Bakso Qu 🍲'
+        : 'Membuka UsahaQu: Mode Restoran Resto Qu 🍲'
     );
   };
 

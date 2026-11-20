@@ -19,13 +19,14 @@ export default defineConfig(() => {
           'pwa-192x192.png',
           'pwa-512x512.png',
           'pwa-maskable-512x512.png',
+          'wargaqu-share.jpg',
         ],
         manifest: {
           id: './',
-          name: 'WargaQu - Ekosistem Cerdas Warga & UsahaQu',
+          name: 'WargaQu - Ekosistem Cerdas Warga & UMKM',
           short_name: 'WargaQu',
           description:
-            'Aplikasi Terpadu Warga: RtQu, SiagaQu SOS, UsahaQu POS Kasir Bakso Qu, MuamalahQu Marketplace, dan AreaQu.',
+            'Aplikasi Terpadu Warga: RtQu, SiagaQu SOS, AreaQu Pedagang Keliling, UsahaQu POS Kasir & ModularQu, MuamalahQu, DompetQu, dan LeluhurQu.',
           theme_color: '#047857',
           background_color: '#f0fdf4',
           display: 'standalone',

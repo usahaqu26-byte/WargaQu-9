@@ -435,7 +435,7 @@ export const UsahaQuView: React.FC<UsahaQuViewProps> = ({
   const getPageTitle = () => {
     switch (activeTab) {
       case 'kasir':
-        return { title: 'Bakso Qu 1.0', subtitle: 'Kasir & Denah Meja' };
+        return { title: profile.name || 'Resto Qu', subtitle: 'Kasir & Denah Meja' };
       case 'bahan':
         return { title: 'Modal & Bahan', subtitle: 'Manajemen Stok Gudang' };
       case 'omset':
@@ -445,7 +445,7 @@ export const UsahaQuView: React.FC<UsahaQuViewProps> = ({
       case 'setting':
         return { title: 'Pengaturan Usaha', subtitle: 'Profil Usaha & Bluetooth' };
       default:
-        return { title: 'Bakso Qu 1.0', subtitle: 'POS Restoran' };
+        return { title: profile.name || 'Resto Qu', subtitle: 'UsahaQu POS Restoran' };
     }
   };
 
@@ -470,10 +470,10 @@ export const UsahaQuView: React.FC<UsahaQuViewProps> = ({
             <button
               onClick={() => {
                 setPosMode('resto');
-                showNotification('Beralih ke Mode Restoran Bakso Qu 🍲');
+                showNotification('Beralih ke Mode Restoran Resto Qu 🍲');
               }}
               className="px-2.5 py-1 rounded-lg text-[10px] font-bold text-zinc-400 hover:text-white flex items-center gap-1 transition active:scale-95"
-              title="Beralih ke Mode Restoran (Bakso Qu & Denah Meja)"
+              title="Beralih ke Mode Restoran (Resto Qu & Denah Meja)"
             >
               <span>🍲 Resto Qu</span>
             </button>
@@ -511,7 +511,7 @@ export const UsahaQuView: React.FC<UsahaQuViewProps> = ({
           onBackToWarga={onBackToWarga}
           onOpenBaksoQu={() => {
             setPosMode('resto');
-            showNotification('Beralih ke Mode Restoran Bakso Qu 🍲');
+            showNotification('Beralih ke Mode Restoran Resto Qu 🍲');
           }}
           onOpenBantuan={onOpenBantuan}
           showNotification={showNotification}

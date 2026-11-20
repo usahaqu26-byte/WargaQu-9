@@ -1,6 +1,6 @@
 {
-	"appId": "com.baksoqu.pos",
-	"appName": "Bakso Qu 1.0",
+	"appId": "com.wargaqu.app",
+	"appName": "WargaQu",
 	"webDir": "dist",
 	"bundledWebRuntime": false,
 	"server": {
