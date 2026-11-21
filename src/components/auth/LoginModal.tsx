@@ -14,6 +14,7 @@ import { AuthAccount, AuthService } from '../../services/authService';
 import { RtSiagaStorage } from '../../services/rtSiagaStorage';
 import { ZeroTrustService } from '../../services/zeroTrustService';
 import { FirebaseSyncService } from '../../services/firebaseSyncService';
+import { ApkMigrationService } from '../../services/apkMigrationService';
 import { LaptopQrWaitCard } from './DevicePairingPanel';
 import { LegalNoticeModal, LegalTab } from '../common/LegalNoticeModal';
 
@@ -89,7 +90,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     setPin('');
     RtSiagaStorage.syncAuthAccount(account);
     ZeroTrustService.registerOrTouchCurrentDevice(account.email, account.phone);
-    showNotification(res.message);
+    const syncPull = await ApkMigrationService.pullAccountSnapshot(
+      account.email,
+      account.phone,
+      { onlyIfNewer: true }
+    );
+    if (syncPull.restored) {
+      showNotification(
+        `Masuk berhasil & ${syncPull.keyCount} data dari ${
+          syncPull.source === 'apk' ? 'APK' : 'PWA'
+        } otomatis dipulihkan!`
+      );
+    } else {
+      void ApkMigrationService.pushAccountSnapshotNow(false);
+      showNotification(res.message);
+    }
     onSuccess(account);
   };
 
@@ -107,6 +122,17 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       if (acc) {
         RtSiagaStorage.syncAuthAccount(acc);
         ZeroTrustService.registerOrTouchCurrentDevice(acc.email, acc.phone);
+        const syncPull = await ApkMigrationService.pullAccountSnapshot(acc.email, acc.phone, {
+          onlyIfNewer: true,
+        });
+        if (syncPull.restored) {
+          showNotification(
+            `Google terhubung & ${syncPull.keyCount} data dari PWA otomatis disinkronkan!`
+          );
+          onSuccess(acc);
+          return;
+        }
+        void ApkMigrationService.pushAccountSnapshotNow(false);
         onSuccess(acc);
       }
       showNotification(`Terhubung Google Cloud: ${user.email || 'Berhasil'}`);

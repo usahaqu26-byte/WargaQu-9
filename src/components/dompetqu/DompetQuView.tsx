@@ -1193,7 +1193,7 @@ export const DompetQuView: React.FC<DompetQuViewProps> = ({
       </div>
 
       {/* Bottom Tab Navigation (Compact <= 64px) */}
-      <nav className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 py-1.5 grid grid-cols-4 items-center z-20">
+      <nav className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom,0px))] grid grid-cols-4 items-center z-20">
         {[
           { id: 'ringkasan' as DompetTab, label: 'Ringkasan', icon: Wallet },
           { id: 'mutasi' as DompetTab, label: 'Mutasi', icon: Receipt },

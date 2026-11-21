@@ -1,4 +1,4 @@
-import { buildApiUrl } from './appOriginService';
+import { buildApiUrl, isNativeCapacitorApk } from './appOriginService';
 
 export interface AuthAccount {
   email: string;
@@ -720,6 +720,100 @@ export const AuthService = {
       // ignore
     }
     emitAuthSync();
+  },
+
+  async computeSessionAccountKey(email: string): Promise<string> {
+    const norm = (email || '').trim().toLowerCase();
+    if (!norm) return '';
+    if (typeof crypto !== 'undefined' && crypto.subtle) {
+      const digest = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(`wargaqu-session-v1:${norm}`)
+      );
+      return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+    }
+    let h = 2166136261;
+    for (let i = 0; i < norm.length; i += 1) {
+      h ^= norm.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return `fallback_${(h >>> 0).toString(16).padStart(16, '0')}`;
+  },
+
+  async registerActiveSessionOnServer(
+    account: AuthAccount,
+    isCompanionLaptop = false
+  ): Promise<boolean> {
+    if (isCompanionLaptop || !account?.email || !account?.sessionNonce) return false;
+    try {
+      const accountKey = await this.computeSessionAccountKey(account.email);
+      const container: 'apk' | 'pwa' = isNativeCapacitorApk() ? 'apk' : 'pwa';
+      const res = await fetch(buildApiUrl('/api/session/register'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountKey,
+          sessionNonce: account.sessionNonce,
+          container,
+          deviceIdHash: account.deviceId.slice(-16),
+          issuedAt: account.loggedInAt,
+          isCompanionLaptop,
+        }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  },
+
+  async validateActiveSessionOnServer(
+    account: AuthAccount | null,
+    isCompanionLaptop = false
+  ): Promise<{ valid: boolean; reason?: string; activeContainer?: 'apk' | 'pwa' }> {
+    if (!account || !account.email || !account.sessionNonce || isCompanionLaptop) {
+      return { valid: true };
+    }
+    try {
+      const accountKey = await this.computeSessionAccountKey(account.email);
+      const url = buildApiUrl(
+        `/api/session/validate?accountKey=${encodeURIComponent(
+          accountKey
+        )}&sessionNonce=${encodeURIComponent(account.sessionNonce)}&isCompanionLaptop=${
+          isCompanionLaptop ? '1' : '0'
+        }`
+      );
+      const res = await fetch(url);
+      if (!res.ok) return { valid: true };
+      const data = (await res.json()) as {
+        valid?: boolean;
+        reason?: string;
+        activeContainer?: 'apk' | 'pwa';
+      };
+      return {
+        valid: data.valid !== false,
+        reason: data.reason,
+        activeContainer: data.activeContainer,
+      };
+    } catch {
+      return { valid: true };
+    }
+  },
+
+  async unregisterActiveSessionOnServer(account: AuthAccount | null): Promise<void> {
+    if (!account?.email || !account?.sessionNonce) return;
+    try {
+      const accountKey = await this.computeSessionAccountKey(account.email);
+      await fetch(buildApiUrl('/api/session/logout'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountKey,
+          sessionNonce: account.sessionNonce,
+        }),
+      });
+    } catch {
+      // ignore offline
+    }
   },
 
   getDisplayName(account?: AuthAccount | null): string {

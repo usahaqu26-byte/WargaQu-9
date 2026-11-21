@@ -63,6 +63,10 @@ export interface TrahCategory {
   creatorEmail?: string;
   userRole?: TrahAccessRole;
   invitePolicy?: TrahInvitePolicy;
+  dataVersion?: number;
+  lastSyncedAt?: string;
+  lastApprovedAt?: string;
+  lastApprovedBy?: string;
 }
 
 export interface LineageOptionMeta {

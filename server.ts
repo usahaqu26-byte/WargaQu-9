@@ -511,6 +511,88 @@ ATURAN EKSTRAKSI:
   >();
   const PAIR_SESSION_TTL_MS = 5 * 60 * 1000;
   const PAIR_LIVE_TTL_MS = 24 * 60 * 60 * 1000;
+  const ACCOUNT_SYNC_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+  const PWA_HANDOFF_TTL_MS = 24 * 60 * 60 * 1000;
+
+  const volatileAccountSync = new Map<
+    string,
+    {
+      accountHash: string;
+      salt: string;
+      iv: string;
+      ct: string;
+      keyCount: number;
+      source: string;
+      updatedAt: number;
+      expiresAt: number;
+    }
+  >();
+
+  const volatilePwaHandoffs = new Map<
+    string,
+    {
+      code: string;
+      iv: string;
+      ct: string;
+      keyCount: number;
+      createdAt: number;
+      expiresAt: number;
+    }
+  >();
+
+  const SESSION_REGISTRY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+  const LELUHUR_META_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+  const volatileActiveSessions = new Map<
+    string,
+    {
+      accountKey: string;
+      sessionNonce: string;
+      container: 'apk' | 'pwa';
+      deviceIdHash: string;
+      issuedAt: string;
+      updatedAt: number;
+      expiresAt: number;
+    }
+  >();
+
+  const volatileTrahVersions = new Map<
+    string,
+    {
+      slug: string;
+      trahId: string;
+      title: string;
+      dataVersion: number;
+      memberCount: number;
+      approvedBy: string;
+      summary: string;
+      updatedAt: number;
+      expiresAt: number;
+    }
+  >();
+
+  const volatileTrahProposals = new Map<
+    string,
+    Array<{
+      id: string;
+      trahId: string;
+      trahSlug: string;
+      trahName: string;
+      actionType: string;
+      proposerName: string;
+      proposerEmail?: string;
+      targetName?: string;
+      summary: string;
+      details?: string;
+      baseVersion: number;
+      createdAt: string;
+      status: 'pending' | 'approved' | 'rejected';
+      reviewedAt?: string;
+      reviewedBy?: string;
+      operations: unknown[];
+      expiresAt: number;
+    }>
+  >();
 
   function pruneExpiredPairData() {
     const now = Date.now();
@@ -522,6 +604,23 @@ ATURAN EKSTRAKSI:
     }
     for (const [k, v] of volatilePairLiveRooms.entries()) {
       if (v.expiresAt <= now) volatilePairLiveRooms.delete(k);
+    }
+    for (const [k, v] of volatileAccountSync.entries()) {
+      if (v.expiresAt <= now) volatileAccountSync.delete(k);
+    }
+    for (const [k, v] of volatilePwaHandoffs.entries()) {
+      if (v.expiresAt <= now) volatilePwaHandoffs.delete(k);
+    }
+    for (const [k, v] of volatileActiveSessions.entries()) {
+      if (v.expiresAt <= now) volatileActiveSessions.delete(k);
+    }
+    for (const [k, v] of volatileTrahVersions.entries()) {
+      if (v.expiresAt <= now) volatileTrahVersions.delete(k);
+    }
+    for (const [slug, arr] of volatileTrahProposals.entries()) {
+      const active = arr.filter(p => p.expiresAt > now);
+      if (active.length === 0) volatileTrahProposals.delete(slug);
+      else if (active.length !== arr.length) volatileTrahProposals.set(slug, active);
     }
     while (volatilePairSessions.size > 300) {
       const oldest = volatilePairSessions.keys().next().value;
@@ -537,6 +636,31 @@ ATURAN EKSTRAKSI:
       const oldest = volatilePairLiveRooms.keys().next().value;
       if (!oldest) break;
       volatilePairLiveRooms.delete(oldest);
+    }
+    while (volatileAccountSync.size > 400) {
+      const oldest = volatileAccountSync.keys().next().value;
+      if (!oldest) break;
+      volatileAccountSync.delete(oldest);
+    }
+    while (volatilePwaHandoffs.size > 400) {
+      const oldest = volatilePwaHandoffs.keys().next().value;
+      if (!oldest) break;
+      volatilePwaHandoffs.delete(oldest);
+    }
+    while (volatileActiveSessions.size > 2000) {
+      const oldest = volatileActiveSessions.keys().next().value;
+      if (!oldest) break;
+      volatileActiveSessions.delete(oldest);
+    }
+    while (volatileTrahVersions.size > 500) {
+      const oldest = volatileTrahVersions.keys().next().value;
+      if (!oldest) break;
+      volatileTrahVersions.delete(oldest);
+    }
+    while (volatileTrahProposals.size > 400) {
+      const oldest = volatileTrahProposals.keys().next().value;
+      if (!oldest) break;
+      volatileTrahProposals.delete(oldest);
     }
   }
 
@@ -713,6 +837,122 @@ ATURAN EKSTRAKSI:
       senderDeviceId: entry.senderDeviceId,
       encrypted: entry.encrypted,
       updatedAt: entry.updatedAt,
+    });
+  });
+
+  // Zero-Knowledge Encrypted Account Sync (PWA <-> Native APK auto-restore via Email+HP key)
+  app.post('/api/account-sync', pairJsonParser, (req, res) => {
+    pruneExpiredPairData();
+    const body = req.body as {
+      accountHash?: unknown;
+      salt?: unknown;
+      iv?: unknown;
+      ct?: unknown;
+      keyCount?: unknown;
+      source?: unknown;
+    };
+    const accountHash = String(body?.accountHash || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-f0-9]/g, '');
+    const salt = typeof body?.salt === 'string' ? body.salt.trim() : '';
+    const iv = typeof body?.iv === 'string' ? body.iv.trim() : '';
+    const ct = typeof body?.ct === 'string' ? body.ct.trim() : '';
+    const keyCount = Math.max(0, Number(body?.keyCount || 0));
+    const source = String(body?.source || 'pwa').slice(0, 24);
+
+    if (accountHash.length < 32 || !salt || !iv || !ct) {
+      res.status(400).json({ error: 'Invalid encrypted account sync payload' });
+      return;
+    }
+
+    const updatedAt = Date.now();
+    volatileAccountSync.set(accountHash, {
+      accountHash,
+      salt,
+      iv,
+      ct,
+      keyCount,
+      source,
+      updatedAt,
+      expiresAt: updatedAt + ACCOUNT_SYNC_TTL_MS,
+    });
+    res.json({ ok: true, updatedAt, keyCount });
+  });
+
+  app.get('/api/account-sync/:accountHash', (req, res) => {
+    pruneExpiredPairData();
+    const accountHash = String(req.params.accountHash || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-f0-9]/g, '');
+    const entry = volatileAccountSync.get(accountHash);
+    if (!entry) {
+      res.json({ found: false });
+      return;
+    }
+    res.json({
+      found: true,
+      salt: entry.salt,
+      iv: entry.iv,
+      ct: entry.ct,
+      keyCount: entry.keyCount,
+      source: entry.source,
+      updatedAt: entry.updatedAt,
+    });
+  });
+
+  // 1-Tap Same-Phone PWA -> APK Encrypted Handoff (works even in Guest Mode without login)
+  app.post('/api/pwa-handoff', pairJsonParser, (req, res) => {
+    pruneExpiredPairData();
+    const body = req.body as { iv?: unknown; ct?: unknown; keyCount?: unknown };
+    const iv = typeof body?.iv === 'string' ? body.iv.trim() : '';
+    const ct = typeof body?.ct === 'string' ? body.ct.trim() : '';
+    const keyCount = Math.max(0, Number(body?.keyCount || 0));
+
+    if (!iv || !ct) {
+      res.status(400).json({ error: 'Invalid PWA handoff payload' });
+      return;
+    }
+
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i += 1) {
+      code += chars[crypto.randomInt(0, chars.length)];
+    }
+
+    const createdAt = Date.now();
+    const expiresAt = createdAt + PWA_HANDOFF_TTL_MS;
+    volatilePwaHandoffs.set(code, {
+      code,
+      iv,
+      ct,
+      keyCount,
+      createdAt,
+      expiresAt,
+    });
+
+    res.json({ ok: true, code, keyCount, createdAt, expiresAt });
+  });
+
+  app.get('/api/pwa-handoff/:code', (req, res) => {
+    pruneExpiredPairData();
+    const code = String(req.params.code || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    const entry = volatilePwaHandoffs.get(code);
+    if (!entry) {
+      res.status(404).json({ found: false, error: 'Kode transfer PWA kedaluwarsa atau tidak ditemukan.' });
+      return;
+    }
+    res.json({
+      found: true,
+      code: entry.code,
+      iv: entry.iv,
+      ct: entry.ct,
+      keyCount: entry.keyCount,
+      createdAt: entry.createdAt,
     });
   });
 
@@ -1110,6 +1350,298 @@ ATURAN EKSTRAKSI:
       inviter: entry.inviter,
       snapshot: entry.snapshot,
       updatedAt: entry.updatedAt,
+    });
+  });
+
+  // Single Active Session Registry (APK vs PWA cross-container invalidation without storing user DB)
+  app.post('/api/session/register', (req, res) => {
+    pruneExpiredPairData();
+    const body = req.body as {
+      accountKey?: unknown;
+      sessionNonce?: unknown;
+      container?: unknown;
+      deviceIdHash?: unknown;
+      issuedAt?: unknown;
+      isCompanionLaptop?: unknown;
+    };
+    const accountKey = String(body?.accountKey || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-f0-9_-]/g, '')
+      .slice(0, 80);
+    const sessionNonce = String(body?.sessionNonce || '')
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 64);
+    const container: 'apk' | 'pwa' = body?.container === 'apk' ? 'apk' : 'pwa';
+    const deviceIdHash = String(body?.deviceIdHash || '')
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 80);
+    const issuedAt = String(body?.issuedAt || new Date().toISOString()).slice(0, 48);
+
+    if (body?.isCompanionLaptop === true) {
+      res.json({ ok: true, skippedCompanion: true });
+      return;
+    }
+    if (accountKey.length < 16 || !sessionNonce) {
+      res.status(400).json({ error: 'Invalid session registration payload' });
+      return;
+    }
+
+    const updatedAt = Date.now();
+    volatileActiveSessions.set(accountKey, {
+      accountKey,
+      sessionNonce,
+      container,
+      deviceIdHash,
+      issuedAt,
+      updatedAt,
+      expiresAt: updatedAt + SESSION_REGISTRY_TTL_MS,
+    });
+    res.json({ ok: true, activeContainer: container, updatedAt });
+  });
+
+  app.get('/api/session/validate', (req, res) => {
+    pruneExpiredPairData();
+    if (req.query.isCompanionLaptop === '1' || req.query.isCompanionLaptop === 'true') {
+      res.json({ valid: true, reason: 'companion' });
+      return;
+    }
+    const accountKey = String(req.query.accountKey || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-f0-9_-]/g, '')
+      .slice(0, 80);
+    const sessionNonce = String(req.query.sessionNonce || '')
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 64);
+
+    if (accountKey.length < 16 || !sessionNonce) {
+      res.status(400).json({ valid: true, reason: 'invalid_query' });
+      return;
+    }
+
+    const active = volatileActiveSessions.get(accountKey);
+    if (!active) {
+      res.json({ valid: true, reason: 'unregistered' });
+      return;
+    }
+    if (active.sessionNonce !== sessionNonce) {
+      res.json({
+        valid: false,
+        reason: 'superseded',
+        activeContainer: active.container,
+        updatedAt: active.updatedAt,
+      });
+      return;
+    }
+    res.json({
+      valid: true,
+      reason: 'active',
+      activeContainer: active.container,
+      updatedAt: active.updatedAt,
+    });
+  });
+
+  app.post('/api/session/logout', (req, res) => {
+    pruneExpiredPairData();
+    const body = req.body as { accountKey?: unknown; sessionNonce?: unknown };
+    const accountKey = String(body?.accountKey || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-f0-9_-]/g, '')
+      .slice(0, 80);
+    const sessionNonce = String(body?.sessionNonce || '')
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 64);
+    const active = volatileActiveSessions.get(accountKey);
+    if (active && (!sessionNonce || active.sessionNonce === sessionNonce)) {
+      volatileActiveSessions.delete(accountKey);
+    }
+    res.json({ ok: true });
+  });
+
+  // LeluhurQu Lightweight Reference Version Header & Staged Member Proposals (zero big DB)
+  function sanitizeLeluhurSlug(raw: unknown): string {
+    return String(raw || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 64);
+  }
+
+  app.get('/api/leluhur/room/:slug/meta', (req, res) => {
+    pruneExpiredPairData();
+    const slug = sanitizeLeluhurSlug(req.params.slug);
+    if (!slug) {
+      res.status(400).json({ error: 'Invalid trah slug' });
+      return;
+    }
+    const header = volatileTrahVersions.get(slug) || null;
+    const proposals = volatileTrahProposals.get(slug) || [];
+    const pendingCount = proposals.filter(p => p.status === 'pending').length;
+    res.json({
+      found: Boolean(header),
+      slug,
+      header,
+      pendingCount,
+    });
+  });
+
+  app.post('/api/leluhur/room/:slug/release', (req, res) => {
+    pruneExpiredPairData();
+    const slug = sanitizeLeluhurSlug(req.params.slug);
+    if (!slug) {
+      res.status(400).json({ error: 'Invalid trah slug' });
+      return;
+    }
+    const body = req.body as {
+      trahId?: unknown;
+      title?: unknown;
+      dataVersion?: unknown;
+      memberCount?: unknown;
+      approvedBy?: unknown;
+      summary?: unknown;
+    };
+    const prev = volatileTrahVersions.get(slug);
+    const reqVersion = Math.max(1, Math.floor(Number(body?.dataVersion || 1)));
+    const nextVersion = prev ? Math.max(reqVersion, prev.dataVersion) : reqVersion;
+    const now = Date.now();
+    const header = {
+      slug,
+      trahId: String(body?.trahId || prev?.trahId || slug).slice(0, 80),
+      title: String(body?.title || prev?.title || slug).slice(0, 120),
+      dataVersion: nextVersion,
+      memberCount: Math.max(0, Math.floor(Number(body?.memberCount ?? prev?.memberCount ?? 0))),
+      approvedBy: String(body?.approvedBy || 'Pengurus Trah').slice(0, 80),
+      summary: String(body?.summary || 'Pembaruan resmi Trah').slice(0, 180),
+      updatedAt: now,
+      expiresAt: now + LELUHUR_META_TTL_MS,
+    };
+    volatileTrahVersions.set(slug, header);
+    res.json({ ok: true, header });
+  });
+
+  app.get('/api/leluhur/room/:slug/proposals', (req, res) => {
+    pruneExpiredPairData();
+    const slug = sanitizeLeluhurSlug(req.params.slug);
+    if (!slug) {
+      res.status(400).json({ error: 'Invalid trah slug' });
+      return;
+    }
+    const proposals = volatileTrahProposals.get(slug) || [];
+    res.json({
+      found: proposals.length > 0,
+      slug,
+      proposals,
+      pendingCount: proposals.filter(p => p.status === 'pending').length,
+    });
+  });
+
+  app.post('/api/leluhur/room/:slug/proposals', pairJsonParser, (req, res) => {
+    pruneExpiredPairData();
+    const slug = sanitizeLeluhurSlug(req.params.slug);
+    if (!slug) {
+      res.status(400).json({ error: 'Invalid trah slug' });
+      return;
+    }
+    const body = req.body as {
+      id?: unknown;
+      trahId?: unknown;
+      trahName?: unknown;
+      actionType?: unknown;
+      proposerName?: unknown;
+      proposerEmail?: unknown;
+      targetName?: unknown;
+      summary?: unknown;
+      details?: unknown;
+      baseVersion?: unknown;
+      createdAt?: unknown;
+      operations?: unknown;
+    };
+    const id = String(body?.id || '')
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 64);
+    const summary = String(body?.summary || '').trim().slice(0, 220);
+    const operations = Array.isArray(body?.operations) ? body.operations.slice(0, 20) : [];
+
+    if (!id || !summary || operations.length === 0) {
+      res.status(400).json({ error: 'Invalid proposal payload' });
+      return;
+    }
+
+    const now = Date.now();
+    const entry = {
+      id,
+      trahId: String(body?.trahId || slug).slice(0, 80),
+      trahSlug: slug,
+      trahName: String(body?.trahName || slug).slice(0, 120),
+      actionType: String(body?.actionType || 'member_update').slice(0, 32),
+      proposerName: String(body?.proposerName || 'Anggota Keluarga').slice(0, 80),
+      proposerEmail: body?.proposerEmail ? String(body.proposerEmail).slice(0, 120) : undefined,
+      targetName: body?.targetName ? String(body.targetName).slice(0, 100) : undefined,
+      summary,
+      details: body?.details ? String(body.details).slice(0, 240) : undefined,
+      baseVersion: Math.max(1, Math.floor(Number(body?.baseVersion || 1))),
+      createdAt: String(body?.createdAt || new Date().toISOString()).slice(0, 48),
+      status: 'pending' as const,
+      operations,
+      expiresAt: now + LELUHUR_META_TTL_MS,
+    };
+
+    const existing = volatileTrahProposals.get(slug) || [];
+    const deduped = existing.filter(p => p.id !== id);
+    const nextList = [entry, ...deduped].slice(0, 50);
+    volatileTrahProposals.set(slug, nextList);
+    res.json({
+      ok: true,
+      proposal: entry,
+      pendingCount: nextList.filter(p => p.status === 'pending').length,
+    });
+  });
+
+  app.post('/api/leluhur/room/:slug/proposals/:proposalId/resolve', (req, res) => {
+    pruneExpiredPairData();
+    const slug = sanitizeLeluhurSlug(req.params.slug);
+    const proposalId = String(req.params.proposalId || '')
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 64);
+    if (!slug || !proposalId) {
+      res.status(400).json({ error: 'Invalid proposal resolution request' });
+      return;
+    }
+    const body = req.body as {
+      decision?: unknown;
+      reviewedBy?: unknown;
+    };
+    const decision: 'approved' | 'rejected' =
+      body?.decision === 'rejected' ? 'rejected' : 'approved';
+    const reviewedBy = String(body?.reviewedBy || 'Pengurus Trah').slice(0, 80);
+    const reviewedAt = new Date().toISOString();
+
+    const list = volatileTrahProposals.get(slug) || [];
+    const updated = list.map(item =>
+      item.id === proposalId
+        ? {
+            ...item,
+            status: decision,
+            reviewedBy,
+            reviewedAt,
+          }
+        : item
+    );
+    volatileTrahProposals.set(slug, updated);
+    res.json({
+      ok: true,
+      proposalId,
+      decision,
+      pendingCount: updated.filter(p => p.status === 'pending').length,
     });
   });
 

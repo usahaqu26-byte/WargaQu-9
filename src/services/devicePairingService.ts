@@ -10,6 +10,7 @@ import { SIAGA_CIRCLE_SYNC_EVENT } from './siagaCircleService';
 import { ZERO_TRUST_SYNC_EVENT, ZeroTrustService } from './zeroTrustService';
 import { MONETIZATION_SYNC_EVENT } from './monetizationService';
 import { ACCOUNT_GOV_SYNC_EVENT } from './accountGovernanceService';
+import { LELUHUR_SYNC_EVENT } from './leluhurVersionSyncService';
 import { buildApiUrl, getPublicShareOrigin } from './appOriginService';
 
 export const LINKED_DEVICES_STORAGE_KEY = 'wargaqu_linked_devices_v1';
@@ -88,8 +89,6 @@ let isApplyingRemoteSync = false;
 let remoteSyncResetTimer: number | null = null;
 let lastPushedSignature = '';
 let syncDebounceTimer: number | null = null;
-let periodicCheckTimer: number | null = null;
-let periodicPullTimer: number | null = null;
 
 function emitPairingSync(detail: PairingSyncEventDetail = {}) {
   if (typeof window !== 'undefined') {
@@ -97,15 +96,39 @@ function emitPairingSync(detail: PairingSyncEventDetail = {}) {
   }
 }
 
-function emitAllModuleSyncEvents(changedKeys: string[] = []) {
+function emitScopedModuleSyncEvents(changedKeys: string[] = [], forcePairing = false) {
   if (typeof window === 'undefined') return;
-  window.dispatchEvent(new CustomEvent(AUTH_SYNC_EVENT));
-  window.dispatchEvent(new CustomEvent(RT_SYNC_EVENT));
-  window.dispatchEvent(new CustomEvent(SIAGA_CIRCLE_SYNC_EVENT));
-  window.dispatchEvent(new CustomEvent(ZERO_TRUST_SYNC_EVENT));
-  window.dispatchEvent(new CustomEvent(MONETIZATION_SYNC_EVENT));
-  window.dispatchEvent(new CustomEvent(ACCOUNT_GOV_SYNC_EVENT));
-  window.dispatchEvent(new CustomEvent(DOMPETQU_SYNC_EVENT));
+  if (changedKeys.length === 0) {
+    if (forcePairing) emitPairingSync({ remoteApplied: true, changedKeys });
+    return;
+  }
+  const hasPrefix = (prefixes: string[]) =>
+    changedKeys.some(k => prefixes.some(p => k.startsWith(p)));
+
+  if (hasPrefix(['wargaqu_auth_'])) {
+    window.dispatchEvent(new CustomEvent(AUTH_SYNC_EVENT));
+  }
+  if (hasPrefix(['wargaqu_rt_'])) {
+    window.dispatchEvent(new CustomEvent(RT_SYNC_EVENT));
+  }
+  if (hasPrefix(['siagaqu_', 'wargaqu_siaga'])) {
+    window.dispatchEvent(new CustomEvent(SIAGA_CIRCLE_SYNC_EVENT));
+  }
+  if (hasPrefix(['wargaqu_zt_', 'wargaqu_zero_'])) {
+    window.dispatchEvent(new CustomEvent(ZERO_TRUST_SYNC_EVENT));
+  }
+  if (hasPrefix(['wargaqu_monetiz'])) {
+    window.dispatchEvent(new CustomEvent(MONETIZATION_SYNC_EVENT));
+  }
+  if (hasPrefix(['wargaqu_gov', 'wargaqu_account_gov'])) {
+    window.dispatchEvent(new CustomEvent(ACCOUNT_GOV_SYNC_EVENT));
+  }
+  if (hasPrefix(['wargaqu_dompetqu_'])) {
+    window.dispatchEvent(new CustomEvent(DOMPETQU_SYNC_EVENT));
+  }
+  if (hasPrefix(['wargaqu_leluhur_', 'leluhurqu_grid_'])) {
+    window.dispatchEvent(new CustomEvent(LELUHUR_SYNC_EVENT, { detail: { changedKeys } }));
+  }
   emitPairingSync({ remoteApplied: true, changedKeys });
 }
 
@@ -355,7 +378,7 @@ function applySyncedSnapshot(
 
     lastPushedSignature = buildSnapshotSignature(collectTransferSnapshot(includeDompetQu));
     if (changedKeys.length > 0 || forceNotify) {
-      emitAllModuleSyncEvents(changedKeys);
+      emitScopedModuleSyncEvents(changedKeys, forceNotify);
     }
   } finally {
     remoteSyncResetTimer = window.setTimeout(() => {
@@ -1051,7 +1074,7 @@ export const DevicePairingService = {
       }
       toRemove.forEach(k => localStorage.removeItem(k));
       AuthService.logout();
-      emitAllModuleSyncEvents(toRemove);
+      emitScopedModuleSyncEvents(toRemove, true);
     }
   },
 
@@ -1157,6 +1180,7 @@ export const DevicePairingService = {
       ZERO_TRUST_SYNC_EVENT,
       MONETIZATION_SYNC_EVENT,
       ACCOUNT_GOV_SYNC_EVENT,
+      LELUHUR_SYNC_EVENT,
       'storage',
     ].forEach(evName => window.addEventListener(evName, scheduleOutboundSync));
 
@@ -1171,22 +1195,5 @@ export const DevicePairingService = {
 
     // Pull latest state immediately on startup if paired
     void this.pullLiveUpdatesFromServer();
-
-    // Periodic diff check (for modules like LeluhurQu / UsahaQu / ChatQu that write directly to localStorage)
-    periodicCheckTimer = window.setInterval(() => {
-      if (!isApplyingRemoteSync) {
-        void this.pushLiveUpdateIfChanged(false);
-      }
-    }, 3000);
-
-    // Periodic HTTP live-sync pull fallback every 4.5s
-    periodicPullTimer = window.setInterval(() => {
-      if (!isApplyingRemoteSync) {
-        void this.pullLiveUpdatesFromServer();
-      }
-    }, 4500);
-
-    void periodicCheckTimer;
-    void periodicPullTimer;
   },
 };

@@ -60,6 +60,10 @@ import {
   isNativeCapacitorApk,
   setCustomRelayServerOrigin,
 } from '../../services/appOriginService';
+import {
+  ApkMigrationService,
+  PwaHandoffCreated,
+} from '../../services/apkMigrationService';
 
 interface AccountViewProps {
   onBack: () => void;
@@ -146,6 +150,9 @@ export const AccountView: React.FC<AccountViewProps> = ({
     'idle'
   );
   const [relayPingInfo, setRelayPingInfo] = useState<string>('');
+  const [migrationBusy, setMigrationBusy] = useState<boolean>(false);
+  const [handoffCreated, setHandoffCreated] = useState<PwaHandoffCreated | null>(null);
+  const [handoffTokenInput, setHandoffTokenInput] = useState<string>('');
 
   useEffect(() => {
     const sync = () => {
@@ -254,6 +261,18 @@ export const AccountView: React.FC<AccountViewProps> = ({
     if (FirebaseSyncService.isCloudSignedIn()) {
       void FirebaseSyncService.syncMyAccountRegistry('akun', true);
     }
+    const pullRes = await ApkMigrationService.pullAccountSnapshot(saved.email, saved.phone, {
+      onlyIfNewer: true,
+    });
+    if (pullRes.restored) {
+      showNotification(
+        `Masuk berhasil & ${pullRes.keyCount} data akun disinkronkan dari ${
+          pullRes.source === 'apk' ? 'APK' : 'PWA'
+        }!`
+      );
+      return;
+    }
+    void ApkMigrationService.pushAccountSnapshotNow(false);
     showNotification(res.message);
   };
 
@@ -532,6 +551,103 @@ export const AccountView: React.FC<AccountViewProps> = ({
     setEditingRelayOrigin(false);
     setRelayPingStatus('idle');
     showNotification('Alamat Server Relay dikembalikan ke bawaan WargaQu.');
+  };
+
+  const handleCreatePwaHandoff = async () => {
+    setMigrationBusy(true);
+    try {
+      const created = await ApkMigrationService.createPwaToApkHandoff();
+      setHandoffCreated(created);
+      try {
+        await navigator.clipboard.writeText(created.shareToken);
+      } catch {
+        // clipboard may require user gesture in some WebViews
+      }
+      showNotification(
+        `Paket transfer (${created.keyCount} data) siap! Membuka APK & menyalin token cadangan.`
+      );
+      if (!isNativeApk && typeof window !== 'undefined') {
+        window.location.href = created.deepLinkUrl;
+      }
+    } catch (err) {
+      showNotification(
+        err instanceof Error ? err.message : 'Gagal menyiapkan paket transfer data ke APK.'
+      );
+    } finally {
+      setMigrationBusy(false);
+    }
+  };
+
+  const handleCopyHandoffToken = async () => {
+    if (!handoffCreated) return;
+    try {
+      await navigator.clipboard.writeText(handoffCreated.shareToken);
+      showNotification('Token transfer PWA disalin! Tempelkan di APK pada menu Akun Saya.');
+    } catch {
+      showNotification(`Token: ${handoffCreated.shareToken}`);
+    }
+  };
+
+  const handleConsumeHandoffToken = async (rawInput?: string) => {
+    let token = (rawInput ?? handoffTokenInput).trim();
+    if (!token && typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
+      try {
+        const clip = await navigator.clipboard.readText();
+        if (clip && clip.trim()) {
+          token = clip.trim();
+          setHandoffTokenInput(token);
+        }
+      } catch {
+        // ignore clipboard permission prompt
+      }
+    }
+    if (!token) {
+      showNotification('Tempel token transfer WQH1:... dari PWA terlebih dahulu.');
+      return;
+    }
+    setMigrationBusy(true);
+    try {
+      const res = await ApkMigrationService.consumePwaHandoff(token);
+      setHandoffTokenInput('');
+      showNotification(
+        `Berhasil memindahkan ${res.restoredKeys} data dari PWA ke APK (${res.ownerEmail})!`
+      );
+    } catch (err) {
+      showNotification(
+        err instanceof Error ? err.message : 'Gagal menerima data transfer dari PWA.'
+      );
+    } finally {
+      setMigrationBusy(false);
+    }
+  };
+
+  const handlePullAccountSyncNow = async () => {
+    const targetEmail = (account?.email || emailInput).trim();
+    const targetPhone = (account?.phone || phoneInput).trim();
+    if (!targetEmail || !targetPhone) {
+      showNotification('Masuk atau isi Email & No. HP terlebih dahulu untuk menarik data akun.');
+      return;
+    }
+    setMigrationBusy(true);
+    try {
+      const res = await ApkMigrationService.pullAccountSnapshot(targetEmail, targetPhone, {
+        onlyIfNewer: false,
+      });
+      if (res.restored) {
+        showNotification(
+          `${res.keyCount} data akun berhasil ditarik dari ${res.source === 'apk' ? 'APK' : 'PWA'}!`
+        );
+      } else {
+        const pushed = await ApkMigrationService.pushAccountSnapshotNow(true);
+        showNotification(
+          pushed
+            ? 'Belum ada data lebih baru di server; data perangkat ini diunggah untuk sinkronisasi.'
+            : 'Belum ada cadangan akun di server relay untuk Email & No. HP tersebut.'
+        );
+      }
+    } finally {
+      setMigrationBusy(false);
+    }
   };
 
   return (
@@ -1335,8 +1451,99 @@ export const AccountView: React.FC<AccountViewProps> = ({
 
           <p className="text-[11px] text-slate-600 leading-snug">
             APK dan PWA memakai tampilan, identitas akun, QR Tautan, dan server sinkronisasi
-            real-time yang sama sehingga data tetap terhubung lintas perangkat.
+            otomatis yang sama. Masuk dengan Email &amp; No. HP yang sama atau gunakan transfer
+            1-Tap di bawah untuk memindahkan seluruh data pada HP yang sama.
           </p>
+
+          {/* 1-Tap Pindah Data PWA <-> APK */}
+          <div className="border border-emerald-200 bg-white rounded-xl p-3 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-extrabold text-slate-900">
+                {isNativeApk ? 'Tarik Data dari PWA ke APK' : 'Pindahkan Data PWA ke APK (1-Tap)'}
+              </span>
+              <span className="text-[10px] font-bold text-emerald-700">AES-256-GCM</span>
+            </div>
+
+            {!isNativeApk ? (
+              <div className="space-y-2">
+                <p className="text-[11px] text-slate-600 leading-snug">
+                  Jika Anda sudah menginstal WargaQu APK di HP ini, tekan tombol di bawah untuk
+                  mengirim seluruh data PWA dan langsung membukanya di APK.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleCreatePwaHandoff()}
+                  disabled={migrationBusy}
+                  className="w-full min-h-[40px] px-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center justify-center gap-1.5 disabled:opacity-60"
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>
+                    {migrationBusy ? 'Menyiapkan Data...' : 'Kirim & Buka di APK Sekarang'}
+                  </span>
+                </button>
+
+                {handoffCreated && (
+                  <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="font-bold text-emerald-950">
+                        Kode Cadangan ({handoffCreated.keyCount} data):
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyHandoffToken()}
+                        className="text-emerald-700 font-bold hover:underline flex items-center gap-1"
+                      >
+                        <Copy className="w-3 h-3" />
+                        <span>Salin Token</span>
+                      </button>
+                    </div>
+                    <div className="font-mono text-[10px] bg-white border border-emerald-200 rounded-lg px-2 py-1.5 break-all text-slate-800">
+                      {handoffCreated.shareToken}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {account && (
+                  <button
+                    type="button"
+                    onClick={() => void handlePullAccountSyncNow()}
+                    disabled={migrationBusy}
+                    className="w-full min-h-[40px] px-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center justify-center gap-1.5 disabled:opacity-60"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${migrationBusy ? 'animate-spin' : ''}`} />
+                    <span>
+                      {migrationBusy ? 'Menarik Data...' : 'Tarik / Sinkron Data Akun dari PWA'}
+                    </span>
+                  </button>
+                )}
+
+                <div className="space-y-1.5 pt-1">
+                  <label className="text-[11px] font-bold text-slate-700 block">
+                    Atau tempel Token Transfer dari PWA (Mode Tamu):
+                  </label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={handoffTokenInput}
+                      onChange={e => setHandoffTokenInput(e.target.value)}
+                      placeholder="Tempel WQH1:..."
+                      className="flex-1 min-h-[38px] border border-slate-300 rounded-xl px-2.5 text-[11px] font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleConsumeHandoffToken()}
+                      disabled={migrationBusy}
+                      className="min-h-[38px] px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold shrink-0 disabled:opacity-60"
+                    >
+                      {handoffTokenInput.trim() ? 'Pulihkan' : 'Tempel'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
 
           <div className="border border-slate-200 bg-white rounded-xl p-2.5 space-y-2">
             <div className="flex items-center justify-between gap-2">

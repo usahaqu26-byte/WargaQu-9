@@ -54,6 +54,7 @@ import {
   PENDING_PAIR_TOKEN_KEY,
   PairingSyncEventDetail,
 } from './services/devicePairingService';
+import { ApkMigrationService } from './services/apkMigrationService';
 
 type AppScreen = 'warga' | 'store' | 'dompetqu' | 'akun' | 'admin_zero_trust' | 'leluhurqu' | 'rtqu' | 'siagaqu' | 'chatqu' | 'muamalahqu' | 'areaqu' | 'usahaqu' | 'modularqu' | 'bantuan' | 'empty_module';
 
@@ -119,7 +120,10 @@ export default function App() {
 
   // Global Toast Notification State
   const [notification, setNotification] = useState<string | null>(null);
+  const [sessionSupersededNotice, setSessionSupersededNotice] = useState<string | null>(null);
   const lastBroadcastSessionNonceRef = useRef<string>('');
+  const lastActiveAccountRef = useRef<AuthAccount | null>(AuthService.getAccount());
+  const sessionInvalidatedBySwitchRef = useRef<boolean>(false);
 
   // Initial Data Load & Hidden Device ID Init
   useEffect(() => {
@@ -270,10 +274,12 @@ export default function App() {
 
     const broadcastActiveSessionIfNeeded = (acc: AuthAccount | null) => {
       if (!acc || !acc.email || !acc.sessionNonce) return;
+      const isCompanionLaptop = Boolean(DevicePairingService.getPairedHost());
       // Laptop hasil scan QR pairing sengaja berbagi sesi dengan HP host -> jangan tendang HP host
-      if (DevicePairingService.getPairedHost()) return;
+      if (isCompanionLaptop) return;
       if (lastBroadcastSessionNonceRef.current === acc.sessionNonce) return;
       lastBroadcastSessionNonceRef.current = acc.sessionNonce;
+      void AuthService.registerActiveSessionOnServer(acc, false);
       RealtimeRelayService.joinCurrentChannels();
       RealtimeRelayService.publish(
         getAccountSessionChannel(acc.email),
@@ -285,6 +291,33 @@ export default function App() {
           issuedAt: acc.loggedInAt,
         }
       );
+    };
+
+    const verifySingleSessionOnWake = async () => {
+      const acc = AuthService.getAccount();
+      const isCompanionLaptop = Boolean(DevicePairingService.getPairedHost());
+      if (!acc || !acc.email || !acc.sessionNonce || isCompanionLaptop) return;
+
+      const check = await AuthService.validateActiveSessionOnServer(acc, false);
+      if (!check.valid && check.reason === 'superseded') {
+        sessionInvalidatedBySwitchRef.current = true;
+        const containerLabel =
+          check.activeContainer === 'apk'
+            ? 'APK Android'
+            : check.activeContainer === 'pwa'
+            ? 'PWA Browser'
+            : 'perangkat lain';
+        const noticeMsg = `Sesi Anda di wadah ini dinonaktifkan karena akun baru saja masuk di ${containerLabel}.`;
+        AuthService.logout();
+        ZeroTrustService.appendAudit(
+          acc.email,
+          'Sesi Tunggal Ditutup (Login di Wadah Lain)',
+          noticeMsg,
+          'info'
+        );
+        setSessionSupersededNotice(noticeMsg);
+        showNotification(noticeMsg);
+      }
     };
 
     AuthService.getHiddenDeviceId(); // ensure persistent hidden device token exists
@@ -305,9 +338,13 @@ export default function App() {
     };
 
     const handleAuthSync = () => {
+      const prevAcc = lastActiveAccountRef.current;
       const nextAcc = AuthService.getAccount();
+      lastActiveAccountRef.current = nextAcc;
       setAuthAccount(nextAcc);
       if (nextAcc) {
+        sessionInvalidatedBySwitchRef.current = false;
+        setSessionSupersededNotice(null);
         RtSiagaStorage.syncAuthAccount(nextAcc);
         ZeroTrustService.registerOrTouchCurrentDevice(nextAcc.email, nextAcc.phone);
         setProfile(prev => {
@@ -317,6 +354,10 @@ export default function App() {
         });
         broadcastActiveSessionIfNeeded(nextAcc);
       } else {
+        if (prevAcc && !sessionInvalidatedBySwitchRef.current) {
+          void AuthService.unregisterActiveSessionOnServer(prevAcc);
+        }
+        sessionInvalidatedBySwitchRef.current = false;
         lastBroadcastSessionNonceRef.current = '';
         setTables(StorageService.getTables());
         setMenuList(StorageService.getMenu());
@@ -351,16 +392,29 @@ export default function App() {
       refreshGovernanceState();
     };
 
+    const handleSessionWakeCheck = () => {
+      if (document.visibilityState === 'visible') {
+        void verifySingleSessionOnWake();
+      }
+    };
+
     window.addEventListener(AUTH_SYNC_EVENT, handleAuthSync);
     window.addEventListener(ACCOUNT_GOV_SYNC_EVENT, refreshGovernanceState);
     window.addEventListener(DEVICE_PAIRING_SYNC_EVENT, handlePairingSync);
+    window.addEventListener('focus', handleSessionWakeCheck);
+    document.addEventListener('visibilitychange', handleSessionWakeCheck);
 
     RealtimeRelayService.start();
     DevicePairingService.startLiveSync(showNotification);
+    ApkMigrationService.startAutoSync(showNotification);
     FirebaseSyncService.init();
     AutoBackupService.startAutoBackupMonitor();
     if (currentAcc) {
-      broadcastActiveSessionIfNeeded(currentAcc);
+      void verifySingleSessionOnWake().then(() => {
+        if (AuthService.getAccount()) {
+          broadcastActiveSessionIfNeeded(AuthService.getAccount());
+        }
+      });
     }
     void AccountGovernanceService.syncPolicyFromServer();
     AccountGovernanceService.publishCurrentPresence(currentScreenRef.current);
@@ -443,16 +497,18 @@ export default function App() {
           p.sessionNonce &&
           p.sessionNonce !== activeAcc.sessionNonce
         ) {
+          sessionInvalidatedBySwitchRef.current = true;
+          const noticeMsg =
+            'Sesi di wadah ini otomatis ditutup karena akun Anda baru saja masuk di perangkat/wadah lain (Sesi Tunggal).';
           AuthService.logout();
           ZeroTrustService.appendAudit(
             activeAcc.email,
             'Sesi Tunggal Ditutup (Login di Perangkat Lain)',
-            'Sesi di perangkat ini otomatis ditutup karena akun masuk dari perangkat lain',
+            noticeMsg,
             'info'
           );
-          showNotification(
-            'Akun Anda baru saja masuk di perangkat lain. Sesi di HP ini ditutup otomatis (Sesi Tunggal ala WhatsApp).'
-          );
+          setSessionSupersededNotice(noticeMsg);
+          showNotification(noticeMsg);
         }
       } else if (detail.eventName === 'smartcare:ticket' && detail.payload && typeof detail.payload === 'object') {
         if (SmartCareService.isDeveloperOrAdmin() || ZeroTrustService.isAdminSessionActive()) {
@@ -484,6 +540,8 @@ export default function App() {
       window.removeEventListener(AUTH_SYNC_EVENT, handleAuthSync);
       window.removeEventListener(ACCOUNT_GOV_SYNC_EVENT, refreshGovernanceState);
       window.removeEventListener(DEVICE_PAIRING_SYNC_EVENT, handlePairingSync);
+      window.removeEventListener('focus', handleSessionWakeCheck);
+      document.removeEventListener('visibilitychange', handleSessionWakeCheck);
       window.removeEventListener(REALTIME_RELAY_EVENT, handleGlobalRelay);
     };
   }, []);
@@ -573,6 +631,39 @@ export default function App() {
     window.addEventListener('popstate', onPopState);
 
     let capListener: any = null;
+    let capUrlListener: any = null;
+
+    const handleIncomingAppUrl = (rawUrl?: string | null) => {
+      if (!rawUrl) return;
+      const parsed = ApkMigrationService.parseHandoffInput(rawUrl);
+      if (!parsed) return;
+      void ApkMigrationService.consumePwaHandoff(rawUrl)
+        .then((res) => {
+          showNotification(
+            `${res.restoredKeys} data dari PWA berhasil dipindahkan otomatis ke APK!`
+          );
+          setTables(StorageService.getTables());
+          setMenuList(StorageService.getMenu());
+          setIngredients(StorageService.getIngredients());
+          setHistory(StorageService.getHistory());
+          setActiveOrders(StorageService.getActiveOrders());
+          const latestAcc = AuthService.getAccount();
+          setAuthAccount(latestAcc);
+          const latestProf = StorageService.getProfile();
+          setProfile(latestAcc ? { ...latestProf, phone: latestAcc.phone } : latestProf);
+          setPrinterConfig(StorageService.getPrinterConfig());
+        })
+        .catch((err) => {
+          showNotification(
+            err instanceof Error ? err.message : 'Gagal memindahkan data dari PWA.'
+          );
+        });
+    };
+
+    if (typeof window !== 'undefined' && window.location.search) {
+      handleIncomingAppUrl(window.location.href);
+    }
+
     import('@capacitor/app')
       .then(({ App: CapApp }) => {
         CapApp.addListener('backButton', () => {
@@ -582,6 +673,24 @@ export default function App() {
             capListener = l;
           })
           .catch(() => {});
+
+        CapApp.getLaunchUrl()
+          .then((launch) => {
+            if (launch?.url) {
+              handleIncomingAppUrl(launch.url);
+            }
+          })
+          .catch(() => {});
+
+        CapApp.addListener('appUrlOpen', (event) => {
+          if (event?.url) {
+            handleIncomingAppUrl(event.url);
+          }
+        })
+          .then((l) => {
+            capUrlListener = l;
+          })
+          .catch(() => {});
       })
       .catch(() => {});
 
@@ -589,6 +698,9 @@ export default function App() {
       window.removeEventListener('popstate', onPopState);
       if (capListener?.remove) {
         capListener.remove();
+      }
+      if (capUrlListener?.remove) {
+        capUrlListener.remove();
       }
     };
   }, []);
@@ -761,7 +873,7 @@ export default function App() {
 
   if (currentScreen === 'store') {
     return (
-      <div className="h-[100dvh] w-full overflow-hidden bg-white relative">
+      <div className="h-[100dvh] w-full overflow-hidden bg-white relative safe-area-shell">
         {notification && (
           <div className="fixed top-16 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md z-50 bg-emerald-950/95 text-[#5eead4] px-4 py-2 rounded-2xl shadow-xl border border-emerald-500/40 text-xs font-semibold flex items-center justify-between">
             <span>{notification}</span>
@@ -777,6 +889,34 @@ export default function App() {
 
   return (
     <AndroidFrame>
+      {/* Cross-Container Single Active Session Notice (APK vs PWA) */}
+      {sessionSupersededNotice && !authAccount && (
+        <div className="bg-rose-50 border-b border-rose-300 px-3.5 py-2.5 text-rose-950 flex items-center justify-between gap-2 shrink-0 z-40">
+          <div className="text-[11px] leading-snug min-w-0">
+            <span className="font-extrabold uppercase tracking-wide text-rose-800 block">
+              Sesi Tidak Aktif (Keluar Otomatis)
+            </span>
+            <span>{sessionSupersededNotice}</span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleOpenLogin('Sesi sebelumnya dinonaktifkan karena login di wadah lain')}
+              className="px-2.5 py-1 text-[10px] font-extrabold bg-rose-600 hover:bg-rose-700 text-white rounded-lg"
+            >
+              Masuk Ulang
+            </button>
+            <button
+              type="button"
+              onClick={() => setSessionSupersededNotice(null)}
+              className="px-2 py-1 text-[10px] font-bold bg-rose-200/80 hover:bg-rose-300 rounded-lg"
+            >
+              Tutup
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Dynamic Admin Warning Banner */}
       {accountAccess.status === 'warning' && !warningDismissed && !accountAccess.isAdminProtected && (
         <div className="bg-amber-50 border-b border-amber-300 px-3.5 py-2.5 text-amber-950 flex items-start justify-between gap-2 shrink-0 z-40">

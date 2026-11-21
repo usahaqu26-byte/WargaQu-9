@@ -81,7 +81,7 @@ export const AndroidFrame: React.FC<AndroidFrameProps> = ({ children }) => {
 
   return (
     <div
-      className={`h-[100dvh] max-h-[100dvh] w-full flex flex-col items-center justify-start text-slate-800 antialiased font-sans selection:bg-emerald-600 selection:text-white overflow-hidden ${
+      className={`h-[100dvh] max-h-[100dvh] w-full flex flex-col items-center justify-start text-slate-800 antialiased font-sans selection:bg-emerald-600 selection:text-white overflow-hidden safe-area-shell ${
         layout.isFullBleed ? 'bg-[#f0fdf4]' : 'bg-emerald-950/15'
       }`}
     >

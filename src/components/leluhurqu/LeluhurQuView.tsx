@@ -121,6 +121,18 @@ import {
   TrahCategory,
   TrahInvitePolicy,
 } from '../../services/leluhurCoreSyncService';
+import {
+  applyProposalOpsToTrah,
+  formatSyncTimestamp,
+  LELUHUR_SYNC_EVENT,
+  LeluhurChangeProposal,
+  LeluhurProposalActionType,
+  LeluhurProposalOp,
+  LeluhurVersionSyncService,
+  loadProposalsForScope,
+  saveProposalsForScope,
+  TrahSyncCheckResult,
+} from '../../services/leluhurVersionSyncService';
 
 export type {
   SpouseInfo,
@@ -301,6 +313,7 @@ interface CompactInviteMeta {
   exp?: number;
   v?: number;
   ce?: string;
+  dv?: number;
 }
 
 type DecodedTrahInviteResult =
@@ -318,10 +331,12 @@ function buildCompactInviteMeta(
   const version = overridePolicy?.version || trah.invitePolicy?.version || 1;
   const exp = expiryHours > 0 ? Date.now() + expiryHours * 3600 * 1000 : 0;
   const creatorEmail = (trah.creatorEmail || fallbackCreatorEmail || '').trim().toLowerCase();
+  const dataVersion = Math.max(1, trah.dataVersion || 1);
   return {
     r: role,
     exp,
     v: version,
+    dv: dataVersion,
     ...(creatorEmail ? { ce: creatorEmail } : {}),
   };
 }
@@ -442,12 +457,13 @@ function validateInviteMeta(
   trahName: string,
   meta: CompactInviteMeta | undefined,
   scopeKey: string
-): { ok: true; role: TrahAccessRole; version: number; creatorEmail?: string } | { ok: false; status: 'expired' | 'revoked'; trahName: string } {
+): { ok: true; role: TrahAccessRole; version: number; dataVersion: number; creatorEmail?: string } | { ok: false; status: 'expired' | 'revoked'; trahName: string } {
   const exp = meta?.exp || 0;
   if (exp > 0 && Date.now() > exp) {
     return { ok: false, status: 'expired', trahName };
   }
   const version = meta?.v || 1;
+  const dataVersion = Math.max(1, meta?.dv || 1);
   const revokedMap = loadRevokedInviteVersions(scopeKey);
   if (revokedMap[trahId] && version < revokedMap[trahId]) {
     return { ok: false, status: 'revoked', trahName };
@@ -456,6 +472,7 @@ function validateInviteMeta(
     ok: true,
     role: meta?.r || 'member',
     version,
+    dataVersion,
     creatorEmail: meta?.ce,
   };
 }
@@ -562,6 +579,8 @@ async function decodeTrahInviteInputAsync(
           members,
           userRole: check.role,
           creatorEmail: check.creatorEmail,
+          dataVersion: check.dataVersion,
+          lastSyncedAt: new Date().toISOString(),
           invitePolicy: { version: check.version, role: check.role, expiryHours: 0 },
         },
       };
@@ -597,6 +616,8 @@ async function decodeTrahInviteInputAsync(
           members: rawMembers,
           userRole: check.role,
           creatorEmail: check.creatorEmail,
+          dataVersion: check.dataVersion,
+          lastSyncedAt: new Date().toISOString(),
           invitePolicy: { version: check.version, role: check.role, expiryHours: 0 },
         },
       };
@@ -1153,10 +1174,16 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     parentId: string | null;
   } | null>(null);
 
-  // Log Aktivitas & Navigasi langsung ke Tab Pengaturan
+  // Log Aktivitas, Antrean Proposal 3-Langkah & Status Sinkronisasi Versi
   const [activityLogs, setActivityLogs] = useState<LeluhurActivityLog[]>(() =>
     loadActivityLogsForScope(accountScope.scopeKey)
   );
+  const [changeProposals, setChangeProposals] = useState<LeluhurChangeProposal[]>(() =>
+    loadProposalsForScope(accountScope.scopeKey)
+  );
+  const [syncCheckStatus, setSyncCheckStatus] = useState<TrahSyncCheckResult | null>(null);
+  const [isCheckingOrPulling, setIsCheckingOrPulling] = useState<boolean>(false);
+  const [uiReloadKey, setUiReloadKey] = useState<number>(0);
   const [settingsSectionTrigger, setSettingsSectionTrigger] = useState<{
     tab: SettingsSectionTab;
     key: number;
@@ -1210,6 +1237,10 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       console.warn('Gagal menyimpan log aktivitas', e);
     }
   }, [activityLogs, activeLogsStorageKey]);
+
+  useEffect(() => {
+    saveProposalsForScope(accountScope.scopeKey, changeProposals);
+  }, [changeProposals, accountScope.scopeKey]);
 
   useEffect(() => {
     try {
@@ -1367,6 +1398,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
           const nextTrahs = loadTrahListForScope(nextScope);
           const nextPosts = loadPostsForScope(nextScope);
           const nextLogs = loadActivityLogsForScope(nextScope.scopeKey);
+          const nextProposals = loadProposalsForScope(nextScope.scopeKey);
           const accNow = AuthService.getAccount();
           const nextHub = loadNuclearFamilyHub(nextScope.scopeKey, {
             name: accNow ? AuthService.getDisplayName(accNow) : '',
@@ -1374,9 +1406,12 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
           setTrahList(nextTrahs);
           setTrahPosts(nextPosts);
           setActivityLogs(nextLogs);
+          setChangeProposals(nextProposals);
+          setSyncCheckStatus(null);
           setNuclearHub(nextHub);
           setActiveTrahId(nextTrahs[0]?.id || '');
           setFeedPillarFilter('all');
+          setUiReloadKey((k) => k + 1);
         }
         return nextScope;
       });
@@ -1398,22 +1433,23 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             : displayName,
       }));
     };
-    const handleRemotePairingSync = (ev: Event) => {
-      const detail = (ev as CustomEvent<PairingSyncEventDetail>).detail;
-      if (!detail?.remoteApplied) return;
+    const reloadLeluhurScopedState = () => {
       const nextScope = getCurrentAccountScope();
       setAccountScope(nextScope);
       const nextTrahs = loadTrahListForScope(nextScope);
       const nextPosts = loadPostsForScope(nextScope);
       const nextLogs = loadActivityLogsForScope(nextScope.scopeKey);
+      const nextProposals = loadProposalsForScope(nextScope.scopeKey);
       const nextHub = loadNuclearFamilyHub(nextScope.scopeKey);
       setTrahList(nextTrahs);
       setTrahPosts(nextPosts);
       setActivityLogs(nextLogs);
+      setChangeProposals(nextProposals);
       setNuclearHub(nextHub);
       setActiveTrahId((prevId) =>
         nextTrahs.some((t) => t.id === prevId) ? prevId : nextTrahs[0]?.id || ''
       );
+      setUiReloadKey((k) => k + 1);
       try {
         const savedPref = localStorage.getItem(APP_PREFS_KEY);
         if (savedPref) {
@@ -1423,12 +1459,22 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         // ignore
       }
     };
+    const handleRemotePairingSync = (ev: Event) => {
+      const detail = (ev as CustomEvent<PairingSyncEventDetail>).detail;
+      if (!detail?.remoteApplied) return;
+      reloadLeluhurScopedState();
+    };
+    const handleLeluhurModuleSync = () => {
+      reloadLeluhurScopedState();
+    };
     syncFromAuth();
     window.addEventListener(AUTH_SYNC_EVENT, syncFromAuth);
     window.addEventListener(DEVICE_PAIRING_SYNC_EVENT, handleRemotePairingSync);
+    window.addEventListener(LELUHUR_SYNC_EVENT, handleLeluhurModuleSync);
     return () => {
       window.removeEventListener(AUTH_SYNC_EVENT, syncFromAuth);
       window.removeEventListener(DEVICE_PAIRING_SYNC_EVENT, handleRemotePairingSync);
+      window.removeEventListener(LELUHUR_SYNC_EVENT, handleLeluhurModuleSync);
     };
   }, []);
 
@@ -1480,8 +1526,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
     setPendingTrahSync(null);
     const { trah: rawInvited, inviter } = decoded;
+    const nowIso = new Date().toISOString();
     const normalizedInvited: TrahCategory = {
       ...rawInvited,
+      dataVersion: Math.max(1, rawInvited.dataVersion || 1),
+      lastSyncedAt: nowIso,
       members: normalizeTrahMembers(rawInvited.members || [], false).members,
     };
 
@@ -1505,6 +1554,8 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                 userRole: preserveAdmin ? 'admin' : normalizedInvited.userRole,
                 creatorEmail: t.creatorEmail || normalizedInvited.creatorEmail,
                 invitePolicy: t.invitePolicy || normalizedInvited.invitePolicy,
+                dataVersion: Math.max(normalizedInvited.dataVersion || 1, t.dataVersion || 1),
+                lastSyncedAt: nowIso,
               };
             })
           : [normalizedInvited, ...prev];
@@ -1579,7 +1630,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     return () => window.removeEventListener('wargaqu-trah-invite-arrived', checkAndProcessInvite);
   }, [accountScope.scopeKey]);
 
-  // Daftarkan channel sinkronisasi untuk semua Trah milik akun ini & jawab sync:request real-time
+  // Daftarkan channel sinkronisasi untuk semua Trah milik akun ini & jawab event spesifik per-Trah
   useEffect(() => {
     if (trahList.length === 0 && !pendingTrahSync) return;
     const channels = trahList.map((t) => getSyncChannelName('trah', t.name));
@@ -1594,7 +1645,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       const detail = (ev as CustomEvent<{
         channel?: string;
         eventName?: string;
-        payload?: { snapshot?: string; title?: string; inviter?: string };
+        payload?: any;
       }>).detail;
       if (!detail || !detail.channel?.startsWith('sync:trah:')) return;
       const requestedSlug = detail.channel.slice('sync:trah:'.length);
@@ -1602,16 +1653,19 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       if (detail.eventName === 'sync:request') {
         const match = trahList.find((t) => canonicalInviteSlug(t.name) === requestedSlug);
         if (!match) return;
-        void encodeTrahInviteTokenCompact(match, accountProfile.displayName || 'Keluarga').then(
-          (snapshot) => {
-            void InviteRelayService.publishRoomSnapshot({
-              kind: 'trah',
-              title: match.name,
-              inviter: accountProfile.displayName || 'Keluarga',
-              snapshot,
-            });
-          }
-        );
+        void encodeTrahInviteTokenCompact(
+          match,
+          accountProfile.displayName || 'Keluarga',
+          match.invitePolicy,
+          accountScope.email
+        ).then((snapshot) => {
+          void InviteRelayService.publishRoomSnapshot({
+            kind: 'trah',
+            title: match.name,
+            inviter: accountProfile.displayName || 'Keluarga',
+            snapshot,
+          });
+        });
       } else if (
         detail.eventName === 'sync:snapshot' &&
         pendingTrahSync &&
@@ -1619,6 +1673,48 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         detail.payload?.snapshot
       ) {
         void handleAcceptTrahInvite(detail.payload.snapshot, true);
+      } else if (detail.eventName === 'trah:version_updated' && detail.payload) {
+        const header = detail.payload;
+        const activeTarget = trahList.find((t) => t.id === activeTrahId) || trahList[0];
+        if (!activeTarget || canonicalInviteSlug(activeTarget.name) !== requestedSlug) return;
+        const localVer = Math.max(1, activeTarget.dataVersion || 1);
+        const remoteVer = Math.max(1, Number(header.dataVersion || 1));
+        const outdated =
+          remoteVer > localVer ||
+          (remoteVer === localVer &&
+            Number(header.memberCount || 0) !== activeTarget.members.length &&
+            Number(header.updatedAt || 0) >
+              (activeTarget.lastSyncedAt ? new Date(activeTarget.lastSyncedAt).getTime() : 0));
+        setSyncCheckStatus((prev) => ({
+          slug: requestedSlug,
+          remoteHeader: header,
+          localVersion: localVer,
+          localMemberCount: activeTarget.members.length,
+          isOutdated: outdated,
+          pendingProposals: prev?.pendingProposals || [],
+          pendingCount: prev?.pendingCount || 0,
+        }));
+      } else if (detail.eventName === 'trah:proposal_submitted' && detail.payload?.proposal) {
+        const incoming = detail.payload.proposal as LeluhurChangeProposal;
+        setChangeProposals((prev) => [incoming, ...prev.filter((p) => p.id !== incoming.id)]);
+      } else if (detail.eventName === 'trah:proposal_resolved' && detail.payload?.proposalId) {
+        const { proposalId, decision, reviewedBy } = detail.payload as {
+          proposalId: string;
+          decision: 'approved' | 'rejected';
+          reviewedBy?: string;
+        };
+        setChangeProposals((prev) =>
+          prev.map((p) =>
+            p.id === proposalId
+              ? {
+                  ...p,
+                  status: decision,
+                  reviewedAt: new Date().toISOString(),
+                  reviewedBy: reviewedBy || p.reviewedBy,
+                }
+              : p
+          )
+        );
       }
     };
 
@@ -1626,53 +1722,45 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     return () => {
       window.removeEventListener(REALTIME_RELAY_EVENT_NAME, onRelaySync as EventListener);
     };
-  }, [trahList, pendingTrahSync, accountProfile.displayName]);
+  }, [trahList, activeTrahId, pendingTrahSync, accountProfile.displayName, accountScope.email]);
 
-  // Pemantau Jadwal Kuis Trah Latar Belakang: saat jadwal ronde tiba meski user di tab Grid/Tabel/Medsos, arahkan ke Kuis & bunyikan SiagaQu
+  // Pemantau Jadwal Kuis Trah Terjadwal (tanpa polling 2 detik: hitung timer tepat ke ronde terdekat)
   useEffect(() => {
     if (trahList.length === 0 || viewMode === 'kuis') return;
     const active = trahList.find((t) => t.id === activeTrahId) || trahList[0];
     if (!active) return;
 
-    const checkSchedule = () => {
-      const rounds = loadQuizRounds(accountScope.scopeKey, active.id);
-      const now = Date.now();
-      const dueRound = rounds.find((r) => {
-        const snap = getRoundTimingSnapshot(r, now);
+    const rounds = loadQuizRounds(accountScope.scopeKey, active.id);
+    const now = Date.now();
+    const dueRound = rounds.find((r) => {
+      const snap = getRoundTimingSnapshot(r, now);
+      return snap.phase === 'live' && !isAlertHandledForRound(r.id);
+    });
+    if (dueRound) {
+      setViewMode('kuis');
+      showNotification(`Waktunya Kuis Trah "${dueRound.title}"! Alert SiagaQu aktif.`);
+      return;
+    }
+
+    const upcomingDelays = rounds
+      .map((r) => new Date(r.scheduledStartAt).getTime() - now)
+      .filter((ms) => Number.isFinite(ms) && ms > 0);
+    if (upcomingDelays.length === 0) return;
+
+    const nextMs = Math.min(...upcomingDelays, 2147483000);
+    const timer = window.setTimeout(() => {
+      const latestRounds = loadQuizRounds(accountScope.scopeKey, active.id);
+      const fireRound = latestRounds.find((r) => {
+        const snap = getRoundTimingSnapshot(r, Date.now());
         return snap.phase === 'live' && !isAlertHandledForRound(r.id);
       });
-      if (dueRound) {
+      if (fireRound) {
         setViewMode('kuis');
-        showNotification(`Waktunya Kuis Trah "${dueRound.title}"! Alert SiagaQu aktif.`);
+        showNotification(`Waktunya Kuis Trah "${fireRound.title}"! Alert SiagaQu aktif.`);
       }
-    };
-
-    const timer = window.setInterval(checkSchedule, 2000);
-    return () => window.clearInterval(timer);
-  }, [trahList, activeTrahId, viewMode, accountScope.scopeKey, accountProfile.displayName, showNotification]);
-
-  // Sinkronisasi cadangan otomatis ke RAM transit saat daftar Trah berubah (agar link judul selalu siap meski host tutup HP)
-  useEffect(() => {
-    if (trahList.length === 0) return;
-    const timer = window.setTimeout(() => {
-      for (const trah of trahList.slice(0, 8)) {
-        void encodeTrahInviteTokenCompact(
-          trah,
-          accountProfile.displayName || 'Keluarga',
-          trah.invitePolicy,
-          accountScope.email
-        ).then((snapshot) => {
-          void InviteRelayService.publishRoomSnapshot({
-            kind: 'trah',
-            title: trah.name,
-            inviter: accountProfile.displayName || 'Keluarga',
-            snapshot,
-          });
-        });
-      }
-    }, 1100);
+    }, Math.max(500, nextMs + 250));
     return () => window.clearTimeout(timer);
-  }, [trahList, accountProfile.displayName, accountScope.email]);
+  }, [trahList, activeTrahId, viewMode, accountScope.scopeKey, showNotification]);
 
   // Hasilkan link judul (?trah=Nama-Trah) instan & token bermuatan kebijakan akses + kedaluwarsa + versi
   useEffect(() => {
@@ -1747,6 +1835,388 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     setExcelParentFilter('all');
     setExcelGenderFilter('all');
   }, [activeTrah.id]);
+
+  const actorDisplayName =
+    accountProfile.displayName || accountProfile.fullName || 'Pengguna';
+
+  const pendingProposalsForActiveTrah = useMemo(() => {
+    if (!activeTrah?.id) return [];
+    const activeSlug = canonicalInviteSlug(activeTrah.name);
+    return changeProposals.filter(
+      (p) =>
+        p.status === 'pending' &&
+        (p.trahId === activeTrah.id || p.trahSlug === activeSlug)
+    );
+  }, [changeProposals, activeTrah.id, activeTrah.name]);
+
+  const releaseApprovedTrahUpdate = async (
+    updatedTrah: TrahCategory,
+    summary: string
+  ) => {
+    if (!updatedTrah?.id || updatedTrah.id === EMPTY_TRAH_PLACEHOLDER.id) return;
+    try {
+      const snapshotToken = await encodeTrahInviteTokenCompact(
+        updatedTrah,
+        actorDisplayName,
+        updatedTrah.invitePolicy,
+        accountScope.email
+      );
+      const res = await LeluhurVersionSyncService.publishApprovedRelease({
+        trah: updatedTrah,
+        snapshotToken,
+        approvedBy: actorDisplayName,
+        summary,
+      });
+      if (updatedTrah.id === activeTrah.id) {
+        setSyncCheckStatus({
+          slug: res.header.slug,
+          remoteHeader: res.header,
+          localVersion: Math.max(1, updatedTrah.dataVersion || 1),
+          localMemberCount: updatedTrah.members.length,
+          isOutdated: false,
+          pendingProposals: pendingProposalsForActiveTrah,
+          pendingCount: pendingProposalsForActiveTrah.length,
+        });
+      }
+    } catch {
+      // tetap aman secara lokal
+    }
+  };
+
+  const stageMemberChangeProposal = async (params: {
+    trah: TrahCategory;
+    actionType: LeluhurProposalActionType;
+    targetName?: string;
+    summary: string;
+    details?: string;
+    operations: LeluhurProposalOp[];
+  }) => {
+    const nowIso = new Date().toISOString();
+    const res = await LeluhurVersionSyncService.submitMemberProposal({
+      scopeKey: accountScope.scopeKey,
+      trah: params.trah,
+      proposal: {
+        id: `prop_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        trahId: params.trah.id,
+        trahName: params.trah.name,
+        actionType: params.actionType,
+        proposerName: actorDisplayName,
+        proposerEmail: accountScope.email || accountProfile.email || undefined,
+        targetName: params.targetName,
+        summary: params.summary,
+        details: params.details,
+        baseVersion: Math.max(1, params.trah.dataVersion || 1),
+        createdAt: nowIso,
+        operations: params.operations,
+      },
+    });
+
+    setChangeProposals((prev) => [
+      res.proposal,
+      ...prev.filter((p) => p.id !== res.proposal.id),
+    ]);
+
+    const logAction: LeluhurLogActionType =
+      params.actionType === 'member_delete'
+        ? 'member_delete'
+        : params.actionType === 'member_update' || params.actionType === 'batch_replace'
+        ? 'member_update'
+        : 'member_add';
+
+    appendActivityLog({
+      trahId: params.trah.id,
+      trahName: params.trah.name,
+      actionType: logAction,
+      targetName: params.targetName,
+      summary: `[Ajuan Menunggu Approve] ${params.summary}`,
+      details:
+        (params.details ? `${params.details} • ` : '') +
+        `Versi dasar v${res.proposal.baseVersion} (${formatSyncTimestamp(nowIso)})`,
+    });
+
+    showNotification(
+      `Ajuan "${params.summary}" dicatat ke Log & menunggu Approve Admin.`
+    );
+  };
+
+  const checkActiveTrahVersion = async (targetTrah: TrahCategory) => {
+    if (!targetTrah?.id || targetTrah.id === EMPTY_TRAH_PLACEHOLDER.id) return;
+    const isAdmin = canManageTrahAdmin(
+      targetTrah,
+      accountScope.email,
+      accountScope.isOwner
+    );
+    const result = await LeluhurVersionSyncService.checkTrahVersionAndProposals(
+      targetTrah,
+      isAdmin
+    );
+    setSyncCheckStatus(result);
+
+    if (isAdmin && result.pendingProposals.length > 0) {
+      setChangeProposals((prev) => {
+        const merged = [...prev];
+        for (const remoteProp of result.pendingProposals) {
+          const idx = merged.findIndex((p) => p.id === remoteProp.id);
+          if (idx === -1) {
+            merged.unshift(remoteProp);
+          } else if (merged[idx].status === 'pending' && remoteProp.status !== 'pending') {
+            merged[idx] = remoteProp;
+          }
+        }
+        return merged;
+      });
+    }
+  };
+
+  const handleManualRefreshTrah = async () => {
+    if (!activeTrah?.id || activeTrah.id === EMPTY_TRAH_PLACEHOLDER.id) return;
+    setIsCheckingOrPulling(true);
+    try {
+      const isAdmin = canManageTrahAdmin(
+        activeTrah,
+        accountScope.email,
+        accountScope.isOwner
+      );
+      const checkRes = await LeluhurVersionSyncService.checkTrahVersionAndProposals(
+        activeTrah,
+        isAdmin
+      );
+
+      if (isAdmin && checkRes.pendingProposals.length > 0) {
+        setChangeProposals((prev) => {
+          const merged = [...prev];
+          for (const remoteProp of checkRes.pendingProposals) {
+            if (!merged.some((p) => p.id === remoteProp.id)) {
+              merged.unshift(remoteProp);
+            }
+          }
+          return merged;
+        });
+      }
+
+      const nowIso = new Date().toISOString();
+      const shouldPullSnapshot = Boolean(
+        checkRes.isOutdated ||
+          (checkRes.remoteHeader &&
+            checkRes.remoteHeader.dataVersion >= Math.max(1, activeTrah.dataVersion || 1))
+      );
+
+      if (shouldPullSnapshot) {
+        const pullRes = await LeluhurVersionSyncService.pullLatestTrahSnapshot(activeTrah.name);
+        if (pullRes.ok && pullRes.snapshot) {
+          const decoded = await decodeTrahInviteInputAsync(
+            pullRes.snapshot,
+            accountScope.scopeKey
+          );
+          if (decoded && decoded.status === 'ok') {
+            const nextVersion = Math.max(
+              decoded.trah.dataVersion || 1,
+              checkRes.remoteHeader?.dataVersion || 1,
+              activeTrah.dataVersion || 1
+            );
+            const isSanta =
+              activeTrah.id === 'trah-ayah-user' ||
+              activeTrah.name.toUpperCase().includes('SANTA');
+            const normalizedMembers = normalizeTrahMembers(
+              decoded.trah.members || [],
+              isSanta
+            ).members;
+
+            const updatedList = trahList.map((t) => {
+              if (t.id !== activeTrah.id) return t;
+              const preserveAdmin =
+                accountScope.isOwner ||
+                t.userRole === 'admin' ||
+                (t.creatorEmail &&
+                  accountScope.email &&
+                  t.creatorEmail.toLowerCase() === accountScope.email.toLowerCase());
+              return {
+                ...t,
+                name: decoded.trah.name || t.name,
+                description: decoded.trah.description || t.description,
+                members: normalizedMembers,
+                userRole: preserveAdmin ? 'admin' : t.userRole,
+                dataVersion: nextVersion,
+                lastSyncedAt: nowIso,
+                lastApprovedAt:
+                  checkRes.remoteHeader?.updatedAt
+                    ? new Date(checkRes.remoteHeader.updatedAt).toISOString()
+                    : t.lastApprovedAt,
+                lastApprovedBy: checkRes.remoteHeader?.approvedBy || t.lastApprovedBy,
+              };
+            });
+
+            setTrahList(updatedList);
+            flushTrahListToStorage(updatedList);
+            setSyncCheckStatus({
+              ...checkRes,
+              localVersion: nextVersion,
+              localMemberCount: normalizedMembers.length,
+              isOutdated: false,
+            });
+            setUiReloadKey((k) => k + 1);
+            showNotification(
+              `Tarik update v${nextVersion} (${normalizedMembers.length} anggota) berhasil & tampilan dimuat ulang! Sync: ${formatSyncTimestamp(nowIso)}`
+            );
+            return;
+          }
+        }
+      }
+
+      // Tidak ada versi lebih baru: perbarui timestamp cek & reload UI lokal
+      const stampedList = trahList.map((t) =>
+        t.id === activeTrah.id ? { ...t, lastSyncedAt: nowIso } : t
+      );
+      setTrahList(stampedList);
+      flushTrahListToStorage(stampedList);
+      setSyncCheckStatus({ ...checkRes, isOutdated: false });
+      setUiReloadKey((k) => k + 1);
+      showNotification(
+        `${activeTrah.name} sudah versi terbaru v${Math.max(1, activeTrah.dataVersion || 1)} (${activeTrah.members.length} anggota) • ${formatSyncTimestamp(nowIso)}`
+      );
+    } finally {
+      setIsCheckingOrPulling(false);
+    }
+  };
+
+  const handleApproveProposal = (proposal: LeluhurChangeProposal) => {
+    const targetTrah = trahList.find(
+      (t) =>
+        t.id === proposal.trahId ||
+        canonicalInviteSlug(t.name) === proposal.trahSlug
+    );
+    if (!targetTrah) {
+      showNotification('Trah tujuan tidak ditemukan di daftar Anda.');
+      return;
+    }
+    if (!canManageTrahAdmin(targetTrah, accountScope.email, accountScope.isOwner)) {
+      showNotification('Hanya Admin / Pengurus Trah yang berhak melakukan Approve.');
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const patchedTrah = applyProposalOpsToTrah(targetTrah, proposal);
+    const isSanta =
+      patchedTrah.id === 'trah-ayah-user' ||
+      patchedTrah.name.toUpperCase().includes('SANTA');
+    const normalizedMembers = normalizeTrahMembers(patchedTrah.members, isSanta).members;
+    const nextVersion = Math.max(1, targetTrah.dataVersion || 1) + 1;
+
+    const approvedTrah: TrahCategory = {
+      ...patchedTrah,
+      members: normalizedMembers,
+      dataVersion: nextVersion,
+      lastApprovedAt: nowIso,
+      lastApprovedBy: actorDisplayName,
+      lastSyncedAt: nowIso,
+    };
+
+    const nextList = trahList.map((t) => (t.id === targetTrah.id ? approvedTrah : t));
+    setTrahList(nextList);
+    flushTrahListToStorage(nextList);
+    setUiReloadKey((k) => k + 1);
+
+    setChangeProposals((prev) =>
+      prev.map((p) =>
+        p.id === proposal.id
+          ? {
+              ...p,
+              status: 'approved',
+              reviewedAt: nowIso,
+              reviewedBy: actorDisplayName,
+            }
+          : p
+      )
+    );
+
+    void LeluhurVersionSyncService.resolveProposalOnServer({
+      trahName: approvedTrah.name,
+      proposalId: proposal.id,
+      decision: 'approved',
+      reviewedBy: actorDisplayName,
+    });
+    void releaseApprovedTrahUpdate(
+      approvedTrah,
+      `Approve v${nextVersion}: ${proposal.summary}`
+    );
+
+    appendActivityLog({
+      trahId: approvedTrah.id,
+      trahName: approvedTrah.name,
+      actionType: 'member_update',
+      targetName: proposal.targetName,
+      summary: `Approve v${nextVersion} (${normalizedMembers.length} anggota): ${proposal.summary}`,
+      details: `Diajukan oleh ${proposal.proposerName} • Disetujui ${actorDisplayName}`,
+    });
+
+    showNotification(
+      `Approve berhasil! Rujukan ${approvedTrah.name} naik ke v${nextVersion} (${normalizedMembers.length} anggota).`
+    );
+  };
+
+  const handleRejectProposal = (proposal: LeluhurChangeProposal) => {
+    const targetTrah = trahList.find(
+      (t) =>
+        t.id === proposal.trahId ||
+        canonicalInviteSlug(t.name) === proposal.trahSlug
+    );
+    if (
+      targetTrah &&
+      !canManageTrahAdmin(targetTrah, accountScope.email, accountScope.isOwner)
+    ) {
+      showNotification('Hanya Admin / Pengurus Trah yang berhak menolak ajuan.');
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    setChangeProposals((prev) =>
+      prev.map((p) =>
+        p.id === proposal.id
+          ? {
+              ...p,
+              status: 'rejected',
+              reviewedAt: nowIso,
+              reviewedBy: actorDisplayName,
+            }
+          : p
+      )
+    );
+
+    void LeluhurVersionSyncService.resolveProposalOnServer({
+      trahName: targetTrah?.name || proposal.trahName,
+      proposalId: proposal.id,
+      decision: 'rejected',
+      reviewedBy: actorDisplayName,
+    });
+
+    appendActivityLog({
+      trahId: proposal.trahId,
+      trahName: proposal.trahName,
+      actionType: 'member_update',
+      targetName: proposal.targetName,
+      summary: `Menolak ajuan: ${proposal.summary}`,
+      details: `Diajukan oleh ${proposal.proposerName}`,
+    });
+
+    showNotification(`Ajuan "${proposal.summary}" ditolak.`);
+  };
+
+  // Refresh otomatis TERARAH: hanya saat pertama kali buka / pindah Trah aktif / kembali aktif (visibilitychange & focus)
+  useEffect(() => {
+    if (!activeTrah?.id || activeTrah.id === EMPTY_TRAH_PLACEHOLDER.id) return;
+    void checkActiveTrahVersion(activeTrah);
+
+    const onWakeCheck = () => {
+      if (document.visibilityState === 'hidden') return;
+      void checkActiveTrahVersion(activeTrah);
+    };
+    window.addEventListener('focus', onWakeCheck);
+    document.addEventListener('visibilitychange', onWakeCheck);
+    return () => {
+      window.removeEventListener('focus', onWakeCheck);
+      document.removeEventListener('visibilitychange', onWakeCheck);
+    };
+  }, [activeTrah.id, activeTrah.name, activeTrah.dataVersion, accountScope.email, accountScope.isOwner]);
 
   // Bentuk foto helper
   const getShapeClass = (shape: PhotoShape) => {
@@ -1874,18 +2344,37 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       spouses: []
     };
 
-    const updatedTrahList = trahList.map((t) =>
-      t.id === activeTrah.id
-        ? { ...t, members: [newRoot, ...t.members] }
-        : t
-    );
+    if (!canManageTrahAdmin(activeTrah, accountScope.email, accountScope.isOwner)) {
+      void stageMemberChangeProposal({
+        trah: activeTrah,
+        actionType: 'member_add',
+        targetName: newRoot.name,
+        summary: `Ajukan Leluhur Utama "${newRoot.name}" di ${activeTrah.name}`,
+        operations: [{ op: 'upsert_member', member: newRoot }],
+      });
+      setQuickShowAddParent(false);
+      setQuickNewRootName('');
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    let approvedTrahRef: TrahCategory | null = null;
+    const updatedTrahList = trahList.map((t) => {
+      if (t.id !== activeTrah.id) return t;
+      const nextTrah: TrahCategory = {
+        ...t,
+        members: [newRoot, ...t.members],
+        dataVersion: Math.max(1, t.dataVersion || 1) + 1,
+        lastApprovedAt: nowIso,
+        lastApprovedBy: actorDisplayName,
+        lastSyncedAt: nowIso,
+      };
+      approvedTrahRef = nextTrah;
+      return nextTrah;
+    });
 
     setTrahList(updatedTrahList);
-    try {
-      localStorage.setItem(activeTrahStorageKey, JSON.stringify(updatedTrahList));
-    } catch (e) {
-      console.warn(e);
-    }
+    flushTrahListToStorage(updatedTrahList);
 
     setQuickParentId(newRoot.id);
     setQuickShowAddParent(false);
@@ -1897,6 +2386,12 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       targetName: newRoot.name,
       summary: `Membuat Leluhur Utama "${newRoot.name}" di ${activeTrah.name}`,
     });
+    if (approvedTrahRef) {
+      void releaseApprovedTrahUpdate(
+        approvedTrahRef,
+        `Membuat Leluhur Utama "${newRoot.name}"`
+      );
+    }
     showNotification(`Ayah/Leluhur Utama "${newRoot.name}" berhasil dibuat! Silakan isi anak.`);
   };
 
@@ -1913,9 +2408,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       return;
     }
     let updatedTrahMembers = [...currentTrah.members];
+    const isAdmin = canManageTrahAdmin(currentTrah, accountScope.email, accountScope.isOwner);
 
     // Jika belum ada parent yang dipilih atau parentId tidak cocok
     let parent = updatedTrahMembers.find((m) => m.id === quickParentId);
+    let autoCreatedRoot: FamilyMember | null = null;
 
     // Otomatis tangani jika trah masih kosong atau parent belum terpilih
     if (!parent) {
@@ -1939,6 +2436,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         };
         updatedTrahMembers = [newRoot, ...updatedTrahMembers];
         parent = newRoot;
+        autoCreatedRoot = newRoot;
       }
     }
 
@@ -1984,7 +2482,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       const deletedIds = new Set(
         existingChildren.filter((c) => !usedOldIds.has(c.id)).map((c) => c.id)
       );
-      if (!canManageTrahAdmin(currentTrah, accountScope.email, accountScope.isOwner)) {
+      if (!isAdmin) {
         const blockedClaimed = existingChildren.find((c) => {
           const check = canEditTrahMember(currentTrah, c, accountScope.email, accountScope.isOwner);
           return !check.ok && deletedIds.has(c.id);
@@ -2031,6 +2529,28 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         };
       });
 
+      if (!isAdmin) {
+        void stageMemberChangeProposal({
+          trah: currentTrah,
+          actionType: 'batch_replace',
+          targetName: parent.name,
+          summary: `Ajukan pembaruan daftar ${rebuiltChildren.length} anak untuk ${parent.name}`,
+          details: parsedList.map((p) => p.name).join(', '),
+          operations: [
+            {
+              op: 'upsert_members',
+              members: autoCreatedRoot ? [autoCreatedRoot, ...rebuiltChildren] : rebuiltChildren,
+              replaceParentId: parent.id,
+              removedIds: Array.from(deletedIds),
+            },
+          ],
+        });
+        setQuickCommaInput('');
+        setQuickBatchMode('append');
+        if (closeModal) setIsQuickBatchOpen(false);
+        return;
+      }
+
       // Jika ada anak lama yg benar-benar dihapus, re-tautkan cucunya ke root/parent agar tidak jadi yatim rusak
       const patchedBase = baseMembers.map((m) =>
         m.parentId && deletedIds.has(m.parentId) ? { ...m, parentId: parent.id } : m
@@ -2056,36 +2576,70 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         spouses: []
       }));
 
+      if (!isAdmin) {
+        void stageMemberChangeProposal({
+          trah: currentTrah,
+          actionType: 'batch_add',
+          targetName: parent.name,
+          summary: `Ajukan tambah ${newChildren.length} anak untuk ${parent.name}`,
+          details: parsedList.map((p) => p.name).join(', '),
+          operations: [
+            {
+              op: 'upsert_members',
+              members: autoCreatedRoot ? [autoCreatedRoot, ...newChildren] : newChildren,
+            },
+          ],
+        });
+        setQuickCommaInput('');
+        setQuickBatchMode('append');
+        if (closeModal) setIsQuickBatchOpen(false);
+        return;
+      }
+
       updatedTrahMembers = [...updatedTrahMembers, ...newChildren];
       showNotification(`Berhasil menambahkan ${newChildren.length} anak untuk ${parent.name}! ✨`);
     }
 
-    const updatedTrahList = trahList.map((t) =>
-      t.id === currentTrah.id ? { ...t, members: updatedTrahMembers } : t
-    );
+    const nowIso = new Date().toISOString();
+    let approvedTrahRef: TrahCategory | null = null;
+    const updatedTrahList = trahList.map((t) => {
+      if (t.id !== currentTrah.id) return t;
+      const nextTrah: TrahCategory = {
+        ...t,
+        members: updatedTrahMembers,
+        dataVersion: Math.max(1, t.dataVersion || 1) + 1,
+        lastApprovedAt: nowIso,
+        lastApprovedBy: actorDisplayName,
+        lastSyncedAt: nowIso,
+      };
+      approvedTrahRef = nextTrah;
+      return nextTrah;
+    });
 
     setTrahList(updatedTrahList);
     setActiveTrahId(currentTrah.id);
-    try {
-      localStorage.setItem(activeTrahStorageKey, JSON.stringify(updatedTrahList));
-    } catch (err) {
-      console.warn('Storage sync err:', err);
-    }
+    flushTrahListToStorage(updatedTrahList);
 
     setQuickCommaInput('');
     setQuickBatchMode('append');
+
+    const batchSummary =
+      quickBatchMode === 'replace'
+        ? `Memperbarui daftar ${parsedList.length} anak untuk ${parent.name}`
+        : `Menambahkan ${parsedList.length} anak baru untuk ${parent.name}`;
 
     appendActivityLog({
       trahId: currentTrah.id,
       trahName: currentTrah.name,
       actionType: quickBatchMode === 'replace' ? 'member_update' : 'member_add',
       targetName: parent.name,
-      summary:
-        quickBatchMode === 'replace'
-          ? `Memperbarui daftar ${parsedList.length} anak untuk ${parent.name}`
-          : `Menambahkan ${parsedList.length} anak baru untuk ${parent.name}`,
+      summary: batchSummary,
       details: parsedList.map((p) => p.name).join(', '),
     });
+
+    if (approvedTrahRef) {
+      void releaseApprovedTrahUpdate(approvedTrahRef, batchSummary);
+    }
 
     if (closeModal) {
       setIsQuickBatchOpen(false);
@@ -2294,29 +2848,84 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   const handleSaveAndSyncNuclearHubAll = (nextHub: NuclearFamilyHubData) => {
     setNuclearHub(nextHub);
     saveNuclearFamilyHub(accountScope.scopeKey, nextHub);
-    const { updatedTrahList, syncedTrahCount } = syncHubAcrossTrahList(
+    const { updatedTrahList } = syncHubAcrossTrahList(
       trahList,
       nextHub,
       accountScope.email,
       accountScope.isOwner
     );
-    const normalized = updatedTrahList.map((t) => ({
-      ...t,
-      members: normalizeTrahMembers(t.members, false).members,
-    }));
-    setTrahList(normalized);
-    flushTrahListToStorage(normalized);
-    if (syncedTrahCount > 0) {
+
+    const nowIso = new Date().toISOString();
+    const adminSyncedTrahs: TrahCategory[] = [];
+    let memberProposalCount = 0;
+
+    const nextList = trahList.map((origTrah) => {
+      const candidate = updatedTrahList.find((x) => x.id === origTrah.id) || origTrah;
+      if (JSON.stringify(candidate.members) === JSON.stringify(origTrah.members)) {
+        return origTrah;
+      }
+
+      if (!canManageTrahAdmin(origTrah, accountScope.email, accountScope.isOwner)) {
+        const origById = new Map(origTrah.members.map((m) => [m.id, m]));
+        const changedMembers = candidate.members.filter(
+          (m) => JSON.stringify(origById.get(m.id)) !== JSON.stringify(m)
+        );
+        if (changedMembers.length > 0) {
+          memberProposalCount++;
+          void stageMemberChangeProposal({
+            trah: origTrah,
+            actionType: 'hub_graft',
+            targetName: nextHub.self.name,
+            summary: `Ajukan sinkron Keluarga Inti (${changedMembers.length} anggota)`,
+            operations: [{ op: 'upsert_members', members: changedMembers }],
+          });
+        }
+        return origTrah;
+      }
+
+      const bumped: TrahCategory = {
+        ...candidate,
+        members: normalizeTrahMembers(candidate.members, false).members,
+        dataVersion: Math.max(1, origTrah.dataVersion || 1) + 1,
+        lastApprovedAt: nowIso,
+        lastApprovedBy: actorDisplayName,
+        lastSyncedAt: nowIso,
+      };
+      adminSyncedTrahs.push(bumped);
+      return bumped;
+    });
+
+    setTrahList(nextList);
+    flushTrahListToStorage(nextList);
+
+    if (adminSyncedTrahs.length > 0) {
       appendActivityLog({
         trahId: activeTrah.id || 'all',
         trahName: activeTrah.name || 'Semua Trah',
         actionType: 'member_update',
         targetName: nextHub.self.name,
-        summary: `Menyinkronkan Hub Keluarga Inti ke ${syncedTrahCount} Trah`,
+        summary: `Menyinkronkan Hub Keluarga Inti ke ${adminSyncedTrahs.length} Trah`,
         details: `${nextHub.children.length} anak • ${nextHub.spouses.length} pasangan`,
       });
+      for (const releasedTrah of adminSyncedTrahs) {
+        void releaseApprovedTrahUpdate(
+          releasedTrah,
+          `Sinkron Hub Keluarga Inti (${nextHub.self.name})`
+        );
+      }
+    }
+
+    if (adminSyncedTrahs.length > 0 && memberProposalCount > 0) {
       showNotification(
-        `Hub Keluarga Inti disimpan & disinkronkan ke ${syncedTrahCount} Trah sekaligus! ✨`
+        `Hub disinkronkan ke ${adminSyncedTrahs.length} Trah Admin & diajukan ke ${memberProposalCount} Trah lain (menunggu Approve)!`
+      );
+    } else if (adminSyncedTrahs.length > 0) {
+      showNotification(
+        `Hub Keluarga Inti disimpan & disinkronkan ke ${adminSyncedTrahs.length} Trah sekaligus! ✨`
+      );
+    } else if (memberProposalCount > 0) {
+      showNotification(
+        `Data Keluarga Inti disimpan & ${memberProposalCount} ajuan sinkron menunggu Approve Admin.`
       );
     } else {
       showNotification(
@@ -2348,31 +2957,48 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       ownerName: accountProfile.displayName || accountProfile.fullName,
     });
     const normalizedMembers = normalizeTrahMembers(updatedTrah.members, false).members;
-    const syncedList = trahList.map((t) =>
-      t.id === trahId ? { ...updatedTrah, members: normalizedMembers } : t
-    );
-    const { updatedTrahList } = syncHubAcrossTrahList(
-      syncedList,
-      nextHub,
-      accountScope.email,
-      accountScope.isOwner
-    );
-    const finalList = updatedTrahList.map((t) => ({
-      ...t,
-      members: normalizeTrahMembers(t.members, false).members,
-    }));
+
+    if (!canManageTrahAdmin(targetTrah, accountScope.email, accountScope.isOwner)) {
+      const origById = new Map(targetTrah.members.map((m) => [m.id, m]));
+      const deltaMembers = normalizedMembers.filter(
+        (m) => JSON.stringify(origById.get(m.id)) !== JSON.stringify(m)
+      );
+      void stageMemberChangeProposal({
+        trah: targetTrah,
+        actionType: 'hub_graft',
+        targetName: nextHub.self.name,
+        summary: `Ajukan tempel Keluarga Inti (${attachMode === 'spouse_branch' ? 'Jalur Pasangan' : 'Jalur Saya'}) ke ${targetTrah.name}`,
+        details: `${deltaMembers.length} anggota silsilah`,
+        operations: [{ op: 'upsert_members', members: deltaMembers }],
+      });
+      setActiveTrahId(trahId);
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const approvedTarget: TrahCategory = {
+      ...updatedTrah,
+      members: normalizedMembers,
+      dataVersion: Math.max(1, targetTrah.dataVersion || 1) + 1,
+      lastApprovedAt: nowIso,
+      lastApprovedBy: actorDisplayName,
+      lastSyncedAt: nowIso,
+    };
+    const finalList = trahList.map((t) => (t.id === trahId ? approvedTarget : t));
     setTrahList(finalList);
     flushTrahListToStorage(finalList);
     setActiveTrahId(trahId);
 
+    const summary = `Menempelkan Hub Keluarga Inti (${attachMode === 'spouse_branch' ? 'Jalur Pasangan' : 'Jalur Saya'}) ke ${targetTrah.name}`;
     appendActivityLog({
       trahId,
       trahName: targetTrah.name,
       actionType: 'member_add',
       targetName: nextHub.self.name,
-      summary: `Menempelkan Hub Keluarga Inti (${attachMode === 'spouse_branch' ? 'Jalur Pasangan' : 'Jalur Saya'}) ke ${targetTrah.name}`,
+      summary,
       details: `${nextHub.children.length} anak ikut tertempel & tersinkron otomatis.`,
     });
+    void releaseApprovedTrahUpdate(approvedTarget, summary);
     showNotification(
       `Keluarga Inti berhasil ditempel & disinkronkan ke "${targetTrah.name}"! 🔗✨`
     );
@@ -2385,23 +3011,37 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       return;
     }
     const nextGender: 'L' | 'P' = member.gender === 'P' ? 'L' : 'P';
-    let updatedTarget: FamilyMember | undefined;
+    const updatedMemberObj: FamilyMember = { ...member, gender: nextGender };
+
+    if (!canManageTrahAdmin(activeTrah, accountScope.email, accountScope.isOwner)) {
+      void stageMemberChangeProposal({
+        trah: activeTrah,
+        actionType: 'member_update',
+        targetName: member.name,
+        summary: `Ajukan ubah gender "${member.name}" ke ${nextGender === 'P' ? 'Wanita (P)' : 'Pria (L)'}`,
+        operations: [{ op: 'upsert_member', member: updatedMemberObj }],
+      });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    let updatedTarget: FamilyMember | undefined = updatedMemberObj;
     const nextList = trahList.map((t) => {
       if (t.id !== activeTrah.id) return t;
       return {
         ...t,
-        members: t.members.map((m) => {
-          if (m.id !== member.id) return m;
-          updatedTarget = { ...m, gender: nextGender };
-          return updatedTarget;
-        }),
+        dataVersion: Math.max(1, t.dataVersion || 1) + 1,
+        lastApprovedAt: nowIso,
+        lastApprovedBy: actorDisplayName,
+        lastSyncedAt: nowIso,
+        members: t.members.map((m) => (m.id === member.id ? updatedMemberObj : m)),
       };
     });
     const finalList = propagateCoreMemberEdit(updatedTarget, nextList);
     setTrahList(finalList);
     flushTrahListToStorage(finalList);
     if (selectedMember?.id === member.id) {
-      setSelectedMember({ ...member, gender: nextGender });
+      setSelectedMember(updatedMemberObj);
     }
     if (formMemberId === member.id) {
       setGenderInput(nextGender);
@@ -2418,13 +3058,16 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
           .join(', ')
       );
     }
+    const summary = `Mengubah gender "${member.name}" menjadi ${nextGender === 'P' ? 'Wanita (P)' : 'Pria (L)'}`;
     appendActivityLog({
       trahId: activeTrah.id,
       trahName: activeTrah.name,
       actionType: 'member_update',
       targetName: member.name,
-      summary: `Mengubah gender "${member.name}" menjadi ${nextGender === 'P' ? 'Wanita (P)' : 'Pria (L)'}`,
+      summary,
     });
+    const approvedTrah = finalList.find((t) => t.id === activeTrah.id);
+    if (approvedTrah) void releaseApprovedTrahUpdate(approvedTrah, summary);
     showNotification(
       `Gender "${member.name}" disimpan sebagai ${nextGender === 'P' ? '👩 Perempuan' : '👨 Laki-laki'} & disinkronkan ke Grid/Buku.`
     );
@@ -2468,29 +3111,52 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     const newOrderById = new Map<string, number>();
     reorderedSiblings.forEach((s, idx) => newOrderById.set(s.id, idx + 1));
 
+    const updatedSiblingsList = reorderedSiblings.map((m) => {
+      const nextOrder = newOrderById.get(m.id) || m.orderIndex;
+      const nextNotes =
+        parentObj && m.notes && /^Anak ke-\d+ dari /.test(m.notes)
+          ? `Anak ke-${nextOrder} dari ${parentObj.name}`
+          : m.notes;
+      return { ...m, orderIndex: nextOrder, notes: nextNotes };
+    });
+
+    const newPos = newOrderById.get(memberId) || 1;
+    const descCount = getDescendantIds(memberId, activeTrah.members).size;
+
+    if (!canManageTrahAdmin(activeTrah, accountScope.email, accountScope.isOwner)) {
+      void stageMemberChangeProposal({
+        trah: activeTrah,
+        actionType: 'member_update',
+        targetName: targetMember.name,
+        summary: `Ajukan ubah urutan "${targetMember.name}" menjadi Anak ke-${newPos}`,
+        operations: [{ op: 'upsert_members', members: updatedSiblingsList }],
+      });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
     let updatedSelected: FamilyMember | undefined;
+    let approvedTrahRef: TrahCategory | null = null;
+    const updatedMap = new Map(updatedSiblingsList.map((m) => [m.id, m]));
     const nextList = trahList.map((t) => {
       if (t.id !== activeTrah.id) return t;
-      return {
+      const nextTrah: TrahCategory = {
         ...t,
+        dataVersion: Math.max(1, t.dataVersion || 1) + 1,
+        lastApprovedAt: nowIso,
+        lastApprovedBy: actorDisplayName,
+        lastSyncedAt: nowIso,
         members: t.members.map((m) => {
-          const nextOrder = newOrderById.get(m.id);
-          if (nextOrder === undefined) return m;
-          const nextNotes =
-            parentObj && m.notes && /^Anak ke-\d+ dari /.test(m.notes)
-              ? `Anak ke-${nextOrder} dari ${parentObj.name}`
-              : m.notes;
-          const nextMember: FamilyMember = {
-            ...m,
-            orderIndex: nextOrder,
-            notes: nextNotes,
-          };
+          const nextMember = updatedMap.get(m.id);
+          if (!nextMember) return m;
           if (selectedMember?.id === m.id) {
             updatedSelected = nextMember;
           }
           return nextMember;
         }),
       };
+      approvedTrahRef = nextTrah;
+      return nextTrah;
     });
 
     setTrahList(nextList);
@@ -2499,7 +3165,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       setSelectedMember(updatedSelected);
     }
     if (formMemberId === memberId) {
-      setOrderIndexInput(newOrderById.get(memberId) || 1);
+      setOrderIndexInput(newPos);
     }
     if (
       isQuickBatchOpen &&
@@ -2513,19 +3179,19 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       );
     }
 
-    const newPos = newOrderById.get(memberId) || 1;
-    const descCount = getDescendantIds(memberId, activeTrah.members).size;
+    const summary = `Mengubah urutan "${targetMember.name}" menjadi Anak ke-${newPos}`;
     appendActivityLog({
       trahId: activeTrah.id,
       trahName: activeTrah.name,
       actionType: 'member_update',
       targetName: targetMember.name,
-      summary: `Mengubah urutan "${targetMember.name}" menjadi Anak ke-${newPos}`,
+      summary,
       details:
         descCount > 0
           ? `${descCount} keturunan otomatis ikut menyesuaikan posisi.`
           : undefined,
     });
+    if (approvedTrahRef) void releaseApprovedTrahUpdate(approvedTrahRef, summary);
     showNotification(
       `"${targetMember.name}" kini urutan ke-${newPos}${
         descCount > 0 ? ` (${descCount} keturunannya otomatis ikut pindah!)` : ' ✨'
@@ -2553,34 +3219,52 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       return;
     }
 
-    let syncedMember: FamilyMember | undefined;
+    const syncedMemberObj: FamilyMember = {
+      ...existing,
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.gender !== undefined ? { gender: patch.gender } : {}),
+      ...(patch.isDeceased !== undefined ? { isDeceased: patch.isDeceased } : {}),
+      ...(patch.photoUrl !== undefined ? { photoUrl: patch.photoUrl } : {}),
+      ...(patch.birthYear !== undefined ? { birthYear: patch.birthYear || undefined } : {}),
+      ...(patch.deathYear !== undefined ? { deathYear: patch.deathYear || undefined } : {}),
+      ...(patch.city !== undefined ? { city: patch.city || undefined } : {}),
+    };
+
+    if (!canManageTrahAdmin(activeTrah, accountScope.email, accountScope.isOwner)) {
+      void stageMemberChangeProposal({
+        trah: activeTrah,
+        actionType: 'member_update',
+        targetName: syncedMemberObj.name,
+        summary: `Ajukan edit cepat Grid "${syncedMemberObj.name}"`,
+        operations: [{ op: 'upsert_member', member: syncedMemberObj }],
+      });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
     const nextList = trahList.map((t) => {
       if (t.id !== activeTrah.id) return t;
       return {
         ...t,
-        members: t.members.map((m) => {
-          if (m.id !== memberId) return m;
-          const updated: FamilyMember = {
-            ...m,
-            ...(patch.name !== undefined ? { name: patch.name } : {}),
-            ...(patch.gender !== undefined ? { gender: patch.gender } : {}),
-            ...(patch.isDeceased !== undefined ? { isDeceased: patch.isDeceased } : {}),
-            ...(patch.photoUrl !== undefined ? { photoUrl: patch.photoUrl } : {}),
-            ...(patch.birthYear !== undefined ? { birthYear: patch.birthYear || undefined } : {}),
-            ...(patch.deathYear !== undefined ? { deathYear: patch.deathYear || undefined } : {}),
-            ...(patch.city !== undefined ? { city: patch.city || undefined } : {}),
-          };
-          syncedMember = updated;
-          return updated;
-        }),
+        dataVersion: Math.max(1, t.dataVersion || 1) + 1,
+        lastApprovedAt: nowIso,
+        lastApprovedBy: actorDisplayName,
+        lastSyncedAt: nowIso,
+        members: t.members.map((m) => (m.id === memberId ? syncedMemberObj : m)),
       };
     });
-    if (!syncedMember) return;
-    const finalList = propagateCoreMemberEdit(syncedMember, nextList);
+    const finalList = propagateCoreMemberEdit(syncedMemberObj, nextList);
     setTrahList(finalList);
     flushTrahListToStorage(finalList);
     if (selectedMember?.id === memberId) {
-      setSelectedMember(syncedMember);
+      setSelectedMember(syncedMemberObj);
+    }
+    const approvedTrah = finalList.find((t) => t.id === activeTrah.id);
+    if (approvedTrah) {
+      void releaseApprovedTrahUpdate(
+        approvedTrah,
+        `Memperbarui "${syncedMemberObj.name}" lewat Grid`
+      );
     }
   };
 
@@ -2598,6 +3282,9 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       showNotification('Akses Anda di Trah ini adalah "Lihat Saja".');
       return;
     }
+
+    const isAdmin = canManageTrahAdmin(activeTrah, accountScope.email, accountScope.isOwner);
+    const nowIso = new Date().toISOString();
 
     const cleanSpouses = formSpouses
       .filter((sp) => sp.name.trim().length > 0)
@@ -2621,11 +3308,32 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         spouses: cleanSpouses
       };
 
-      const nextList = trahList.map((t) =>
-        t.id === activeTrah.id
-          ? { ...t, members: [newMember, ...t.members] }
-          : t
-      );
+      if (!isAdmin) {
+        void stageMemberChangeProposal({
+          trah: activeTrah,
+          actionType: 'member_add',
+          targetName: newMember.name,
+          summary: `Ajukan Leluhur Utama "${newMember.name}"`,
+          operations: [{ op: 'upsert_member', member: newMember }],
+        });
+        setIsFormModalOpen(false);
+        return;
+      }
+
+      let approvedRef: TrahCategory | null = null;
+      const nextList = trahList.map((t) => {
+        if (t.id !== activeTrah.id) return t;
+        const nextTrah: TrahCategory = {
+          ...t,
+          members: [newMember, ...t.members],
+          dataVersion: Math.max(1, t.dataVersion || 1) + 1,
+          lastApprovedAt: nowIso,
+          lastApprovedBy: actorDisplayName,
+          lastSyncedAt: nowIso,
+        };
+        approvedRef = nextTrah;
+        return nextTrah;
+      });
       setTrahList(nextList);
       flushTrahListToStorage(nextList);
       showNotification(`Uyut / Leluhur Utama "${newMember.name}" berhasil ditambahkan.`);
@@ -2636,6 +3344,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         targetName: newMember.name,
         summary: `Menambah Leluhur Utama "${newMember.name}"`,
       });
+      if (approvedRef) void releaseApprovedTrahUpdate(approvedRef, `Menambah "${newMember.name}"`);
     } else if (formMode === 'add_child') {
       const parent = activeTrah.members.find((m) => m.id === formParentId);
       const parentGen = parent ? parent.generationLevel : 0;
@@ -2657,11 +3366,34 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         spouses: cleanSpouses
       };
 
-      const nextList = trahList.map((t) =>
-        t.id === activeTrah.id
-          ? { ...t, members: [...t.members, newMember] }
-          : t
-      );
+      const summary = `Menambah anggota "${newMember.name}"${parent ? ` (anak dari ${parent.name})` : ''}`;
+
+      if (!isAdmin) {
+        void stageMemberChangeProposal({
+          trah: activeTrah,
+          actionType: 'member_add',
+          targetName: newMember.name,
+          summary,
+          operations: [{ op: 'upsert_member', member: newMember }],
+        });
+        setIsFormModalOpen(false);
+        return;
+      }
+
+      let approvedRef: TrahCategory | null = null;
+      const nextList = trahList.map((t) => {
+        if (t.id !== activeTrah.id) return t;
+        const nextTrah: TrahCategory = {
+          ...t,
+          members: [...t.members, newMember],
+          dataVersion: Math.max(1, t.dataVersion || 1) + 1,
+          lastApprovedAt: nowIso,
+          lastApprovedBy: actorDisplayName,
+          lastSyncedAt: nowIso,
+        };
+        approvedRef = nextTrah;
+        return nextTrah;
+      });
       setTrahList(nextList);
       flushTrahListToStorage(nextList);
       showNotification(`Anak/Keturunan "${newMember.name}" berhasil ditambahkan.`);
@@ -2670,8 +3402,9 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         trahName: activeTrah.name,
         actionType: 'member_add',
         targetName: newMember.name,
-        summary: `Menambah anggota "${newMember.name}"${parent ? ` (anak dari ${parent.name})` : ''}`,
+        summary,
       });
+      if (approvedRef) void releaseApprovedTrahUpdate(approvedRef, summary);
     } else if (formMode === 'edit') {
       const targetBefore = activeTrah.members.find((m) => m.id === formMemberId);
       if (targetBefore) {
@@ -2687,6 +3420,40 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         }
       }
 
+      const patchedMember: FamilyMember = {
+        ...(targetBefore || {
+          id: formMemberId || `m_${Date.now()}`,
+          generationLevel: 0,
+        }),
+        name: nameInput.trim(),
+        callName: callNameInput.trim() || undefined,
+        birthYear: birthYearInput.trim() || undefined,
+        deathYear: isDeceasedInput ? deathYearInput.trim() || undefined : undefined,
+        city: cityInput.trim() || undefined,
+        isDeceased: isDeceasedInput,
+        photoUrl: photoUrlInput.trim() || undefined,
+        gender: genderInput,
+        notes: notesInput.trim() || undefined,
+        parentId: formParentId && formParentId !== formMemberId ? formParentId : null,
+        orderIndex: Math.max(1, orderIndexInput || 1),
+        spouses: cleanSpouses,
+      };
+
+      const editSummary = `Memperbarui biodata / gender (${genderInput === 'P' ? 'Wanita' : 'Pria'}) / nasab "${nameInput.trim()}"`;
+
+      if (!isAdmin) {
+        void stageMemberChangeProposal({
+          trah: activeTrah,
+          actionType: 'member_update',
+          targetName: nameInput.trim(),
+          summary: editSummary,
+          details: cleanSpouses.length > 0 ? `${cleanSpouses.length} pasangan tercatat` : undefined,
+          operations: [{ op: 'upsert_member', member: patchedMember }],
+        });
+        setIsFormModalOpen(false);
+        return;
+      }
+
       const isSanta =
         activeTrah.id === 'trah-ayah-user' ||
         activeTrah.name.toUpperCase().includes('SANTA');
@@ -2694,29 +3461,18 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       let updatedTargetMember: FamilyMember | undefined;
       const nextList = trahList.map((t) => {
         if (t.id !== activeTrah.id) return t;
-        const updatedMembers = t.members.map((m) => {
-          if (m.id !== formMemberId) return m;
-          return {
-            ...m,
-            name: nameInput.trim(),
-            callName: callNameInput.trim() || undefined,
-            birthYear: birthYearInput.trim() || undefined,
-            deathYear: isDeceasedInput ? deathYearInput.trim() || undefined : undefined,
-            city: cityInput.trim() || undefined,
-            isDeceased: isDeceasedInput,
-            photoUrl: photoUrlInput.trim() || undefined,
-            gender: genderInput,
-            notes: notesInput.trim() || undefined,
-            parentId: formParentId && formParentId !== formMemberId ? formParentId : null,
-            orderIndex: Math.max(1, orderIndexInput || 1),
-            spouses: cleanSpouses
-          };
-        });
+        const updatedMembers = t.members.map((m) =>
+          m.id === formMemberId ? patchedMember : m
+        );
         const normalizedMembers = normalizeTrahMembers(updatedMembers, isSanta).members;
         updatedTargetMember = normalizedMembers.find((m) => m.id === formMemberId);
         return {
           ...t,
           members: normalizedMembers,
+          dataVersion: Math.max(1, t.dataVersion || 1) + 1,
+          lastApprovedAt: nowIso,
+          lastApprovedBy: actorDisplayName,
+          lastSyncedAt: nowIso,
         };
       });
 
@@ -2735,9 +3491,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         trahName: activeTrah.name,
         actionType: 'member_update',
         targetName: nameInput.trim(),
-        summary: `Memperbarui biodata / gender (${genderInput === 'P' ? 'Wanita' : 'Pria'}) / nasab "${nameInput.trim()}"`,
+        summary: editSummary,
         details: cleanSpouses.length > 0 ? `${cleanSpouses.length} pasangan tercatat` : undefined,
       });
+      const approvedTrah = finalList.find((t) => t.id === activeTrah.id);
+      if (approvedTrah) void releaseApprovedTrahUpdate(approvedTrah, editSummary);
     }
 
     setIsFormModalOpen(false);
@@ -2753,19 +3511,33 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       activeTrah.name.toUpperCase().includes('SANTA');
     const { members: normalized, repairedCount } = normalizeTrahMembers(activeTrah.members, isSanta);
 
-    const nextList = trahList.map((t) =>
-      t.id === activeTrah.id ? { ...t, members: normalized } : t
-    );
+    const nowIso = new Date().toISOString();
+    let approvedRef: TrahCategory | null = null;
+    const nextList = trahList.map((t) => {
+      if (t.id !== activeTrah.id) return t;
+      const nextTrah: TrahCategory = {
+        ...t,
+        members: normalized,
+        dataVersion: repairedCount > 0 ? Math.max(1, t.dataVersion || 1) + 1 : t.dataVersion || 1,
+        lastApprovedAt: repairedCount > 0 ? nowIso : t.lastApprovedAt,
+        lastApprovedBy: repairedCount > 0 ? actorDisplayName : t.lastApprovedBy,
+        lastSyncedAt: nowIso,
+      };
+      approvedRef = nextTrah;
+      return nextTrah;
+    });
     setTrahList(nextList);
     flushTrahListToStorage(nextList);
 
     if (repairedCount > 0) {
+      const summary = `Merapikan & menyambungkan ${repairedCount} tautan garis nasab`;
       appendActivityLog({
         trahId: activeTrah.id,
         trahName: activeTrah.name,
         actionType: 'member_update',
-        summary: `Merapikan & menyambungkan ${repairedCount} tautan garis nasab`,
+        summary,
       });
+      if (approvedRef) void releaseApprovedTrahUpdate(approvedRef, summary);
       showNotification(`Berhasil merapikan & menyambungkan ${repairedCount} tautan garis nasab pada ${activeTrah.name}! ✨`);
     } else {
       showNotification(`Susunan garis nasab ${activeTrah.name} sudah rapi & sinkron.`);
@@ -2794,8 +3566,9 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     };
     collectDescendants(member.id);
 
+    const isAdmin = canManageTrahAdmin(activeTrah, accountScope.email, accountScope.isOwner);
     // Lindungi node ter-klaim di dalam cabang agar non-owner tidak menghapusnya tanpa sadar
-    if (!canManageTrahAdmin(activeTrah, accountScope.email, accountScope.isOwner)) {
+    if (!isAdmin) {
       const claimedDesc = activeTrah.members.find(
         (m) =>
           toDeleteIds.has(m.id) &&
@@ -2808,6 +3581,27 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         );
         return;
       }
+
+      if (
+        !window.confirm(
+          `Ajukan penghapusan "${member.name}" beserta cabang (${toDeleteIds.size} anggota) ke Pengurus/Admin Trah?`
+        )
+      ) {
+        return;
+      }
+
+      void stageMemberChangeProposal({
+        trah: activeTrah,
+        actionType: 'member_delete',
+        targetName: member.name,
+        summary: `Ajukan hapus "${member.name}" (${toDeleteIds.size} anggota)`,
+        operations: [{ op: 'delete_members', memberIds: Array.from(toDeleteIds) }],
+      });
+      if (selectedMember?.id === member.id) {
+        setIsDetailModalOpen(false);
+        setSelectedMember(null);
+      }
+      return;
     }
 
     if (
@@ -2818,28 +3612,38 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       return;
     }
 
-    setTrahList((prev) =>
-      prev.map((t) => {
-        if (t.id !== activeTrah.id) return t;
-        return {
-          ...t,
-          members: t.members.filter((m) => !toDeleteIds.has(m.id))
-        };
-      })
-    );
+    const nowIso = new Date().toISOString();
+    let approvedRef: TrahCategory | null = null;
+    const nextList = trahList.map((t) => {
+      if (t.id !== activeTrah.id) return t;
+      const nextTrah: TrahCategory = {
+        ...t,
+        members: t.members.filter((m) => !toDeleteIds.has(m.id)),
+        dataVersion: Math.max(1, t.dataVersion || 1) + 1,
+        lastApprovedAt: nowIso,
+        lastApprovedBy: actorDisplayName,
+        lastSyncedAt: nowIso,
+      };
+      approvedRef = nextTrah;
+      return nextTrah;
+    });
+    setTrahList(nextList);
+    flushTrahListToStorage(nextList);
 
     if (selectedMember?.id === member.id) {
       setIsDetailModalOpen(false);
       setSelectedMember(null);
     }
 
+    const delSummary = `Menghapus "${member.name}" beserta cabang (${toDeleteIds.size} anggota)`;
     appendActivityLog({
       trahId: activeTrah.id,
       trahName: activeTrah.name,
       actionType: 'member_delete',
       targetName: member.name,
-      summary: `Menghapus "${member.name}" beserta cabang (${toDeleteIds.size} anggota)`,
+      summary: delSummary,
     });
+    if (approvedRef) void releaseApprovedTrahUpdate(approvedRef, delSummary);
 
     showNotification(`${toDeleteIds.size} anggota silsilah berhasil dihapus.`);
   };
@@ -2899,6 +3703,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       });
     }
 
+    const nowIso = new Date().toISOString();
     const newTrah: TrahCategory = {
       id: `trah_${nowTs}`,
       name: formattedTrahName,
@@ -2907,11 +3712,21 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       members: initialMembers,
       creatorEmail: accountScope.email || accountProfile.email || undefined,
       userRole: 'admin',
+      dataVersion: 1,
+      lastApprovedAt: nowIso,
+      lastApprovedBy: actorDisplayName,
+      lastSyncedAt: nowIso,
       invitePolicy: { version: 1, role: 'member', expiryHours: 168 },
     };
 
-    setTrahList((prev) => [...prev, newTrah]);
+    const nextList = [...trahList, newTrah];
+    setTrahList(nextList);
+    flushTrahListToStorage(nextList);
     setActiveTrahId(newTrah.id);
+    void releaseApprovedTrahUpdate(
+      newTrah,
+      `Membuat Trah "${newTrah.name}" (${initialMembers.length} anggota)`
+    );
 
     if (newTrahCreateIntroPost) {
       const introLines = [
@@ -3270,9 +4085,23 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       showNotification('Hanya Pengurus Trah yang berhak mengubah info Trah ini.');
       return;
     }
-    setTrahList((prev) =>
-      prev.map((t) => (t.id === trahId ? { ...t, ...updates } : t))
-    );
+    const nowIso = new Date().toISOString();
+    let updatedRef: TrahCategory | null = null;
+    const nextList = trahList.map((t) => {
+      if (t.id !== trahId) return t;
+      const nextTrah: TrahCategory = {
+        ...t,
+        ...updates,
+        dataVersion: Math.max(1, t.dataVersion || 1) + 1,
+        lastApprovedAt: nowIso,
+        lastApprovedBy: actorDisplayName,
+        lastSyncedAt: nowIso,
+      };
+      updatedRef = nextTrah;
+      return nextTrah;
+    });
+    setTrahList(nextList);
+    flushTrahListToStorage(nextList);
     if (updates.name || updates.lineageSide) {
       setTrahPosts((prev) =>
         prev.map((p) =>
@@ -3287,13 +4116,15 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       );
     }
     if (targetBefore) {
+      const summary = `Memperbarui info Trah "${updates.name ?? targetBefore.name}"`;
       appendActivityLog({
         trahId,
         trahName: updates.name ?? targetBefore.name,
         actionType: 'trah_update',
         targetName: updates.name ?? targetBefore.name,
-        summary: `Memperbarui info Trah "${updates.name ?? targetBefore.name}"`,
+        summary,
       });
+      if (updatedRef) void releaseApprovedTrahUpdate(updatedRef, summary);
     }
   };
 
@@ -3850,16 +4681,57 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
           })()}
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+          {trahList.length > 0 && viewMode !== 'settings' && (
+            <span
+              title={`Versi rujukan v${activeTrah.dataVersion || 1} • Terakhir sync: ${formatSyncTimestamp(
+                activeTrah.lastSyncedAt || activeTrah.lastApprovedAt
+              )}`}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 text-[10px] font-bold"
+            >
+              <Clock className="w-3 h-3 text-emerald-700 shrink-0" />
+              <span>v{activeTrah.dataVersion || 1}</span>
+              <span className="hidden md:inline text-emerald-700">
+                • {formatSyncTimestamp(activeTrah.lastSyncedAt || activeTrah.lastApprovedAt)}
+              </span>
+            </span>
+          )}
+
+          {trahList.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void handleManualRefreshTrah()}
+              disabled={isCheckingOrPulling}
+              className={`px-2.5 py-1 rounded-lg border text-[11px] font-extrabold flex items-center gap-1.5 transition active:scale-95 whitespace-nowrap disabled:opacity-60 ${
+                syncCheckStatus?.isOutdated
+                  ? 'bg-amber-400 hover:bg-amber-300 text-stone-950 border-amber-500 shadow-xs'
+                  : 'bg-white hover:bg-stone-100 text-stone-800 border-stone-300'
+              }`}
+              title="Tarik pembaruan versi terbaru Trah & muat ulang tampilan"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${isCheckingOrPulling ? 'animate-spin' : ''} ${
+                  syncCheckStatus?.isOutdated ? 'text-stone-950' : 'text-emerald-700'
+                }`}
+              />
+              <span>{syncCheckStatus?.isOutdated ? 'Tarik Update' : 'Refresh'}</span>
+            </button>
+          )}
+
           {viewMode !== 'settings' && (
             <button
               type="button"
               onClick={() => openSettingsTab('logs')}
               className="px-2.5 py-1 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 text-[11px] font-bold flex items-center gap-1.5 transition active:scale-95 whitespace-nowrap"
-              title="Pantau riwayat perubahan data, klaim anggota & undangan"
+              title="Pantau riwayat perubahan data, ajuan & approve Admin"
             >
               <History className="w-3.5 h-3.5 text-emerald-700" />
               <span className="hidden sm:inline">Log Aktivitas</span>
+              {pendingProposalsForActiveTrah.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-stone-950 text-[9px] font-black">
+                  {pendingProposalsForActiveTrah.length} Ajuan
+                </span>
+              )}
               {activityLogs.length > 0 && (
                 <span className="px-1.5 py-0.2 rounded-full bg-emerald-700 text-white text-[9px] font-extrabold">
                   {activityLogs.length}
@@ -3881,6 +4753,60 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* ========================================================= */}
+      {/* TAHAP 3: BANNER VERSI RUJUKAN BARU TERSEDIA (TARIK & RELOAD) */}
+      {/* ========================================================= */}
+      {trahList.length > 0 && syncCheckStatus?.isOutdated && syncCheckStatus.remoteHeader && (
+        <div className="bg-amber-50 text-stone-900 px-3 py-2 border-b border-amber-300 flex flex-wrap items-center justify-between gap-2 text-xs z-20 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-7 h-7 rounded-lg bg-amber-200 text-amber-900 flex items-center justify-center shrink-0">
+              <AlertCircle className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="font-extrabold text-xs truncate">
+                Pembaruan Rujukan Tersedia: v{syncCheckStatus.remoteHeader.dataVersion} ({syncCheckStatus.remoteHeader.memberCount} Anggota)
+              </p>
+              <p className="text-[10px] text-stone-700 truncate">
+                Lokal saat ini v{syncCheckStatus.localVersion} ({syncCheckStatus.localMemberCount} anggota) • Disetujui {syncCheckStatus.remoteHeader.approvedBy} ({formatSyncTimestamp(syncCheckStatus.remoteHeader.updatedAt)})
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleManualRefreshTrah()}
+            disabled={isCheckingOrPulling}
+            className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-[11px] flex items-center gap-1.5 transition shrink-0 disabled:opacity-60"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isCheckingOrPulling ? 'animate-spin' : ''}`} />
+            <span>Tarik Update &amp; Muat Ulang</span>
+          </button>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAHAP 2: BANNER ANTREAN APPROVE UNTUK ADMIN TRAH         */}
+      {/* ========================================================= */}
+      {trahList.length > 0 &&
+        viewMode !== 'settings' &&
+        canManageTrahAdmin(activeTrah, accountScope.email, accountScope.isOwner) &&
+        pendingProposalsForActiveTrah.length > 0 && (
+          <div className="bg-emerald-50 text-emerald-950 px-3 py-2 border-b border-emerald-200 flex flex-wrap items-center justify-between gap-2 text-xs z-20 shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0" />
+              <p className="text-[11px] font-bold truncate">
+                Ada <strong>{pendingProposalsForActiveTrah.length}</strong> ajuan perubahan data anggota di {activeTrah.name} menunggu <strong>Approve Admin</strong>.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => openSettingsTab('logs')}
+              className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-[11px] shrink-0 transition"
+            >
+              Tinjau &amp; Approve
+            </button>
+          </div>
+        )}
 
       {/* ========================================================= */}
       {/* BANNER PROSES / TUNGGU SINKRONISASI SAAT MASUK VIA LINK   */}
@@ -4069,7 +4995,10 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
           /* ========================================================= */
           /* TABEL FILTER EXCEL DENGAN KOLOM LENGKAP & EKSPOR */
           /* ========================================================= */
-          <div className="w-full max-w-6xl space-y-3.5 pb-20 mx-auto select-text">
+          <div
+            key={`excel_${activeTrah.id}_${uiReloadKey}`}
+            className="w-full max-w-6xl space-y-3.5 pb-20 mx-auto select-text"
+          >
             <div className="bg-emerald-900 text-white p-3 rounded-2xl shadow-sm border border-emerald-800 flex flex-wrap items-center justify-between gap-2.5">
               <div className="flex items-center gap-2">
                 <FileSpreadsheet className="w-5 h-5 text-amber-300" />
@@ -4541,7 +5470,10 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
           /* ========================================================= */
           /* MEDSOS KHUSUS 4 TRAH (FACEBOOK-STYLE TRAHBOOK KELUARGA) */
           /* ========================================================= */
-          <div className="w-full max-w-3xl pb-24 mx-auto space-y-4 select-text">
+          <div
+            key={`feed_${activeTrah.id}_${uiReloadKey}`}
+            className="w-full max-w-3xl pb-24 mx-auto space-y-4 select-text"
+          >
             {/* Header Medsos TrahBook */}
             <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-blue-800 text-white p-4 rounded-3xl shadow-sm border border-blue-600 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
@@ -4928,6 +5860,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
               setActivityLogs([]);
               showNotification('Log aktivitas silsilah telah dibersihkan.');
             }}
+            changeProposals={changeProposals}
+            onApproveProposal={handleApproveProposal}
+            onRejectProposal={handleRejectProposal}
+            onRefreshActiveTrah={() => void handleManualRefreshTrah()}
+            isRefreshingTrah={isCheckingOrPulling}
             currentEmail={accountScope.email}
             isOwner={accountScope.isOwner}
             initialSectionTab={settingsSectionTrigger.tab}
@@ -4939,6 +5876,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
           /* KANVAS GRID INTERAKTIF (MANUAL / AUTO ALA LUCIDCHART)     */
           /* ========================================================= */
           <InteractiveGridCanvasView
+            key={`grid_${activeTrah.id}_${uiReloadKey}`}
             activeTrah={activeTrah}
             onOpenTable={() => {
               setViewMode('excel');

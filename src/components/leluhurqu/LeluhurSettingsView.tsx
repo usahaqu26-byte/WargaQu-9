@@ -42,6 +42,10 @@ import {
   getTrahRoleMeta,
   canManageTrahAdmin,
 } from '../../services/leluhurCoreSyncService';
+import {
+  formatSyncTimestamp,
+  LeluhurChangeProposal,
+} from '../../services/leluhurVersionSyncService';
 import { EncryptedBackupPanel } from '../common/EncryptedBackupPanel';
 
 export interface LeluhurAccountProfile {
@@ -85,6 +89,11 @@ interface LeluhurSettingsViewProps {
   savedDesignsCount: number;
   activityLogs: LeluhurActivityLog[];
   onClearActivityLogs: () => void;
+  changeProposals?: LeluhurChangeProposal[];
+  onApproveProposal?: (proposal: LeluhurChangeProposal) => void;
+  onRejectProposal?: (proposal: LeluhurChangeProposal) => void;
+  onRefreshActiveTrah?: () => void;
+  isRefreshingTrah?: boolean;
   initialSectionTab?: SettingsSectionTab;
   sectionTriggerKey?: number;
   currentEmail?: string;
@@ -114,6 +123,11 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
   savedDesignsCount,
   activityLogs,
   onClearActivityLogs,
+  changeProposals = [],
+  onApproveProposal,
+  onRejectProposal,
+  onRefreshActiveTrah,
+  isRefreshingTrah = false,
   initialSectionTab = 'account',
   sectionTriggerKey = 0,
   currentEmail,
@@ -147,6 +161,7 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
   const backupInputRef = useRef<HTMLInputElement>(null);
 
   const totalMembers = trahList.reduce((sum, t) => sum + t.members.length, 0);
+  const pendingProposalsCount = changeProposals.filter((p) => p.status === 'pending').length;
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -313,15 +328,21 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
           }`}
         >
           <History className="w-3.5 h-3.5" />
-          <span>Log Aktivitas</span>
-          {activityLogs.length > 0 && (
-            <span
-              className={`text-[9px] px-1.5 py-0.2 rounded-full font-black ${
-                activeTab === 'logs' ? 'bg-amber-400 text-stone-950' : 'bg-stone-200 text-stone-700'
-              }`}
-            >
-              {activityLogs.length}
+          <span>Log &amp; Approve</span>
+          {pendingProposalsCount > 0 ? (
+            <span className="text-[9px] px-1.5 py-0.2 rounded-full font-black bg-amber-400 text-stone-950">
+              {pendingProposalsCount} Ajuan
             </span>
+          ) : (
+            activityLogs.length > 0 && (
+              <span
+                className={`text-[9px] px-1.5 py-0.2 rounded-full font-black ${
+                  activeTab === 'logs' ? 'bg-amber-400 text-stone-950' : 'bg-stone-200 text-stone-700'
+                }`}
+              >
+                {activityLogs.length}
+              </span>
+            )
           )}
         </button>
 
@@ -687,14 +708,16 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
                             </span>
                           )}
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-white border border-stone-200 text-stone-600">
-                            {t.members.length} Anggota
+                            v{t.dataVersion || 1} • {t.members.length} Anggota
                           </span>
                           <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${roleMeta.badgeClass}`}>
                             {roleMeta.shortLabel}
                           </span>
                         </div>
                         <p className="text-[11px] text-stone-600 line-clamp-1">{t.description}</p>
-                        <p className="text-[10px] text-stone-500 font-semibold">{lineageMeta.label}</p>
+                        <p className="text-[10px] text-stone-500 font-semibold">
+                          {lineageMeta.label} • Sync: {formatSyncTimestamp(t.lastSyncedAt || t.lastApprovedAt)}
+                        </p>
                       </div>
 
                       <div className="flex flex-wrap items-center gap-1.5 shrink-0">
@@ -1049,45 +1072,143 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
                   Pantau riwayat klaim anggota, gabung undangan, tambah/edit/hapus silsilah, serta cadangan data.
                 </p>
               </div>
-              {activityLogs.length > 0 && (
-                isOwner || trahList.length === 0 || trahList.every((t) => canManageTrahAdmin(t, currentEmail, isOwner)) ? (
-                  !confirmClearLogs ? (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmClearLogs(true)}
-                      className="py-1.5 px-2.5 rounded-xl bg-stone-100 hover:bg-rose-50 text-stone-600 hover:text-rose-700 border border-stone-200 text-[11px] font-bold transition"
-                    >
-                      Bersihkan Log
-                    </button>
+              <div className="flex flex-wrap items-center gap-2">
+                {onRefreshActiveTrah && (
+                  <button
+                    type="button"
+                    disabled={isRefreshingTrah}
+                    onClick={onRefreshActiveTrah}
+                    className="py-1.5 px-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-bold flex items-center gap-1 transition"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingTrah ? 'animate-spin' : ''}`} />
+                    <span>{isRefreshingTrah ? 'Memeriksa...' : 'Cek Ajuan & Versi'}</span>
+                  </button>
+                )}
+                {activityLogs.length > 0 && (
+                  isOwner || trahList.length === 0 || trahList.every((t) => canManageTrahAdmin(t, currentEmail, isOwner)) ? (
+                    !confirmClearLogs ? (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmClearLogs(true)}
+                        className="py-1.5 px-2.5 rounded-xl bg-stone-100 hover:bg-rose-50 text-stone-600 hover:text-rose-700 border border-stone-200 text-[11px] font-bold transition"
+                      >
+                        Bersihkan Log
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onClearActivityLogs();
+                            setConfirmClearLogs(false);
+                          }}
+                          className="py-1 px-2.5 rounded-lg bg-rose-600 text-white text-[10px] font-bold"
+                        >
+                          Ya, Hapus Semua
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmClearLogs(false)}
+                          className="py-1 px-2.5 rounded-lg bg-stone-200 text-stone-700 text-[10px] font-bold"
+                        >
+                          Batal
+                        </button>
+                      </div>
+                    )
                   ) : (
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onClearActivityLogs();
-                          setConfirmClearLogs(false);
-                        }}
-                        className="py-1 px-2.5 rounded-lg bg-rose-600 text-white text-[10px] font-bold"
-                      >
-                        Ya, Hapus Semua
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmClearLogs(false)}
-                        className="py-1 px-2.5 rounded-lg bg-stone-200 text-stone-700 text-[10px] font-bold"
-                      >
-                        Batal
-                      </button>
-                    </div>
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-[10px] font-bold text-emerald-800">
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      <span>Log Terkunci (Anti-Hapus)</span>
+                    </span>
                   )
-                ) : (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-[10px] font-bold text-emerald-800">
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                    <span>Log Terkunci (Anti-Hapus)</span>
-                  </span>
-                )
-              )}
+                )}
+              </div>
             </div>
+
+            {/* TAHAP 2: ANTREAN PERSETUJUAN ADMIN (APPROVE -> NAIKKAN VERSI RUJUKAN) */}
+            {(() => {
+              const pendingList = changeProposals.filter((p) => p.status === 'pending');
+              if (pendingList.length === 0) return null;
+              return (
+                <div className="rounded-2xl border border-amber-300 bg-amber-50/75 p-3.5 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h5 className="text-xs font-black text-amber-950 flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4 text-amber-700" />
+                        <span>Antrean Persetujuan Perubahan Anggota ({pendingList.length})</span>
+                      </h5>
+                      <p className="text-[11px] text-amber-900/80">
+                        Tahap 2: Admin meninjau usulan anggota dan menekan Approve untuk menaikkan versi rujukan Trah.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                    {pendingList.map((prop) => {
+                      const targetTrah = trahList.find(
+                        (t) => t.id === prop.trahId || t.name.toLowerCase() === prop.trahName.toLowerCase()
+                      );
+                      const isAdminForProp = targetTrah
+                        ? canManageTrahAdmin(targetTrah, currentEmail, isOwner)
+                        : Boolean(isOwner);
+                      return (
+                        <div
+                          key={prop.id}
+                          className="p-3 rounded-xl bg-white border border-amber-200 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                        >
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                                Menunggu Approve
+                              </span>
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-stone-100 text-stone-700 border border-stone-200">
+                                {prop.trahName} • Base v{prop.baseVersion}
+                              </span>
+                              <span className="text-[10px] font-mono text-stone-400">
+                                {formatSyncTimestamp(prop.createdAt)}
+                              </span>
+                            </div>
+                            <p className="text-xs font-bold text-stone-900 leading-snug">{prop.summary}</p>
+                            {prop.details && (
+                              <p className="text-[11px] text-stone-600 leading-snug">{prop.details}</p>
+                            )}
+                            <p className="text-[10px] text-stone-500">
+                              Diajukan oleh: <strong className="text-stone-800">{prop.proposerName}</strong>
+                              {prop.proposerEmail ? ` (${prop.proposerEmail})` : ''}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {isAdminForProp ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => onApproveProposal?.(prop)}
+                                  className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-extrabold flex items-center gap-1 shadow-2xs transition"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>Approve &amp; Rilis</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onRejectProposal?.(prop)}
+                                  className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-bold transition"
+                                >
+                                  Tolak
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-200">
+                                Menunggu Pengurus
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Filter Bar */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">

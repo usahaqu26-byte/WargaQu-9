@@ -16,7 +16,9 @@ import {
   GitFork,
   LogIn,
   Wallet,
-  Store
+  Store,
+  Smartphone,
+  X
 } from 'lucide-react';
 import { PWAInstallBanner } from '../pwa/PWAInstallBanner';
 import { WargaQuLogoIcon } from '../common/WargaQuLogo';
@@ -29,6 +31,8 @@ import {
   PairedHostSession,
 } from '../../services/devicePairingService';
 import { DompetSmartVoiceModal } from '../dompetqu/DompetSmartVoiceModal';
+import { isNativeCapacitorApk } from '../../services/appOriginService';
+import { ApkMigrationService } from '../../services/apkMigrationService';
 
 interface WargaDashboardProps {
   onOpenDompetQu: () => void;
@@ -93,6 +97,15 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
   const [pairedHost, setPairedHost] = useState<PairedHostSession | null>(() =>
     DevicePairingService.getPairedHost()
   );
+  const [showApkMigrateCard, setShowApkMigrateCard] = useState<boolean>(
+    () =>
+      isNativeCapacitorApk() &&
+      ApkMigrationService.isFreshEmptyInstallation() &&
+      !ApkMigrationService.isBannerDismissed()
+  );
+  const [apkTokenMode, setApkTokenMode] = useState<boolean>(false);
+  const [apkTokenInput, setApkTokenInput] = useState<string>('');
+  const [apkMigrating, setApkMigrating] = useState<boolean>(false);
 
   useEffect(() => {
     const syncAll = () => {
@@ -103,6 +116,9 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
       setDompetTotal(DompetQuStorage.getTotalCombinedBalance());
       setUnreadChatCount(getLiveUnreadChatCount());
       setPairedHost(DevicePairingService.getPairedHost());
+      if (!ApkMigrationService.isFreshEmptyInstallation()) {
+        setShowApkMigrateCard(false);
+      }
     };
     window.addEventListener(AUTH_SYNC_EVENT, syncAll);
     window.addEventListener(RT_SYNC_EVENT, syncAll);
@@ -123,6 +139,37 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
     setTimeout(() => {
       setToastMessage((prev) => (prev === message ? null : prev));
     }, 2500);
+  };
+
+  const handleApkConsumeToken = async () => {
+    let token = apkTokenInput.trim();
+    if (!token && typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
+      try {
+        const clip = await navigator.clipboard.readText();
+        if (clip && clip.trim()) {
+          token = clip.trim();
+          setApkTokenInput(token);
+        }
+      } catch {
+        // ignore clipboard denial
+      }
+    }
+    if (!token) {
+      showToast('Tempel token WQH1:... dari menu Akun Saya di PWA.');
+      return;
+    }
+    setApkMigrating(true);
+    try {
+      const res = await ApkMigrationService.consumePwaHandoff(token);
+      setShowApkMigrateCard(false);
+      setApkTokenMode(false);
+      setApkTokenInput('');
+      showToast(`${res.restoredKeys} data dari PWA berhasil dipindahkan ke APK!`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Gagal menarik data dari token PWA.');
+    } finally {
+      setApkMigrating(false);
+    }
   };
 
   const maskedBalance = '••••••••';
@@ -224,6 +271,81 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
               showToast={showToast}
               onOpenStorePreview={onOpenStorePreview}
             />
+
+            {showApkMigrateCard && (
+              <div className="bg-emerald-900 text-white rounded-2xl p-3.5 shadow-md border border-emerald-500/40 space-y-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-800 border border-emerald-400/30 flex items-center justify-center shrink-0">
+                      <Smartphone className="w-4 h-4 text-[#5eead4]" />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-xs font-extrabold text-white leading-tight">
+                        Punya Data WargaQu di Browser / PWA?
+                      </h4>
+                      <p className="text-[11px] text-emerald-100/85 mt-0.5 leading-snug">
+                        Masuk Email &amp; No. HP untuk tarik data otomatis, atau tempel token
+                        transfer dari PWA.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      ApkMigrationService.dismissBanner();
+                      setShowApkMigrateCard(false);
+                    }}
+                    className="p-1 text-emerald-300/80 hover:text-white rounded-lg shrink-0"
+                    title="Tutup"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  {onOpenLogin && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onOpenLogin(
+                          'Masuk dengan Email & No. HP yang dipakai di PWA untuk menyinkronkan data secara otomatis.'
+                        )
+                      }
+                      className="min-h-[38px] px-2.5 rounded-xl bg-white text-emerald-900 hover:bg-emerald-50 font-extrabold text-[11px] transition"
+                    >
+                      Masuk Akun PWA
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setApkTokenMode((v) => !v)}
+                    className="min-h-[38px] px-2.5 rounded-xl bg-emerald-800 hover:bg-emerald-700 border border-emerald-400/35 text-white font-bold text-[11px] transition"
+                  >
+                    {apkTokenMode ? 'Tutup Token' : 'Tempel Token PWA'}
+                  </button>
+                </div>
+
+                {apkTokenMode && (
+                  <div className="flex gap-1.5 pt-1">
+                    <input
+                      type="text"
+                      value={apkTokenInput}
+                      onChange={(e) => setApkTokenInput(e.target.value)}
+                      placeholder="Tempel kode WQH1:..."
+                      className="flex-1 min-h-[38px] rounded-xl bg-emerald-950/90 border border-emerald-400/35 px-2.5 text-[11px] font-mono text-white placeholder-emerald-300/60 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleApkConsumeToken()}
+                      disabled={apkMigrating}
+                      className="min-h-[38px] px-3 rounded-xl bg-[#34d399] text-[#064e3b] font-extrabold text-[11px] shrink-0 disabled:opacity-60"
+                    >
+                      {apkMigrating ? '...' : apkTokenInput.trim() ? 'Pulihkan' : 'Tempel'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* DOMPETQU: SATU-SATUNYA WADAH RINGKASAN & AKSES DOMPET PRIBADI */}
             <div className="bg-white rounded-2xl p-4 lg:p-5 shadow-sm border border-emerald-100/90 relative overflow-hidden">
@@ -427,7 +549,7 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
       </div>
 
       {/* BOTTOM NAVIGATION BAR (KHUSUS HP / TABLET KECIL — TERSEMBUNYI DI DESKTOP) */}
-      <div className="lg:hidden absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-emerald-100 px-6 py-2 grid grid-cols-3 items-end z-40 shadow-lg">
+      <div className="lg:hidden absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-emerald-100 px-6 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] grid grid-cols-3 items-end z-40 shadow-lg">
         {/* Beranda */}
         <button
           type="button"

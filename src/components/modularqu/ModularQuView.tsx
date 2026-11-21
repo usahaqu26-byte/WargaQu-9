@@ -1659,7 +1659,7 @@ export const ModularQuView: React.FC<ModularQuViewProps> = ({
       {/* STICKY CARD KASIR SUARA FLEKSIBEL (BOTTOM OF POS TAB) */}
       {/* ========================================== */}
       {activeTab === 'pos' && (
-        <div className="fixed bottom-14 left-0 right-0 p-2.5 bg-zinc-900/95 backdrop-blur-lg border-t border-emerald-500/30 z-30 shadow-2xl">
+        <div className="fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom,0px))] left-0 right-0 p-2.5 bg-zinc-900/95 backdrop-blur-lg border-t border-emerald-500/30 z-30 shadow-2xl">
           <div className="max-w-2xl mx-auto space-y-1.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
@@ -1738,7 +1738,7 @@ export const ModularQuView: React.FC<ModularQuViewProps> = ({
       {/* ========================================== */}
       {/* BOTTOM NAVIGATION BAR */}
       {/* ========================================== */}
-      <nav className="bg-zinc-900/95 backdrop-blur-md border-t border-zinc-800 fixed bottom-0 left-0 right-0 z-40 px-2 py-1 shadow-2xl">
+      <nav className="bg-zinc-900/95 backdrop-blur-md border-t border-zinc-800 fixed bottom-0 left-0 right-0 z-40 px-2 pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom,0px))] shadow-2xl">
         <div className="max-w-md mx-auto grid grid-cols-5 gap-1">
           <button
             onClick={() => switchTab('pos')}
