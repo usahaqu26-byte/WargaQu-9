@@ -1,5 +1,6 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -594,6 +595,77 @@ ATURAN EKSTRAKSI:
     }>
   >();
 
+  // Ephemeral /tmp transit cache (ONLY SHA-256 session tokens, E2EE ciphertext, & Trah version headers)
+  // Survives Cloud Run / dev-server restarts without storing any unencrypted citizen database or photos.
+  const TRANSIT_CACHE_PATH = '/tmp/wargaqu-relay-transit-v1.json';
+  let transitSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function loadVolatileTransitCache() {
+    try {
+      if (!fs.existsSync(TRANSIT_CACHE_PATH)) return;
+      const raw = fs.readFileSync(TRANSIT_CACHE_PATH, 'utf8');
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        sessions?: Array<[string, any]>;
+        accountSync?: Array<[string, any]>;
+        trahVersions?: Array<[string, any]>;
+        trahProposals?: Array<[string, any]>;
+      };
+      const now = Date.now();
+      if (Array.isArray(parsed.sessions)) {
+        for (const [k, v] of parsed.sessions) {
+          if (k && v && typeof v.expiresAt === 'number' && v.expiresAt > now) {
+            volatileActiveSessions.set(k, v);
+          }
+        }
+      }
+      if (Array.isArray(parsed.accountSync)) {
+        for (const [k, v] of parsed.accountSync) {
+          if (k && v && typeof v.expiresAt === 'number' && v.expiresAt > now) {
+            volatileAccountSync.set(k, v);
+          }
+        }
+      }
+      if (Array.isArray(parsed.trahVersions)) {
+        for (const [k, v] of parsed.trahVersions) {
+          if (k && v && typeof v.expiresAt === 'number' && v.expiresAt > now) {
+            volatileTrahVersions.set(k, v);
+          }
+        }
+      }
+      if (Array.isArray(parsed.trahProposals)) {
+        for (const [k, v] of parsed.trahProposals) {
+          if (k && Array.isArray(v)) {
+            const active = v.filter(p => p && typeof p.expiresAt === 'number' && p.expiresAt > now);
+            if (active.length > 0) volatileTrahProposals.set(k, active);
+          }
+        }
+      }
+    } catch {
+      // ignore corrupted ephemeral cache
+    }
+  }
+
+  function scheduleSaveVolatileTransitCache() {
+    if (transitSaveTimer) return;
+    transitSaveTimer = setTimeout(() => {
+      transitSaveTimer = null;
+      try {
+        const snapshot = {
+          sessions: Array.from(volatileActiveSessions.entries()).slice(0, 1500),
+          accountSync: Array.from(volatileAccountSync.entries()).slice(0, 300),
+          trahVersions: Array.from(volatileTrahVersions.entries()).slice(0, 400),
+          trahProposals: Array.from(volatileTrahProposals.entries()).slice(0, 300),
+        };
+        fs.writeFileSync(TRANSIT_CACHE_PATH, JSON.stringify(snapshot), 'utf8');
+      } catch {
+        // ignore ephemeral disk errors
+      }
+    }, 350);
+  }
+
+  loadVolatileTransitCache();
+
   function pruneExpiredPairData() {
     const now = Date.now();
     for (const [k, v] of volatilePairSessions.entries()) {
@@ -877,6 +949,7 @@ ATURAN EKSTRAKSI:
       updatedAt,
       expiresAt: updatedAt + ACCOUNT_SYNC_TTL_MS,
     });
+    scheduleSaveVolatileTransitCache();
     res.json({ ok: true, updatedAt, keyCount });
   });
 
@@ -1399,6 +1472,7 @@ ATURAN EKSTRAKSI:
       updatedAt,
       expiresAt: updatedAt + SESSION_REGISTRY_TTL_MS,
     });
+    scheduleSaveVolatileTransitCache();
     res.json({ ok: true, activeContainer: container, updatedAt });
   });
 
@@ -1460,6 +1534,7 @@ ATURAN EKSTRAKSI:
     const active = volatileActiveSessions.get(accountKey);
     if (active && (!sessionNonce || active.sessionNonce === sessionNonce)) {
       volatileActiveSessions.delete(accountKey);
+      scheduleSaveVolatileTransitCache();
     }
     res.json({ ok: true });
   });
@@ -1523,6 +1598,7 @@ ATURAN EKSTRAKSI:
       expiresAt: now + LELUHUR_META_TTL_MS,
     };
     volatileTrahVersions.set(slug, header);
+    scheduleSaveVolatileTransitCache();
     res.json({ ok: true, header });
   });
 
@@ -1598,6 +1674,7 @@ ATURAN EKSTRAKSI:
     const deduped = existing.filter(p => p.id !== id);
     const nextList = [entry, ...deduped].slice(0, 50);
     volatileTrahProposals.set(slug, nextList);
+    scheduleSaveVolatileTransitCache();
     res.json({
       ok: true,
       proposal: entry,
@@ -1786,11 +1863,102 @@ ATURAN EKSTRAKSI:
     });
   });
 
+  // Lightweight App Version & GitHub Release Discovery Endpoint (no private data)
+  const SERVER_APP_VERSION = '1.5.8';
+  const SERVER_APP_VERSION_CODE = 3;
+  const cachedGithubReleases = new Map<
+    string,
+    {
+      fetchedAt: number;
+      tag: string;
+      apkDownloadUrl: string;
+      releasePageUrl: string;
+      notes: string;
+    }
+  >();
+
+  app.get('/api/app-version', async (req, res) => {
+    const rawRepo = String(req.query.repo || process.env.VITE_GITHUB_REPO || process.env.GITHUB_REPO || '').trim();
+    const validRepo = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(rawRepo) ? rawRepo : '';
+
+    let latestVersion = SERVER_APP_VERSION;
+    let latestVersionCode = SERVER_APP_VERSION_CODE;
+    let apkDownloadUrl = String(process.env.WARGAQU_APK_URL || '').trim();
+    let releasePageUrl = validRepo ? `https://github.com/${validRepo}/releases/latest` : '';
+    const changelog = [
+      'Kontrol Sesi Tunggal APK vs PWA & sinkronisasi akun otomatis lintas wadah',
+      'Deteksi pembaruan APK otomatis & pasang timpa langsung tanpa uninstall',
+      'Penanda rilis v1.5.8 (Build 3) terlihat di beranda, akun, dan toko',
+    ];
+
+    if (validRepo) {
+      const cached = cachedGithubReleases.get(validRepo);
+      const now = Date.now();
+      if (cached && now - cached.fetchedAt < 60 * 1000) {
+        if (cached.tag) latestVersion = cached.tag.replace(/^v/i, '');
+        if (cached.apkDownloadUrl) apkDownloadUrl = cached.apkDownloadUrl;
+        if (cached.releasePageUrl) releasePageUrl = cached.releasePageUrl;
+      } else {
+        try {
+          const ghRes = await fetch(`https://api.github.com/repos/${validRepo}/releases/latest`, {
+            headers: {
+              Accept: 'application/vnd.github+json',
+              'User-Agent': 'WargaQu-Relay/1.5.8',
+            },
+          });
+          if (ghRes.ok) {
+            const ghData = (await ghRes.json()) as {
+              tag_name?: string;
+              html_url?: string;
+              body?: string;
+              assets?: Array<{ name?: string; browser_download_url?: string }>;
+            };
+            const tag = String(ghData.tag_name || '').trim();
+            const apkAsset =
+              ghData.assets?.find(a => (a.name || '').toLowerCase() === 'wargaqu-latest.apk') ||
+              ghData.assets?.find(a => (a.name || '').toLowerCase().endsWith('.apk'));
+            const dlUrl =
+              apkAsset?.browser_download_url ||
+              `https://github.com/${validRepo}/releases/latest/download/WargaQu-latest.apk`;
+            cachedGithubReleases.set(validRepo, {
+              fetchedAt: now,
+              tag,
+              apkDownloadUrl: dlUrl,
+              releasePageUrl: ghData.html_url || releasePageUrl,
+              notes: String(ghData.body || '').slice(0, 200),
+            });
+            if (tag) latestVersion = tag.replace(/^v/i, '');
+            apkDownloadUrl = dlUrl;
+            if (ghData.html_url) releasePageUrl = ghData.html_url;
+          }
+        } catch {
+          // keep bundle defaults when offline
+        }
+      }
+      if (!apkDownloadUrl) {
+        apkDownloadUrl = `https://github.com/${validRepo}/releases/latest/download/WargaQu-latest.apk`;
+      }
+    }
+
+    res.json({
+      appId: 'com.wargaqu.app',
+      version: latestVersion,
+      versionCode: latestVersionCode,
+      githubRepo: validRepo,
+      apkDownloadUrl,
+      releasePageUrl,
+      changelog,
+      checkedAt: new Date().toISOString(),
+    });
+  });
+
   // Lightweight health endpoint (zero citizen PII)
   app.get('/api/relay-health', (_req, res) => {
     const telemetry = buildTelemetryPayload();
     res.json({
       status: 'ok',
+      version: SERVER_APP_VERSION,
+      versionCode: SERVER_APP_VERSION_CODE,
       mode: 'stateless-pass-through',
       citizenDatabaseStorage: 'none',
       ...telemetry,

@@ -37,6 +37,8 @@ jobs:
           npm ci || npm install --legacy-peer-deps
 
       - name: 4. Build Vite Application
+        env:
+          VITE_GITHUB_REPO: ${{ github.repository }}
         run: |
           npm run build
 

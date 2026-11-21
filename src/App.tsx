@@ -55,6 +55,12 @@ import {
   PairingSyncEventDetail,
 } from './services/devicePairingService';
 import { ApkMigrationService } from './services/apkMigrationService';
+import { isNativeCapacitorApk, probeSharedRelayHealth } from './services/appOriginService';
+import {
+  APK_UPDATE_EVENT,
+  ApkUpdateService,
+  ApkUpdateStatus,
+} from './services/apkUpdateService';
 
 type AppScreen = 'warga' | 'store' | 'dompetqu' | 'akun' | 'admin_zero_trust' | 'leluhurqu' | 'rtqu' | 'siagaqu' | 'chatqu' | 'muamalahqu' | 'areaqu' | 'usahaqu' | 'modularqu' | 'bantuan' | 'empty_module';
 
@@ -120,10 +126,18 @@ export default function App() {
 
   // Global Toast Notification State
   const [notification, setNotification] = useState<string | null>(null);
-  const [sessionSupersededNotice, setSessionSupersededNotice] = useState<string | null>(null);
+  const [sessionSupersededNotice, setSessionSupersededNotice] = useState<string | null>(() => {
+    const saved = AuthService.getSupersededNotice();
+    return saved && !AuthService.getAccount() ? saved : null;
+  });
+  const [apkUpdateStatus, setApkUpdateStatus] = useState<ApkUpdateStatus | null>(null);
+  const [apkUpdateDismissed, setApkUpdateDismissed] = useState<boolean>(false);
+  const [apkDownloadProgress, setApkDownloadProgress] = useState<number | null>(null);
+  const [apkNeedPermission, setApkNeedPermission] = useState<boolean>(false);
   const lastBroadcastSessionNonceRef = useRef<string>('');
   const lastActiveAccountRef = useRef<AuthAccount | null>(AuthService.getAccount());
   const sessionInvalidatedBySwitchRef = useRef<boolean>(false);
+  const verifySessionRef = useRef<() => Promise<void>>(async () => {});
 
   // Initial Data Load & Hidden Device ID Init
   useEffect(() => {
@@ -308,6 +322,7 @@ export default function App() {
             ? 'PWA Browser'
             : 'perangkat lain';
         const noticeMsg = `Sesi Anda di wadah ini dinonaktifkan karena akun baru saja masuk di ${containerLabel}.`;
+        AuthService.setSupersededNotice(noticeMsg);
         AuthService.logout();
         ZeroTrustService.appendAudit(
           acc.email,
@@ -319,6 +334,7 @@ export default function App() {
         showNotification(noticeMsg);
       }
     };
+    verifySessionRef.current = verifySingleSessionOnWake;
 
     AuthService.getHiddenDeviceId(); // ensure persistent hidden device token exists
     const currentAcc = AuthService.getAccount();
@@ -344,6 +360,7 @@ export default function App() {
       setAuthAccount(nextAcc);
       if (nextAcc) {
         sessionInvalidatedBySwitchRef.current = false;
+        AuthService.setSupersededNotice(null);
         setSessionSupersededNotice(null);
         RtSiagaStorage.syncAuthAccount(nextAcc);
         ZeroTrustService.registerOrTouchCurrentDevice(nextAcc.email, nextAcc.phone);
@@ -392,15 +409,44 @@ export default function App() {
       refreshGovernanceState();
     };
 
+    const refreshApkUpdateStatus = (force = false) => {
+      if (!isNativeCapacitorApk()) return;
+      void ApkUpdateService.checkForUpdate(force).then(status => {
+        setApkUpdateStatus(status);
+        if (status.hasUpdate && !ApkUpdateService.isVersionDismissed(status.latestVersion)) {
+          setApkUpdateDismissed(false);
+        }
+      });
+    };
+
     const handleSessionWakeCheck = () => {
       if (document.visibilityState === 'visible') {
         void verifySingleSessionOnWake();
+        refreshApkUpdateStatus(false);
       }
+    };
+
+    const handleApkUpdateEvent = (ev: Event) => {
+      const status = (ev as CustomEvent<ApkUpdateStatus>).detail;
+      if (status) {
+        setApkUpdateStatus(status);
+        if (status.hasUpdate && !ApkUpdateService.isVersionDismissed(status.latestVersion)) {
+          setApkUpdateDismissed(false);
+        }
+      }
+    };
+
+    const handleRelayOriginSwitched = () => {
+      RealtimeRelayService.reconnect();
+      void verifySingleSessionOnWake();
+      void ApkMigrationService.recheckSyncNow(showNotification);
     };
 
     window.addEventListener(AUTH_SYNC_EVENT, handleAuthSync);
     window.addEventListener(ACCOUNT_GOV_SYNC_EVENT, refreshGovernanceState);
     window.addEventListener(DEVICE_PAIRING_SYNC_EVENT, handlePairingSync);
+    window.addEventListener(APK_UPDATE_EVENT, handleApkUpdateEvent);
+    window.addEventListener('wargaqu-relay-origin-changed', handleRelayOriginSwitched);
     window.addEventListener('focus', handleSessionWakeCheck);
     document.addEventListener('visibilitychange', handleSessionWakeCheck);
 
@@ -409,18 +455,41 @@ export default function App() {
     ApkMigrationService.startAutoSync(showNotification);
     FirebaseSyncService.init();
     AutoBackupService.startAutoBackupMonitor();
-    if (currentAcc) {
-      void verifySingleSessionOnWake().then(() => {
-        if (AuthService.getAccount()) {
-          broadcastActiveSessionIfNeeded(AuthService.getAccount());
-        }
-      });
-    }
+
+    // Sinkronkan relay origin bersama (ais-dev PWA <-> ais-pre <-> APK) lalu validasi sesi & tarik data
+    void probeSharedRelayHealth(true).then(online => {
+      if (online) {
+        RealtimeRelayService.reconnect();
+      }
+      const latestAcc = AuthService.getAccount();
+      if (latestAcc) {
+        void verifySingleSessionOnWake().then(() => {
+          const validAcc = AuthService.getAccount();
+          if (validAcc) {
+            lastBroadcastSessionNonceRef.current = '';
+            broadcastActiveSessionIfNeeded(validAcc);
+            void ApkMigrationService.recheckSyncNow(showNotification);
+          }
+        });
+      }
+      refreshApkUpdateStatus(true);
+    });
+
     void AccountGovernanceService.syncPolicyFromServer();
     AccountGovernanceService.publishCurrentPresence(currentScreenRef.current);
     const presenceInterval = window.setInterval(() => {
       AccountGovernanceService.publishCurrentPresence(currentScreenRef.current);
     }, 60000);
+    // Fallback cek sesi saat WebSocket offline (bukan polling 1 detik)
+    const fallbackSessionInterval = window.setInterval(() => {
+      if (
+        document.visibilityState === 'visible' &&
+        AuthService.getAccount() &&
+        RealtimeRelayService.getStatus() !== 'connected'
+      ) {
+        void verifySingleSessionOnWake();
+      }
+    }, 15000);
 
     const handleGlobalRelay = (evt: Event) => {
       const detail = (evt as CustomEvent<RelayIncomingEvent>).detail;
@@ -492,14 +561,13 @@ export default function App() {
           !isCompanionLaptop &&
           p.email &&
           p.email.trim().toLowerCase() === activeAcc.email.trim().toLowerCase() &&
-          p.deviceId &&
-          p.deviceId !== activeAcc.deviceId &&
           p.sessionNonce &&
           p.sessionNonce !== activeAcc.sessionNonce
         ) {
           sessionInvalidatedBySwitchRef.current = true;
           const noticeMsg =
             'Sesi di wadah ini otomatis ditutup karena akun Anda baru saja masuk di perangkat/wadah lain (Sesi Tunggal).';
+          AuthService.setSupersededNotice(noticeMsg);
           AuthService.logout();
           ZeroTrustService.appendAudit(
             activeAcc.email,
@@ -536,10 +604,13 @@ export default function App() {
 
     return () => {
       window.clearInterval(presenceInterval);
+      window.clearInterval(fallbackSessionInterval);
       window.removeEventListener('hashchange', onHashInviteCheck);
       window.removeEventListener(AUTH_SYNC_EVENT, handleAuthSync);
       window.removeEventListener(ACCOUNT_GOV_SYNC_EVENT, refreshGovernanceState);
       window.removeEventListener(DEVICE_PAIRING_SYNC_EVENT, handlePairingSync);
+      window.removeEventListener(APK_UPDATE_EVENT, handleApkUpdateEvent);
+      window.removeEventListener('wargaqu-relay-origin-changed', handleRelayOriginSwitched);
       window.removeEventListener('focus', handleSessionWakeCheck);
       document.removeEventListener('visibilitychange', handleSessionWakeCheck);
       window.removeEventListener(REALTIME_RELAY_EVENT, handleGlobalRelay);
@@ -559,6 +630,9 @@ export default function App() {
   useEffect(() => {
     currentScreenRef.current = currentScreen;
     AccountGovernanceService.publishCurrentPresence(currentScreen);
+    if (AuthService.getAccount()) {
+      void verifySessionRef.current();
+    }
 
     if (accountAccess.status === 'banned' && !accountAccess.isAdminProtected) {
       return;
@@ -887,8 +961,80 @@ export default function App() {
     );
   }
 
+  const handleTriggerApkInPlaceUpdate = async () => {
+    if (!apkUpdateStatus?.apkDownloadUrl) {
+      showNotification('URL unduh APK rilis belum tersedia. Atur repo GitHub di Akun Saya.');
+      return;
+    }
+    setApkNeedPermission(false);
+    setApkDownloadProgress(0);
+    try {
+      const res = await ApkUpdateService.downloadAndInstallUpdate(
+        apkUpdateStatus.apkDownloadUrl,
+        pct => setApkDownloadProgress(pct)
+      );
+      setApkDownloadProgress(null);
+      if (res.outcome === 'permission_required') {
+        setApkNeedPermission(true);
+      }
+      showNotification(res.message);
+    } catch (err) {
+      setApkDownloadProgress(null);
+      showNotification(
+        err instanceof Error ? err.message : 'Gagal mengunduh paket pembaruan APK.'
+      );
+    }
+  };
+
   return (
     <AndroidFrame>
+      {/* APK In-Place Update Banner (Sistem Timpa Otomatis) */}
+      {apkUpdateStatus?.hasUpdate && !apkUpdateDismissed && (
+        <div className="bg-emerald-950 border-b border-emerald-500/40 px-3.5 py-2.5 text-white flex items-center justify-between gap-2 shrink-0 z-40">
+          <div className="text-[11px] leading-snug min-w-0">
+            <span className="font-extrabold text-[#5eead4] block">
+              Pembaruan APK Tersedia: v{apkUpdateStatus.installedVersion} → v
+              {apkUpdateStatus.latestVersion}
+            </span>
+            <span className="text-emerald-100/90 truncate block">
+              {apkDownloadProgress !== null
+                ? `Mengunduh paket pembaruan (${apkDownloadProgress}%)...`
+                : 'Sistem timpa langsung tanpa hapus aplikasi lama & data tetap aman.'}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {apkNeedPermission ? (
+              <button
+                type="button"
+                onClick={() => void ApkUpdateService.openInstallPermissionSettings()}
+                className="px-2.5 py-1.5 text-[10px] font-extrabold bg-amber-400 text-slate-950 hover:bg-amber-300 rounded-lg"
+              >
+                Izinkan Pasang
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={apkDownloadProgress !== null}
+                onClick={() => void handleTriggerApkInPlaceUpdate()}
+                className="px-2.5 py-1.5 text-[10px] font-extrabold bg-[#34d399] hover:bg-[#10b981] text-slate-950 rounded-lg disabled:opacity-60"
+              >
+                {apkDownloadProgress !== null ? `${apkDownloadProgress}%` : 'Update & Timpa'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                ApkUpdateService.dismissVersion(apkUpdateStatus.latestVersion);
+                setApkUpdateDismissed(true);
+              }}
+              className="px-2 py-1.5 text-[10px] font-bold bg-emerald-800 hover:bg-emerald-700 rounded-lg"
+            >
+              Nanti
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Cross-Container Single Active Session Notice (APK vs PWA) */}
       {sessionSupersededNotice && !authAccount && (
         <div className="bg-rose-50 border-b border-rose-300 px-3.5 py-2.5 text-rose-950 flex items-center justify-between gap-2 shrink-0 z-40">
@@ -908,7 +1054,10 @@ export default function App() {
             </button>
             <button
               type="button"
-              onClick={() => setSessionSupersededNotice(null)}
+              onClick={() => {
+                AuthService.setSupersededNotice(null);
+                setSessionSupersededNotice(null);
+              }}
               className="px-2 py-1 text-[10px] font-bold bg-rose-200/80 hover:bg-rose-300 rounded-lg"
             >
               Tutup

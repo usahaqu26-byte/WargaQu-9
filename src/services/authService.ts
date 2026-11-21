@@ -61,6 +61,7 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 const AUTH_STORAGE_KEY = 'wargaqu_auth_account_v1';
 const HIDDEN_DEVICE_KEY = 'wargaqu_hidden_device_token_v1';
 const DEVICE_BINDING_KEY = 'wargaqu_device_binding_v1';
+const SESSION_SUPERSEDED_KEY = 'wargaqu_session_superseded_notice_v1';
 export const AUTH_SYNC_EVENT = 'wargaqu-auth-sync';
 
 function emitAuthSync() {
@@ -214,15 +215,58 @@ export const AuthService = {
       if (!raw) return null;
       const parsed = JSON.parse(raw) as Partial<AuthAccount>;
       if (!parsed.email || !parsed.phone) return null;
+      const resolvedDeviceId = parsed.deviceId || this.getHiddenDeviceId();
+      const resolvedLoggedInAt = parsed.loggedInAt || new Date().toISOString();
+      const resolvedNonce =
+        parsed.sessionNonce ||
+        `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+      if (!parsed.sessionNonce || !parsed.deviceId) {
+        try {
+          localStorage.setItem(
+            AUTH_STORAGE_KEY,
+            JSON.stringify({
+              email: parsed.email,
+              phone: parsed.phone,
+              deviceId: resolvedDeviceId,
+              loggedInAt: resolvedLoggedInAt,
+              sessionNonce: resolvedNonce,
+            })
+          );
+        } catch {
+          // ignore storage quota errors
+        }
+      }
+
       return {
         email: parsed.email,
         phone: parsed.phone,
-        deviceId: parsed.deviceId || this.getHiddenDeviceId(),
-        loggedInAt: parsed.loggedInAt || new Date().toISOString(),
-        sessionNonce: parsed.sessionNonce,
+        deviceId: resolvedDeviceId,
+        loggedInAt: resolvedLoggedInAt,
+        sessionNonce: resolvedNonce,
       };
     } catch {
       return null;
+    }
+  },
+
+  getSupersededNotice(): string {
+    try {
+      return localStorage.getItem(SESSION_SUPERSEDED_KEY) || '';
+    } catch {
+      return '';
+    }
+  },
+
+  setSupersededNotice(msg: string | null): void {
+    try {
+      if (msg && msg.trim()) {
+        localStorage.setItem(SESSION_SUPERSEDED_KEY, msg.trim());
+      } else {
+        localStorage.removeItem(SESSION_SUPERSEDED_KEY);
+      }
+    } catch {
+      // ignore
     }
   },
 
@@ -702,6 +746,7 @@ export const AuthService = {
     }
 
     try {
+      localStorage.removeItem(SESSION_SUPERSEDED_KEY);
       localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(account));
     } catch {
       // ignore storage quota errors
@@ -760,7 +805,9 @@ export const AuthService = {
           isCompanionLaptop,
         }),
       });
-      return res.ok;
+      if (!res.ok) return false;
+      const ct = res.headers.get('content-type') || '';
+      return ct.includes('application/json');
     } catch {
       return false;
     }
@@ -769,9 +816,14 @@ export const AuthService = {
   async validateActiveSessionOnServer(
     account: AuthAccount | null,
     isCompanionLaptop = false
-  ): Promise<{ valid: boolean; reason?: string; activeContainer?: 'apk' | 'pwa' }> {
+  ): Promise<{
+    valid: boolean;
+    reason?: string;
+    activeContainer?: 'apk' | 'pwa';
+    serverReachable?: boolean;
+  }> {
     if (!account || !account.email || !account.sessionNonce || isCompanionLaptop) {
-      return { valid: true };
+      return { valid: true, serverReachable: true };
     }
     try {
       const accountKey = await this.computeSessionAccountKey(account.email);
@@ -782,8 +834,10 @@ export const AuthService = {
           isCompanionLaptop ? '1' : '0'
         }`
       );
-      const res = await fetch(url);
-      if (!res.ok) return { valid: true };
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (!res.ok) return { valid: true, serverReachable: false };
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) return { valid: true, serverReachable: false };
       const data = (await res.json()) as {
         valid?: boolean;
         reason?: string;
@@ -793,9 +847,10 @@ export const AuthService = {
         valid: data.valid !== false,
         reason: data.reason,
         activeContainer: data.activeContainer,
+        serverReachable: true,
       };
     } catch {
-      return { valid: true };
+      return { valid: true, serverReachable: false };
     }
   },
 

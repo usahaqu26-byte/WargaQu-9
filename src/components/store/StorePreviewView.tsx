@@ -23,6 +23,12 @@ import { WargaQuLogoIcon } from '../common/WargaQuLogo';
 import { LegalNoticeModal, LegalTab } from '../common/LegalNoticeModal';
 import { usePWAInstall } from '../../hooks/usePWAInstall';
 import { getPublicShareOrigin, isNativeCapacitorApk } from '../../services/appOriginService';
+import {
+  APP_VERSION,
+  inferGitHubRepoSlug,
+  saveGitHubRepoSlug,
+} from '../../config/appVersion';
+import { ApkUpdateService } from '../../services/apkUpdateService';
 
 export type PreviewTargetScreen =
   | 'warga'
@@ -38,9 +44,6 @@ interface StorePreviewViewProps {
   onEnterApp: (targetScreen?: PreviewTargetScreen) => void;
   showNotification: (msg: string) => void;
 }
-
-const APP_VERSION = '1.5.7';
-const REPO_STORAGE_KEY = 'wargaqu_github_repo_slug_v1';
 
 interface ModuleShowcaseItem {
   id: PreviewTargetScreen;
@@ -109,36 +112,6 @@ const MODULE_SHOWCASE: ModuleShowcaseItem[] = [
   },
 ];
 
-function inferGitHubRepoSlug(): string {
-  if (typeof window === 'undefined') return '';
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const paramRepo = (params.get('repo') || '').trim().replace(/^\/+|\/+$/g, '');
-    if (paramRepo && paramRepo.includes('/')) {
-      localStorage.setItem(REPO_STORAGE_KEY, paramRepo);
-      return paramRepo;
-    }
-
-    const host = window.location.hostname.toLowerCase();
-    if (host.endsWith('.github.io')) {
-      const owner = host.replace('.github.io', '').trim();
-      const firstSegment = window.location.pathname.split('/').filter(Boolean)[0] || '';
-      if (owner && firstSegment && firstSegment !== 'store.html') {
-        return `${owner}/${firstSegment}`;
-      }
-      if (owner) {
-        return `${owner}/${owner}.github.io`;
-      }
-    }
-
-    const saved = (localStorage.getItem(REPO_STORAGE_KEY) || '').trim();
-    if (saved && saved.includes('/')) return saved;
-  } catch {
-    // ignore storage/URL errors
-  }
-  return '';
-}
-
 function buildStoreShareUrl(repoSlug: string): string {
   if (typeof window === 'undefined') return '';
   const baseHref = isNativeCapacitorApk() ? getPublicShareOrigin() : window.location.href;
@@ -171,8 +144,11 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
     status: 'idle' | 'checking' | 'ready' | 'missing' | 'error';
     tag?: string;
     downloadUrl?: string;
+    hasUpdate?: boolean;
     message?: string;
   }>({ status: 'idle' });
+  const [apkUpdateProgress, setApkUpdateProgress] = useState<number | null>(null);
+  const [apkPermissionNeeded, setApkPermissionNeeded] = useState<boolean>(false);
 
   const apkDirectUrl = useMemo(() => {
     if (!repoSlug) return '';
@@ -217,25 +193,16 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
 
   const handleSaveRepoSlug = (e: React.FormEvent) => {
     e.preventDefault();
-    const cleaned = repoDraft
-      .trim()
-      .replace(/^https?:\/\/github\.com\//i, '')
-      .replace(/\.git$/i, '')
-      .replace(/^\/+|\/+$/g, '');
-    if (!cleaned || !cleaned.includes('/')) {
+    const saved = saveGitHubRepoSlug(repoDraft);
+    if (!saved) {
       showNotification('Masukkan format repositori GitHub: username/nama-repo');
       return;
     }
-    try {
-      localStorage.setItem(REPO_STORAGE_KEY, cleaned);
-    } catch {
-      // ignore
-    }
-    setRepoSlug(cleaned);
-    setRepoDraft(cleaned);
+    setRepoSlug(saved);
+    setRepoDraft(saved);
     setEditingRepo(false);
     setReleaseCheck({ status: 'idle' });
-    showNotification(`Tautan unduh APK terhubung ke ${cleaned}`);
+    showNotification(`Tautan unduh APK terhubung ke ${saved}`);
   };
 
   const handleCheckLatestRelease = async () => {
@@ -246,10 +213,8 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
     }
     setReleaseCheck({ status: 'checking' });
     try {
-      const res = await fetch(`https://api.github.com/repos/${repoSlug}/releases/latest`, {
-        headers: { Accept: 'application/vnd.github+json' },
-      });
-      if (res.status === 404) {
+      const status = await ApkUpdateService.checkForUpdate(true);
+      if (status.source === 'bundle' && !status.apkDownloadUrl) {
         setReleaseCheck({
           status: 'missing',
           message:
@@ -257,27 +222,44 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
         });
         return;
       }
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const data = (await res.json()) as {
-        tag_name?: string;
-        assets?: Array<{ name?: string; browser_download_url?: string }>;
-      };
-      const apkAsset = data.assets?.find((a) => (a.name || '').toLowerCase().endsWith('.apk'));
       setReleaseCheck({
         status: 'ready',
-        tag: data.tag_name || `v${APP_VERSION}`,
-        downloadUrl: apkAsset?.browser_download_url || apkDirectUrl,
-        message: apkAsset
-          ? `Rilis ${data.tag_name || APP_VERSION} siap diunduh (${apkAsset.name}).`
-          : `Rilis ${data.tag_name || APP_VERSION} ditemukan.`,
+        tag: `v${status.latestVersion}`,
+        downloadUrl: status.apkDownloadUrl || apkDirectUrl,
+        hasUpdate: status.hasUpdate,
+        message: status.hasUpdate
+          ? `Versi baru v${status.latestVersion} tersedia (terpasang v${status.installedVersion}). Siap timpa langsung!`
+          : `Rilis terbaru v${status.latestVersion} terdeteksi (perangkat memakai v${status.installedVersion}).`,
       });
     } catch {
       setReleaseCheck({
         status: 'error',
         message: 'Tidak dapat menghubungi API GitHub saat ini. Gunakan tombol Unduh APK langsung.',
       });
+    }
+  };
+
+  const handleNativeApkTimpa = async () => {
+    const targetUrl = releaseCheck.downloadUrl || apkDirectUrl;
+    if (!targetUrl) {
+      setEditingRepo(true);
+      showNotification('Isi username/nama-repo GitHub terlebih dahulu untuk unduh APK.');
+      return;
+    }
+    setApkPermissionNeeded(false);
+    setApkUpdateProgress(0);
+    try {
+      const outcome = await ApkUpdateService.downloadAndInstallUpdate(targetUrl, pct =>
+        setApkUpdateProgress(pct)
+      );
+      setApkUpdateProgress(null);
+      if (outcome.outcome === 'permission_required') {
+        setApkPermissionNeeded(true);
+      }
+      showNotification(outcome.message);
+    } catch (err) {
+      setApkUpdateProgress(null);
+      showNotification(err instanceof Error ? err.message : 'Gagal mengunduh file APK.');
     }
   };
 
@@ -416,7 +398,34 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
               </span>
             </button>
 
-            {apkDirectUrl ? (
+            {isNativeApk && apkDirectUrl ? (
+              apkPermissionNeeded ? (
+                <button
+                  type="button"
+                  onClick={() => void ApkUpdateService.openInstallPermissionSettings()}
+                  className="min-h-[48px] px-5 py-3 rounded-xl border border-amber-500 bg-amber-50 hover:bg-amber-100 text-amber-900 text-sm font-bold flex items-center justify-center gap-2 transition whitespace-nowrap"
+                >
+                  <ShieldCheck className="w-4 h-4 text-amber-700" />
+                  <span>Buka Izin Pasang APK</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={apkUpdateProgress !== null}
+                  onClick={() => void handleNativeApkTimpa()}
+                  className="min-h-[48px] px-5 py-3 rounded-xl border border-emerald-600 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 text-sm font-bold flex items-center justify-center gap-2 transition whitespace-nowrap disabled:opacity-60"
+                >
+                  <Download className="w-4 h-4 text-emerald-700" />
+                  <span>
+                    {apkUpdateProgress !== null
+                      ? `Mengunduh APK (${apkUpdateProgress}%)...`
+                      : releaseCheck.hasUpdate
+                      ? `Download & Timpa ${releaseCheck.tag || ''}`
+                      : 'Unduh & Timpa APK Terbaru'}
+                  </span>
+                </button>
+              )
+            ) : apkDirectUrl ? (
               <a
                 href={releaseCheck.downloadUrl || apkDirectUrl}
                 target="_blank"
@@ -424,7 +433,7 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
                 className="min-h-[48px] px-5 py-3 rounded-xl border border-slate-300 hover:border-emerald-700 hover:bg-emerald-50/40 text-slate-900 text-sm font-bold flex items-center justify-center gap-2 transition whitespace-nowrap"
               >
                 <Download className="w-4 h-4 text-emerald-700" />
-                <span>{isNativeApk ? 'Cek Pembaruan APK (.apk)' : 'Unduh Android (.apk)'}</span>
+                <span>Unduh Android (.apk)</span>
               </a>
             ) : !isNativeApk ? (
               <button
@@ -435,7 +444,16 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
                 <Download className="w-4 h-4 text-emerald-700" />
                 <span>Hubungkan Link APK GitHub</span>
               </button>
-            ) : null}
+            ) : (
+              <button
+                type="button"
+                onClick={() => setEditingRepo(true)}
+                className="min-h-[48px] px-5 py-3 rounded-xl border border-slate-300 hover:border-emerald-700 hover:bg-emerald-50/40 text-slate-900 text-sm font-bold flex items-center justify-center gap-2 transition whitespace-nowrap"
+              >
+                <Download className="w-4 h-4 text-emerald-700" />
+                <span>Atur Repo Update APK</span>
+              </button>
+            )}
 
             {!isNativeApk && (
               <button
@@ -724,10 +742,10 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
             <div className="p-4 rounded-2xl border border-slate-200 space-y-2.5 text-xs text-slate-600">
               <div className="font-bold text-slate-900">Catatan Rilis Resmi</div>
               <ul className="space-y-2 leading-relaxed">
-                <li>• Halaman pratinjau &amp; unduhan resmi ala toko aplikasi langsung di repo ini.</li>
-                <li>• Peta AreaQu pedagang keliling dengan klasifikasi kecepatan &amp; pesan antar.</li>
-                <li>• Tata letak silsilah A3 modular dan fitur Kuis Trah Keluarga.</li>
-                <li>• Penyatuan identitas APK (`com.wargaqu.app`), kebijakan privasi &amp; hak cipta.</li>
+                <li>• Sesi tunggal aktif APK vs PWA (login di satu wadah menutup sesi lama di wadah lain).</li>
+                <li>• Sinkronisasi data akun APK ↔ PWA lebih cepat dengan server relay bersama.</li>
+                <li>• Sistem timpa APK (in-place update) memakai kunci penandatanganan tetap + pengunduh pembaruan bawaan.</li>
+                <li>• Alur 3 langkah LeluhurQu (Ajukan → Admin Approve → Tarik Pembaruan) terisolasi per modul.</li>
               </ul>
             </div>
           </aside>

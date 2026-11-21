@@ -1,7 +1,10 @@
 export const CUSTOM_RELAY_SERVER_ORIGIN_KEY = 'wargaqu_server_origin_v1';
 
-const DEFAULT_CLOUD_RELAY_ORIGIN =
+export const DEFAULT_CLOUD_RELAY_ORIGIN =
   'https://ais-pre-mo35b7abwyz4p2rd2vga7n-754024889019.asia-southeast1.run.app';
+
+let sharedRelayHealthState: 'unknown' | 'online' | 'offline' = 'unknown';
+let sharedRelayProbePromise: Promise<boolean> | null = null;
 
 function normalizeOrigin(raw: string): string {
   const trimmed = (raw || '').trim();
@@ -47,6 +50,12 @@ export function isStaticHostedOrigin(): boolean {
   );
 }
 
+export function isAiStudioDevOrigin(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = (window.location.hostname || '').toLowerCase();
+  return host.startsWith('ais-dev-') && host.endsWith('.run.app');
+}
+
 export function getCustomRelayServerOrigin(): string {
   if (typeof window === 'undefined') return '';
   try {
@@ -71,19 +80,79 @@ export function setCustomRelayServerOrigin(rawUrl: string): string {
   }
 }
 
+function getEnvBaseOrigin(): string {
+  return normalizeOrigin(
+    ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_APP_BASE_URL || '')
+  );
+}
+
+/**
+ * Checks whether the configured/default public cloud relay (used by standalone APK & static PWA)
+ * responds with valid WargaQu relay JSON (not a 404/HTML page).
+ */
+export async function probeSharedRelayHealth(force = false): Promise<boolean> {
+  if (typeof fetch === 'undefined') return false;
+  if (!force && sharedRelayHealthState !== 'unknown') {
+    return sharedRelayHealthState === 'online';
+  }
+  if (!force && sharedRelayProbePromise) {
+    return sharedRelayProbePromise;
+  }
+
+  const targetOrigin =
+    getCustomRelayServerOrigin() || getEnvBaseOrigin() || DEFAULT_CLOUD_RELAY_ORIGIN;
+
+  sharedRelayProbePromise = (async () => {
+    try {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = controller ? window.setTimeout(() => controller.abort(), 3500) : null;
+      try {
+        const res = await fetch(`${targetOrigin}/api/relay-health`, {
+          headers: { Accept: 'application/json' },
+          signal: controller?.signal,
+        });
+        if (!res.ok) {
+          sharedRelayHealthState = 'offline';
+          return false;
+        }
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) {
+          sharedRelayHealthState = 'offline';
+          return false;
+        }
+        const data = (await res.json()) as { status?: string };
+        const ok = data?.status === 'ok';
+        sharedRelayHealthState = ok ? 'online' : 'offline';
+        return ok;
+      } finally {
+        if (timer !== null) window.clearTimeout(timer);
+      }
+    } catch {
+      sharedRelayHealthState = 'offline';
+      return false;
+    } finally {
+      sharedRelayProbePromise = null;
+    }
+  })();
+
+  return sharedRelayProbePromise;
+}
+
+export function getSharedRelayProbeState(): 'unknown' | 'online' | 'offline' {
+  return sharedRelayHealthState;
+}
+
 /**
  * Menentukan origin server backend + WebSocket Relay yang dipakai bersama oleh APK & PWA.
- * - Jika berjalan di full-stack server WargaQu (Cloud Run / Node dev), gunakan origin saat ini (same-origin).
- * - Jika berjalan di Android APK (https://localhost) atau static hosting (GitHub Pages / Firebase Hosting),
- *   otomatis arahkan ke Cloud Relay server agar sinkronisasi live APK <-> PWA tetap tersambung.
+ * - Jika ada custom relay / env base URL, atau APK / static hosting: pakai origin Relay bersama.
+ * - Jika berjalan di AI Studio Dev Preview (`ais-dev-...`) dan Shared Relay (`ais-pre-...`) aktif:
+ *   arahkan rute sync/session/WS ke `ais-pre` agar APK & PWA bertemu di server yang sama.
  */
 export function getRelayServerOrigin(): string {
   const custom = getCustomRelayServerOrigin();
   if (custom) return custom;
 
-  const envUrl = normalizeOrigin(
-    ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_APP_BASE_URL || '')
-  );
+  const envUrl = getEnvBaseOrigin();
 
   if (typeof window === 'undefined') {
     return envUrl || DEFAULT_CLOUD_RELAY_ORIGIN;
@@ -93,15 +162,39 @@ export function getRelayServerOrigin(): string {
     return envUrl || DEFAULT_CLOUD_RELAY_ORIGIN;
   }
 
+  if (isAiStudioDevOrigin() && sharedRelayHealthState === 'online') {
+    return envUrl || DEFAULT_CLOUD_RELAY_ORIGIN;
+  }
+
   return window.location.origin;
+}
+
+function isSyncRelayApiPath(cleanPath: string): boolean {
+  return (
+    cleanPath.startsWith('/api/session/') ||
+    cleanPath.startsWith('/api/account-sync') ||
+    cleanPath.startsWith('/api/pwa-handoff') ||
+    cleanPath.startsWith('/api/pair-') ||
+    cleanPath.startsWith('/api/leluhur/') ||
+    cleanPath.startsWith('/api/invite-room') ||
+    cleanPath.startsWith('/api/relay-') ||
+    cleanPath.startsWith('/api/quiz-rounds')
+  );
 }
 
 export function buildApiUrl(apiPath: string): string {
   const cleanPath = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
   if (typeof window === 'undefined') return cleanPath;
+
   if (isNativeCapacitorApk() || isStaticHostedOrigin() || getCustomRelayServerOrigin()) {
     return `${getRelayServerOrigin()}${cleanPath}`;
   }
+
+  if (isAiStudioDevOrigin() && isSyncRelayApiPath(cleanPath) && sharedRelayHealthState === 'online') {
+    const shared = getEnvBaseOrigin() || DEFAULT_CLOUD_RELAY_ORIGIN;
+    return `${shared}${cleanPath}`;
+  }
+
   return cleanPath;
 }
 

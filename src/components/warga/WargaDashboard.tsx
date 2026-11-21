@@ -33,6 +33,7 @@ import {
 import { DompetSmartVoiceModal } from '../dompetqu/DompetSmartVoiceModal';
 import { isNativeCapacitorApk } from '../../services/appOriginService';
 import { ApkMigrationService } from '../../services/apkMigrationService';
+import { APP_VERSION } from '../../config/appVersion';
 
 interface WargaDashboardProps {
   onOpenDompetQu: () => void;
@@ -183,9 +184,14 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
             <div className="flex items-center gap-2.5 min-w-0">
               <WargaQuLogoIcon uid="dashboard_hdr" className="w-10 h-10 drop-shadow-md shrink-0" />
               <div className="flex flex-col min-w-0">
-                <span className="text-2xl font-extrabold italic tracking-tight text-white leading-none whitespace-nowrap">
-                  warga<span className="text-[#5eead4] font-black drop-shadow-xs">Qu</span>
-                </span>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-extrabold italic tracking-tight text-white leading-none whitespace-nowrap">
+                    warga<span className="text-[#5eead4] font-black drop-shadow-xs">Qu</span>
+                  </span>
+                  <span className="text-[10px] font-mono font-bold text-[#5eead4]/90">
+                    v{APP_VERSION}
+                  </span>
+                </div>
                 <span className="text-[10px] lg:text-xs text-emerald-100/90 font-medium tracking-wide truncate mt-1">
                   Smart Citizen System · {hasRtCommunity ? rtProfile.orgName : 'Mandiri'}
                 </span>

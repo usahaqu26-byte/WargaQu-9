@@ -216,6 +216,30 @@ class RealtimeRelayManager {
     this.connect();
   }
 
+  reconnect() {
+    if (typeof window === 'undefined') return;
+    if (this.reconnectTimer) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.heartbeatTimer) {
+      window.clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    if (this.ws) {
+      try {
+        this.ws.onclose = null;
+        this.ws.onerror = null;
+        this.ws.close();
+      } catch {
+        // ignore close errors
+      }
+      this.ws = null;
+    }
+    this.reconnectAttempt = 0;
+    this.connect();
+  }
+
   private connect() {
     if (typeof window === 'undefined') return;
     if (

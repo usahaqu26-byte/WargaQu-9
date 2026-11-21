@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, ShieldCheck, FileText, AlertTriangle, Copyright } from 'lucide-react';
+import { APP_VERSION } from '../../config/appVersion';
 
 export type LegalTab = 'privasi' | 'ketentuan' | 'hakcipta';
 
@@ -168,7 +169,7 @@ export const LegalNoticeModal: React.FC<LegalNoticeModalProps> = ({
           {activeTab === 'hakcipta' && (
             <>
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
-                <div className="text-sm font-black text-slate-900">WargaQu v1.5.7</div>
+                <div className="text-sm font-black text-slate-900">WargaQu v{APP_VERSION}</div>
                 <div className="text-[11px] font-semibold text-emerald-700">
                   Ekosistem Cerdas Warga, Komunitas &amp; UMKM
                 </div>

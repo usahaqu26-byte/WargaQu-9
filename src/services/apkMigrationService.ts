@@ -17,6 +17,7 @@ import { buildApiUrl, isNativeCapacitorApk } from './appOriginService';
 export const APK_MIGRATION_DONE_KEY = 'wargaqu_apk_migration_done_v1';
 export const APK_MIGRATION_BANNER_DISMISSED_KEY = 'wargaqu_apk_banner_dismissed_v1';
 const LAST_SYNC_TS_KEY = 'wargaqu_last_account_sync_ts_v1';
+const LAST_APPLIED_REMOTE_TS_KEY = 'wargaqu_last_applied_remote_ts_v1';
 const PBKDF2_ITERATIONS = 100000;
 
 const EXCLUDED_MIGRATION_KEYS = new Set<string>([
@@ -27,9 +28,11 @@ const EXCLUDED_MIGRATION_KEYS = new Set<string>([
   'wargaqu_linked_devices_v1',
   'wargaqu_paired_host_v1',
   'wargaqu_pending_pair_token_v1',
+  'wargaqu_session_superseded_notice_v1',
   APK_MIGRATION_DONE_KEY,
   APK_MIGRATION_BANNER_DISMISSED_KEY,
   LAST_SYNC_TS_KEY,
+  LAST_APPLIED_REMOTE_TS_KEY,
 ]);
 
 interface MigrationSnapshotPayload {
@@ -224,15 +227,15 @@ function applyMigratedSnapshot(
         return;
       }
       let finalVal = rawVal;
-
-      // Adapt transferred auth session cleanly to this physical APK's hidden device ID
-      if (key === 'wargaqu_auth_account_v1') {
+      // Jangan timpa sesi aktif dengan sessionNonce lama dari wadah lain
+      if (key === 'wargaqu_auth_account_v1' && allowAuthRestore) {
         try {
           const parsed = JSON.parse(rawVal) as Partial<AuthAccount>;
           if (parsed && parsed.email && parsed.phone) {
             finalVal = JSON.stringify({
               ...parsed,
               deviceId: physicalDeviceId,
+              sessionNonce: `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
             });
           }
         } catch {
@@ -273,6 +276,7 @@ function applyMigratedSnapshot(
       localStorage.setItem(APK_MIGRATION_DONE_KEY, '1');
       if (typeof serverUpdatedAt === 'number' && serverUpdatedAt > 0) {
         localStorage.setItem(LAST_SYNC_TS_KEY, String(serverUpdatedAt));
+        localStorage.setItem(LAST_APPLIED_REMOTE_TS_KEY, String(serverUpdatedAt));
       }
     } catch {
       // ignore
@@ -361,6 +365,7 @@ export const ApkMigrationService = {
 
       const res = await fetch(buildApiUrl('/api/account-sync'), {
         method: 'POST',
+        keepalive: true,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           accountHash,
@@ -372,6 +377,8 @@ export const ApkMigrationService = {
         }),
       });
       if (!res.ok) return false;
+      const ctHeader = res.headers.get('content-type') || '';
+      if (!ctHeader.includes('application/json')) return false;
       const body = (await res.json()) as { updatedAt?: number };
       lastPushedSignature = sig;
       if (typeof body.updatedAt === 'number') {
@@ -391,22 +398,47 @@ export const ApkMigrationService = {
     email: string,
     phone: string,
     options?: { onlyIfNewer?: boolean }
-  ): Promise<{ restored: boolean; keyCount: number; source: string }> {
+  ): Promise<{
+    restored: boolean;
+    keyCount: number;
+    source: string;
+    serverReachable?: boolean;
+    reason?: string;
+  }> {
     if (!this.isSupported()) {
-      return { restored: false, keyCount: 0, source: '' };
+      return { restored: false, keyCount: 0, source: '', serverReachable: true, reason: 'unsupported' };
     }
     const cleanEmail = (email || '').trim().toLowerCase();
     const cleanPhone = (phone || '').trim();
     if (!cleanEmail || !cleanPhone) {
-      return { restored: false, keyCount: 0, source: '' };
+      return { restored: false, keyCount: 0, source: '', serverReachable: true, reason: 'missing_credentials' };
     }
 
     try {
       const accountHash = await computeAccountSyncHash(cleanEmail, cleanPhone);
       const res = await fetch(
-        buildApiUrl(`/api/account-sync/${encodeURIComponent(accountHash)}`)
+        buildApiUrl(`/api/account-sync/${encodeURIComponent(accountHash)}`),
+        { headers: { Accept: 'application/json' } }
       );
-      if (!res.ok) return { restored: false, keyCount: 0, source: '' };
+      if (!res.ok) {
+        return {
+          restored: false,
+          keyCount: 0,
+          source: '',
+          serverReachable: false,
+          reason: `http_${res.status}`,
+        };
+      }
+      const ctHeader = res.headers.get('content-type') || '';
+      if (!ctHeader.includes('application/json')) {
+        return {
+          restored: false,
+          keyCount: 0,
+          source: '',
+          serverReachable: false,
+          reason: 'invalid_content_type',
+        };
+      }
       const data = (await res.json()) as {
         found?: boolean;
         salt?: string;
@@ -416,13 +448,36 @@ export const ApkMigrationService = {
         updatedAt?: number;
       };
       if (!data.found || !data.salt || !data.iv || !data.ct) {
-        return { restored: false, keyCount: 0, source: '' };
+        return { restored: false, keyCount: 0, source: '', serverReachable: true, reason: 'not_found' };
       }
 
+      const currentContainer = isNativeCapacitorApk() ? 'apk' : 'pwa';
       if (options?.onlyIfNewer) {
-        const localTs = Number(localStorage.getItem(LAST_SYNC_TS_KEY) || 0);
-        if (typeof data.updatedAt === 'number' && localTs >= data.updatedAt) {
-          return { restored: false, keyCount: 0, source: data.source || '' };
+        const lastAppliedRemoteTs = Number(
+          localStorage.getItem(LAST_APPLIED_REMOTE_TS_KEY) || 0
+        );
+        const lastLocalPushTs = Number(localStorage.getItem(LAST_SYNC_TS_KEY) || 0);
+        const isFromOtherContainer = Boolean(data.source && data.source !== currentContainer);
+        if (typeof data.updatedAt === 'number') {
+          if (isFromOtherContainer) {
+            if (lastAppliedRemoteTs >= data.updatedAt) {
+              return {
+                restored: false,
+                keyCount: 0,
+                source: data.source || '',
+                serverReachable: true,
+                reason: 'already_applied',
+              };
+            }
+          } else if (Math.max(lastAppliedRemoteTs, lastLocalPushTs) >= data.updatedAt) {
+            return {
+              restored: false,
+              keyCount: 0,
+              source: data.source || '',
+              serverReachable: true,
+              reason: 'up_to_date',
+            };
+          }
         }
       }
 
@@ -437,7 +492,7 @@ export const ApkMigrationService = {
       );
       const decoded = JSON.parse(new TextDecoder().decode(plainBuf)) as MigrationSnapshotPayload;
       if (decoded.kind !== 'wargaqu_migration_v1' || !decoded.entries) {
-        return { restored: false, keyCount: 0, source: '' };
+        return { restored: false, keyCount: 0, source: '', serverReachable: true, reason: 'invalid_payload' };
       }
 
       const allowAuthRestore = this.isFreshEmptyInstallation();
@@ -451,9 +506,10 @@ export const ApkMigrationService = {
         restored: restoredKeys > 0,
         keyCount: restoredKeys,
         source: data.source || decoded.source || 'pwa',
+        serverReachable: true,
       };
     } catch {
-      return { restored: false, keyCount: 0, source: '' };
+      return { restored: false, keyCount: 0, source: '', serverReachable: false, reason: 'network_error' };
     }
   },
 
@@ -627,7 +683,7 @@ export const ApkMigrationService = {
       }
       pushDebounceTimer = window.setTimeout(() => {
         void this.pushAccountSnapshotNow(false);
-      }, 2400);
+      }, 900);
     };
 
     [
@@ -643,7 +699,7 @@ export const ApkMigrationService = {
     ].forEach(ev => window.addEventListener(ev, schedulePush));
 
     // Initial check on startup:
-    // If signed in, pull newer cloud account snapshot on startup; otherwise push local edits
+    // If signed in, pull remote cloud snapshot if from other container / newer; otherwise push local edits
     const initialAcc = AuthService.getAccount();
     if (initialAcc) {
       void this.pullAccountSnapshot(initialAcc.email, initialAcc.phone, { onlyIfNewer: true }).then(
@@ -662,18 +718,44 @@ export const ApkMigrationService = {
     }
 
     const handleVisibilityResume = () => {
-      if (document.visibilityState !== 'visible') return;
       const acc = AuthService.getAccount();
       if (!acc) return;
-      void this.pullAccountSnapshot(acc.email, acc.phone, { onlyIfNewer: true }).then(res => {
-        if (res.restored) {
-          onAutoRestored?.(`${res.keyCount} pembaruan data disinkronkan.`);
-        } else {
-          void this.pushAccountSnapshotNow(false);
-        }
-      });
+      if (document.visibilityState === 'hidden') {
+        void this.pushAccountSnapshotNow(false);
+        return;
+      }
+      if (document.visibilityState === 'visible') {
+        void this.pullAccountSnapshot(acc.email, acc.phone, { onlyIfNewer: true }).then(res => {
+          if (res.restored) {
+            onAutoRestored?.(`${res.keyCount} pembaruan data disinkronkan.`);
+          } else {
+            void this.pushAccountSnapshotNow(false);
+          }
+        });
+      }
+    };
+    const handlePageHide = () => {
+      if (AuthService.getAccount()) {
+        void this.pushAccountSnapshotNow(false);
+      }
     };
     window.addEventListener('focus', handleVisibilityResume);
     document.addEventListener('visibilitychange', handleVisibilityResume);
+    window.addEventListener('pagehide', handlePageHide);
+  },
+
+  async recheckSyncNow(onAutoRestored?: (msg: string) => void): Promise<void> {
+    const acc = AuthService.getAccount();
+    if (!acc) return;
+    const res = await this.pullAccountSnapshot(acc.email, acc.phone, { onlyIfNewer: true });
+    if (res.restored) {
+      onAutoRestored?.(
+        `${res.keyCount} data akun disinkronkan otomatis dari ${
+          res.source === 'apk' ? 'APK' : 'PWA'
+        }.`
+      );
+    } else {
+      void this.pushAccountSnapshotNow(true);
+    }
   },
 };

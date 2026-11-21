@@ -23,6 +23,7 @@ import {
   Repeat,
   Eye,
   EyeOff,
+  Download,
 } from 'lucide-react';
 import {
   AUTH_SYNC_EVENT,
@@ -58,12 +59,20 @@ import {
   getCustomRelayServerOrigin,
   getRelayServerOrigin,
   isNativeCapacitorApk,
+  probeSharedRelayHealth,
   setCustomRelayServerOrigin,
 } from '../../services/appOriginService';
 import {
   ApkMigrationService,
   PwaHandoffCreated,
 } from '../../services/apkMigrationService';
+import {
+  APP_VERSION,
+  APP_VERSION_CODE,
+  inferGitHubRepoSlug,
+  saveGitHubRepoSlug,
+} from '../../config/appVersion';
+import { ApkUpdateService, ApkUpdateStatus } from '../../services/apkUpdateService';
 
 interface AccountViewProps {
   onBack: () => void;
@@ -153,6 +162,11 @@ export const AccountView: React.FC<AccountViewProps> = ({
   const [migrationBusy, setMigrationBusy] = useState<boolean>(false);
   const [handoffCreated, setHandoffCreated] = useState<PwaHandoffCreated | null>(null);
   const [handoffTokenInput, setHandoffTokenInput] = useState<string>('');
+  const [apkUpdateStatus, setApkUpdateStatus] = useState<ApkUpdateStatus | null>(null);
+  const [apkRepoDraft, setApkRepoDraft] = useState<string>(() => inferGitHubRepoSlug());
+  const [apkCheckBusy, setApkCheckBusy] = useState<boolean>(false);
+  const [apkDownloadPct, setApkDownloadPct] = useState<number | null>(null);
+  const [apkInstallPermNeeded, setApkInstallPermNeeded] = useState<boolean>(false);
 
   useEffect(() => {
     const sync = () => {
@@ -186,6 +200,10 @@ export const AccountView: React.FC<AccountViewProps> = ({
     window.addEventListener(FIREBASE_AUTH_SYNC_EVENT, sync);
     window.addEventListener('wargaqu-pair-invite-arrived', onPairArrived);
     window.addEventListener(VIEWPORT_MODE_SYNC_EVENT, onViewportSync);
+    void ApkUpdateService.checkForUpdate(false).then(st => {
+      setApkUpdateStatus(st);
+      if (st.repoSlug) setApkRepoDraft(st.repoSlug);
+    });
     return () => {
       window.removeEventListener(AUTH_SYNC_EVENT, sync);
       window.removeEventListener(RT_SYNC_EVENT, sync);
@@ -511,16 +529,27 @@ export const AccountView: React.FC<AccountViewProps> = ({
     setRelayPingStatus('checking');
     setRelayPingInfo('');
     try {
-      const resp = await fetch(buildApiUrl('/api/relay-health'));
-      if (!resp.ok) {
+      const resp = await fetch(buildApiUrl('/api/relay-health'), {
+        headers: { Accept: 'application/json' },
+      });
+      const ct = resp.headers.get('content-type') || '';
+      if (!resp.ok || !ct.includes('application/json')) {
         setRelayPingStatus('error');
-        setRelayPingInfo(`Server merespons HTTP ${resp.status}`);
+        setRelayPingInfo(
+          `Server (${relayOriginDraft}) belum aktif untuk API Relay (HTTP ${resp.status}). Publikasikan/Share server Cloud Run terlebih dahulu atau masukkan URL Relay aktif.`
+        );
         return;
       }
-      const data = (await resp.json()) as { connectedClients?: number; activeChannels?: number };
+      const data = (await resp.json()) as {
+        connectedClients?: number;
+        activeChannels?: number;
+        version?: string;
+      };
       setRelayPingStatus('ok');
       setRelayPingInfo(
-        `Terhubung (${data.connectedClients ?? 0} perangkat aktif · ${data.activeChannels ?? 0} kanal)`
+        `Terhubung (v${data.version || APP_VERSION} · ${data.connectedClients ?? 0} perangkat · ${
+          data.activeChannels ?? 0
+        } kanal)`
       );
       showNotification('Koneksi sinkronisasi APK ↔ PWA terhubung lancar!');
     } catch {
@@ -540,13 +569,20 @@ export const AccountView: React.FC<AccountViewProps> = ({
     setRelayHasCustom(true);
     setEditingRelayOrigin(false);
     setRelayPingStatus('idle');
-    showNotification('Alamat Server Relay APK ↔ PWA diperbarui. Klik Uji Koneksi.');
+    void probeSharedRelayHealth(true).then(() => {
+      window.dispatchEvent(new CustomEvent('wargaqu-relay-origin-changed'));
+    });
+    showNotification('Alamat Server Relay APK ↔ PWA diperbarui. Menguji koneksi & sinkronisasi...');
   };
 
   const handleResetRelayOrigin = () => {
     setCustomRelayServerOrigin('');
-    const fallback = getRelayServerOrigin();
-    setRelayOriginDraft(fallback);
+    void probeSharedRelayHealth(true).then(() => {
+      const fallback = getRelayServerOrigin();
+      setRelayOriginDraft(fallback);
+      window.dispatchEvent(new CustomEvent('wargaqu-relay-origin-changed'));
+    });
+    setRelayOriginDraft(getRelayServerOrigin());
     setRelayHasCustom(false);
     setEditingRelayOrigin(false);
     setRelayPingStatus('idle');
@@ -630,9 +666,16 @@ export const AccountView: React.FC<AccountViewProps> = ({
     }
     setMigrationBusy(true);
     try {
+      await probeSharedRelayHealth();
       const res = await ApkMigrationService.pullAccountSnapshot(targetEmail, targetPhone, {
         onlyIfNewer: false,
       });
+      if (res.serverReachable === false) {
+        showNotification(
+          'Server Relay belum merespons API JSON. Klik "Uji Koneksi" atau pastikan Server Relay sudah di-Publish/Deploy.'
+        );
+        return;
+      }
       if (res.restored) {
         showNotification(
           `${res.keyCount} data akun berhasil ditarik dari ${res.source === 'apk' ? 'APK' : 'PWA'}!`
@@ -647,6 +690,64 @@ export const AccountView: React.FC<AccountViewProps> = ({
       }
     } finally {
       setMigrationBusy(false);
+    }
+  };
+
+  const handleSaveApkRepo = (e: React.FormEvent) => {
+    e.preventDefault();
+    const saved = saveGitHubRepoSlug(apkRepoDraft);
+    if (!saved) {
+      showNotification('Format repositori GitHub harus seperti: pemilik/nama-repo');
+      return;
+    }
+    setApkRepoDraft(saved);
+    void handleCheckApkUpdateNow();
+    showNotification(`Sumber update APK disimpan (${saved}).`);
+  };
+
+  const handleCheckApkUpdateNow = async () => {
+    setApkCheckBusy(true);
+    try {
+      const st = await ApkUpdateService.checkForUpdate(true);
+      setApkUpdateStatus(st);
+      if (st.hasUpdate) {
+        showNotification(
+          `Update APK ditemukan: v${st.latestVersion} (terpasang v${st.installedVersion}). Ketuk Unduh & Timpa.`
+        );
+      } else {
+        showNotification(
+          `Versi saat ini v${st.installedVersion} sudah sama atau terbaru dibanding v${st.latestVersion}.`
+        );
+      }
+    } finally {
+      setApkCheckBusy(false);
+    }
+  };
+
+  const handleDownloadAndInstallApk = async () => {
+    const url =
+      apkUpdateStatus?.apkDownloadUrl ||
+      (apkRepoDraft
+        ? `https://github.com/${apkRepoDraft}/releases/latest/download/WargaQu-latest.apk`
+        : '');
+    if (!url) {
+      showNotification('Isi repositori GitHub rilis terlebih dahulu (contoh: pemilik/wargaqu).');
+      return;
+    }
+    setApkInstallPermNeeded(false);
+    setApkDownloadPct(0);
+    try {
+      const outcome = await ApkUpdateService.downloadAndInstallUpdate(url, pct =>
+        setApkDownloadPct(pct)
+      );
+      setApkDownloadPct(null);
+      if (outcome.outcome === 'permission_required') {
+        setApkInstallPermNeeded(true);
+      }
+      showNotification(outcome.message);
+    } catch (err) {
+      setApkDownloadPct(null);
+      showNotification(err instanceof Error ? err.message : 'Gagal mengunduh update APK.');
     }
   };
 
@@ -1613,6 +1714,83 @@ export const AccountView: React.FC<AccountViewProps> = ({
               </form>
             )}
           </div>
+
+          {/* Pembaruan APK & Sistem Timpa (In-Place Update) */}
+          <div className="border border-slate-200 bg-white rounded-xl p-3 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[11px] font-extrabold text-slate-900">
+                  Pembaruan Aplikasi (Sistem Timpa APK)
+                </div>
+                <div className="text-[10px] font-mono text-slate-600 mt-0.5">
+                  Terpasang: v{apkUpdateStatus?.installedVersion || APP_VERSION} (Build{' '}
+                  {apkUpdateStatus?.installedVersionCode || APP_VERSION_CODE})
+                  {apkUpdateStatus?.latestVersion
+                    ? ` · Rilis: v${apkUpdateStatus.latestVersion}`
+                    : ''}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleCheckApkUpdateNow()}
+                disabled={apkCheckBusy}
+                className="min-h-[32px] px-2.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-800 text-[11px] font-bold flex items-center gap-1 shrink-0 disabled:opacity-60"
+              >
+                <RefreshCw className={`w-3 h-3 ${apkCheckBusy ? 'animate-spin' : ''}`} />
+                <span>{apkCheckBusy ? 'Cek...' : 'Cek Update'}</span>
+              </button>
+            </div>
+
+            {apkUpdateStatus?.hasUpdate && (
+              <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-900">
+                Versi baru <strong>v{apkUpdateStatus.latestVersion}</strong> tersedia. Ketuk tombol
+                di bawah untuk mengunduh dan menimpa langsung tanpa uninstall versi lama.
+              </div>
+            )}
+
+            <form onSubmit={handleSaveApkRepo} className="flex gap-1.5">
+              <input
+                type="text"
+                value={apkRepoDraft}
+                onChange={e => setApkRepoDraft(e.target.value)}
+                placeholder="Repo GitHub (cth: usahaqu/wargaqu)"
+                className="flex-1 min-h-[36px] px-2.5 rounded-lg border border-slate-300 text-[11px] font-mono"
+              />
+              <button
+                type="submit"
+                className="min-h-[36px] px-3 rounded-lg bg-slate-800 text-white text-[11px] font-bold shrink-0"
+              >
+                Simpan Repo
+              </button>
+            </form>
+
+            {apkInstallPermNeeded ? (
+              <button
+                type="button"
+                onClick={() => void ApkUpdateService.openInstallPermissionSettings()}
+                className="w-full min-h-[38px] px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Izinkan Pasang Aplikasi dari Sumber Ini</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={apkDownloadPct !== null}
+                onClick={() => void handleDownloadAndInstallApk()}
+                className="w-full min-h-[38px] px-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center justify-center gap-1.5 disabled:opacity-60"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>
+                  {apkDownloadPct !== null
+                    ? `Mengunduh APK (${apkDownloadPct}%)...`
+                    : isNativeApk
+                    ? 'Unduh & Timpa APK Langsung'
+                    : 'Unduh APK Terbaru (.apk)'}
+                </span>
+              </button>
+            )}
+          </div>
         </section>
         </div>
 
@@ -1740,10 +1918,12 @@ export const AccountView: React.FC<AccountViewProps> = ({
                 Tentang Aplikasi, Privasi &amp; Hak Cipta
               </h2>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Kebijakan privasi, disclaimer darurat SiagaQu &amp; status rilis WargaQu v1.5.7
+                Kebijakan privasi, disclaimer darurat SiagaQu &amp; status rilis WargaQu v{APP_VERSION}
               </p>
             </div>
-            <span className="text-[10px] font-bold text-emerald-700 shrink-0">v1.5.7</span>
+            <span className="text-[10px] font-bold text-emerald-700 shrink-0">
+              v{APP_VERSION}
+            </span>
           </div>
 
           <button
