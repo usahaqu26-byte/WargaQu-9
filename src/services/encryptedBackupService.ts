@@ -4,6 +4,8 @@ import { SIAGA_CIRCLE_SYNC_EVENT } from './siagaCircleService';
 import { ZERO_TRUST_SYNC_EVENT, ZeroTrustService } from './zeroTrustService';
 import { MONETIZATION_SYNC_EVENT } from './monetizationService';
 import { DOMPETQU_SYNC_EVENT } from './dompetQuStorage';
+import { ACCOUNT_GOV_SYNC_EVENT } from './accountGovernanceService';
+import { LELUHUR_SYNC_EVENT } from './leluhurVersionSyncService';
 
 export type BackupScope = 'all' | 'leluhurqu' | 'rtqu';
 
@@ -121,6 +123,7 @@ export const EncryptedBackupService = {
     auditLabel = 'Pulihkan Backup'
   ): number {
     let restoredKeys = 0;
+    const physicalDeviceId = AuthService.getHiddenDeviceId();
     Object.entries(entries).forEach(([k, v]) => {
       if (
         k === 'wargaqu_hidden_device_token_v1' ||
@@ -129,8 +132,24 @@ export const EncryptedBackupService = {
         return;
       }
       if (typeof v === 'string') {
+        let finalVal = v;
+        if (k === 'wargaqu_auth_account_v1') {
+          try {
+            const parsed = JSON.parse(v) as { email?: string; phone?: string };
+            if (parsed?.email) {
+              finalVal = JSON.stringify({
+                ...parsed,
+                deviceId: physicalDeviceId,
+                loggedInAt: new Date().toISOString(),
+                sessionNonce: `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+              });
+            }
+          } catch {
+            // keep original
+          }
+        }
         try {
-          localStorage.setItem(k, v);
+          localStorage.setItem(k, finalVal);
           restoredKeys += 1;
         } catch {
           // ignore storage quota
@@ -160,7 +179,9 @@ export const EncryptedBackupService = {
       window.dispatchEvent(new CustomEvent(SIAGA_CIRCLE_SYNC_EVENT));
       window.dispatchEvent(new CustomEvent(ZERO_TRUST_SYNC_EVENT));
       window.dispatchEvent(new CustomEvent(MONETIZATION_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(ACCOUNT_GOV_SYNC_EVENT));
       window.dispatchEvent(new CustomEvent(DOMPETQU_SYNC_EVENT));
+      window.dispatchEvent(new CustomEvent(LELUHUR_SYNC_EVENT));
     }
 
     return restoredKeys;
@@ -321,5 +342,67 @@ export const EncryptedBackupService = {
       scope: decoded.scope || envelope.scope,
       ownerEmail: decoded.ownerEmail || envelope.ownerEmail,
     };
+  },
+
+  async restoreFromAnyFile(
+    file: File,
+    password = ''
+  ): Promise<{ restoredKeys: number; scope: BackupScope; ownerEmail: string; encrypted: boolean }> {
+    if (!this.isSupported()) {
+      throw new Error('Peramban tidak mendukung dekripsi WebCrypto AES-GCM.');
+    }
+    const rawText = await file.text();
+    let parsed: {
+      app?: string;
+      scope?: BackupScope;
+      ownerEmail?: string;
+      entries?: Record<string, string>;
+      salt?: string;
+      iv?: string;
+      ciphertext?: string;
+    };
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      throw new Error('Format file cadangan tidak valid (.wqbak.json / .json).');
+    }
+
+    if (parsed?.app === 'WargaQu-DirectBackup' && parsed.entries) {
+      const scope = parsed.scope || 'all';
+      const ownerEmail = parsed.ownerEmail || 'wargaqu';
+      const restoredKeys = this.applyRestoredEntries(
+        parsed.entries,
+        scope,
+        ownerEmail,
+        'Pulihkan Backup File Langsung'
+      );
+      return { restoredKeys, scope, ownerEmail, encrypted: false };
+    }
+
+    if (
+      parsed?.app === 'WargaQu-EncryptedBackup' &&
+      parsed.salt &&
+      parsed.iv &&
+      parsed.ciphertext
+    ) {
+      if (!password.trim()) {
+        throw new Error('PASSWORD_REQUIRED');
+      }
+      const decoded = await this.decryptEnvelope(parsed as EncryptedBackupEnvelope, password);
+      const restoredKeys = this.applyRestoredEntries(
+        decoded.entries || {},
+        decoded.scope || parsed.scope || 'all',
+        decoded.ownerEmail || parsed.ownerEmail || 'wargaqu',
+        'Pulihkan Backup File Terenkripsi'
+      );
+      return {
+        restoredKeys,
+        scope: decoded.scope || parsed.scope || 'all',
+        ownerEmail: decoded.ownerEmail || parsed.ownerEmail || 'wargaqu',
+        encrypted: true,
+      };
+    }
+
+    throw new Error('File ini bukan arsip cadangan WargaQu yang valid.');
   },
 };

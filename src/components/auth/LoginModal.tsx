@@ -14,7 +14,10 @@ import { AuthAccount, AuthService } from '../../services/authService';
 import { RtSiagaStorage } from '../../services/rtSiagaStorage';
 import { ZeroTrustService } from '../../services/zeroTrustService';
 import { FirebaseSyncService } from '../../services/firebaseSyncService';
-import { ApkMigrationService } from '../../services/apkMigrationService';
+import {
+  ApkMigrationService,
+  dispatchSyncFallbackPrompt,
+} from '../../services/apkMigrationService';
 import { probeSharedRelayHealth } from '../../services/appOriginService';
 import { LaptopQrWaitCard } from './DevicePairingPanel';
 import { LegalNoticeModal, LegalTab } from '../common/LegalNoticeModal';
@@ -77,41 +80,61 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       return;
     }
 
-    const res = await AuthService.bindAndLogin({
-      email: cleanEmail,
-      phone: cleanPhone,
-      pin,
-    });
-    if (!res.ok || !res.account) {
-      showNotification(res.message);
-      return;
-    }
+    const wasFreshInstall = ApkMigrationService.isFreshEmptyInstallation();
+    ApkMigrationService.beginLoginPullWindow();
+    try {
+      const res = await AuthService.bindAndLogin({
+        email: cleanEmail,
+        phone: cleanPhone,
+        pin,
+      });
+      if (!res.ok || !res.account) {
+        showNotification(res.message);
+        return;
+      }
 
-    const account = res.account;
-    setPin('');
-    RtSiagaStorage.syncAuthAccount(account);
-    ZeroTrustService.registerOrTouchCurrentDevice(account.email, account.phone);
-    await probeSharedRelayHealth();
-    const syncPull = await ApkMigrationService.pullAccountSnapshot(
-      account.email,
-      account.phone,
-      { onlyIfNewer: true }
-    );
-    if (syncPull.restored) {
-      showNotification(
-        `Masuk berhasil & ${syncPull.keyCount} data dari ${
-          syncPull.source === 'apk' ? 'APK' : 'PWA'
-        } otomatis dipulihkan!`
+      const account = res.account;
+      setPin('');
+      RtSiagaStorage.syncAuthAccount(account);
+      ZeroTrustService.registerOrTouchCurrentDevice(account.email, account.phone);
+      await probeSharedRelayHealth();
+      const regRes = await AuthService.registerActiveSessionOnServer(account, false);
+      const syncPull = await ApkMigrationService.pullAccountSnapshot(
+        account.email,
+        account.phone,
+        { onlyIfNewer: !wasFreshInstall }
       );
-    } else if (syncPull.serverReachable === false) {
-      showNotification(
-        'Masuk lokal berhasil, namun Server Relay APK↔PWA belum terjangkau (cek menu Akun Saya).'
-      );
-    } else {
-      void ApkMigrationService.pushAccountSnapshotNow(true);
-      showNotification(res.message);
+      ApkMigrationService.endLoginPullWindow();
+
+      if (syncPull.restored) {
+        showNotification(
+          `Masuk berhasil & ${syncPull.keyCount} data dari ${
+            syncPull.source === 'apk' ? 'APK' : 'PWA'
+          } otomatis dipulihkan!`
+        );
+      } else if (syncPull.serverReachable === false || !regRes.serverReachable) {
+        showNotification('Masuk berhasil. Membuka asisten sinkronisasi cadangan...');
+        dispatchSyncFallbackPrompt({
+          reason: 'relay_unreachable',
+          email: account.email,
+          phone: account.phone,
+        });
+      } else {
+        void ApkMigrationService.pushAccountSnapshotNow(true);
+        if (syncPull.reason === 'not_found' && wasFreshInstall) {
+          dispatchSyncFallbackPrompt({
+            reason: 'not_found',
+            email: account.email,
+            phone: account.phone,
+          });
+        } else {
+          showNotification(res.message);
+        }
+      }
+      onSuccess(account);
+    } finally {
+      ApkMigrationService.endLoginPullWindow();
     }
-    onSuccess(account);
   };
 
   const handleGoogleLogin = async () => {
@@ -122,6 +145,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       return;
     }
     setGoogleLoading(true);
+    const wasFreshInstall = ApkMigrationService.isFreshEmptyInstallation();
+    ApkMigrationService.beginLoginPullWindow();
     try {
       const user = await FirebaseSyncService.signInWithGoogle(phone);
       const acc = AuthService.getAccount();
@@ -129,9 +154,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         RtSiagaStorage.syncAuthAccount(acc);
         ZeroTrustService.registerOrTouchCurrentDevice(acc.email, acc.phone);
         await probeSharedRelayHealth();
+        const regRes = await AuthService.registerActiveSessionOnServer(acc, false);
         const syncPull = await ApkMigrationService.pullAccountSnapshot(acc.email, acc.phone, {
-          onlyIfNewer: true,
+          onlyIfNewer: !wasFreshInstall,
         });
+        ApkMigrationService.endLoginPullWindow();
+
+        const usedPlaceholderPhone = acc.phone === '0800-0000-0000';
         if (syncPull.restored) {
           showNotification(
             `Google terhubung & ${syncPull.keyCount} data dari ${
@@ -141,14 +170,26 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           onSuccess(acc);
           return;
         }
-        if (syncPull.serverReachable === false) {
-          showNotification(
-            'Google terhubung, namun Server Relay sinkronisasi APK↔PWA belum terjangkau.'
-          );
+        if (syncPull.serverReachable === false || !regRes.serverReachable) {
+          showNotification('Google terhubung. Membuka asisten pemulihan cadangan...');
+          dispatchSyncFallbackPrompt({
+            reason: 'relay_unreachable',
+            email: acc.email,
+            phone: acc.phone,
+            usedGooglePlaceholderPhone: usedPlaceholderPhone,
+          });
           onSuccess(acc);
           return;
         }
         void ApkMigrationService.pushAccountSnapshotNow(true);
+        if (syncPull.reason === 'not_found' && (wasFreshInstall || usedPlaceholderPhone)) {
+          dispatchSyncFallbackPrompt({
+            reason: 'not_found',
+            email: acc.email,
+            phone: acc.phone,
+            usedGooglePlaceholderPhone: usedPlaceholderPhone,
+          });
+        }
         onSuccess(acc);
       }
       showNotification(`Terhubung Google Cloud: ${user.email || 'Berhasil'}`);
@@ -158,6 +199,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
         showNotification('Gagal masuk dengan Google. Coba lagi atau gunakan form manual.');
       }
     } finally {
+      ApkMigrationService.endLoginPullWindow();
       setGoogleLoading(false);
     }
   };

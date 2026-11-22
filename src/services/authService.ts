@@ -788,8 +788,10 @@ export const AuthService = {
   async registerActiveSessionOnServer(
     account: AuthAccount,
     isCompanionLaptop = false
-  ): Promise<boolean> {
-    if (isCompanionLaptop || !account?.email || !account?.sessionNonce) return false;
+  ): Promise<{ ok: boolean; serverReachable: boolean }> {
+    if (isCompanionLaptop || !account?.email || !account?.sessionNonce) {
+      return { ok: false, serverReachable: true };
+    }
     try {
       const accountKey = await this.computeSessionAccountKey(account.email);
       const container: 'apk' | 'pwa' = isNativeCapacitorApk() ? 'apk' : 'pwa';
@@ -805,11 +807,12 @@ export const AuthService = {
           isCompanionLaptop,
         }),
       });
-      if (!res.ok) return false;
+      if (!res.ok) return { ok: false, serverReachable: false };
       const ct = res.headers.get('content-type') || '';
-      return ct.includes('application/json');
+      const isJson = ct.includes('application/json');
+      return { ok: isJson, serverReachable: isJson };
     } catch {
-      return false;
+      return { ok: false, serverReachable: false };
     }
   },
 

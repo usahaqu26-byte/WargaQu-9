@@ -12,6 +12,7 @@ import { ACCOUNT_GOV_SYNC_EVENT } from './accountGovernanceService';
 import { FirebaseSyncService } from './firebaseSyncService';
 import { DOMPETQU_SYNC_EVENT } from './dompetQuStorage';
 import { DEVICE_PAIRING_SYNC_EVENT } from './devicePairingService';
+import { LELUHUR_SYNC_EVENT } from './leluhurVersionSyncService';
 
 export const DRIVE_BACKUP_FILENAME = 'WargaQu_AutoBackup_SemuaData.wqbak.json';
 export const AUTO_BACKUP_SYNC_EVENT = 'wargaqu-autobackup-sync';
@@ -557,6 +558,49 @@ export const AutoBackupService = {
     };
   },
 
+  async findAndDownloadDriveBackup(accessToken: string): Promise<{
+    found: boolean;
+    driveFile: DriveFileSummary | null;
+    envelope: AnyBackupEnvelope | null;
+  }> {
+    const driveFile = await this.findDriveBackupFile(accessToken);
+    if (!driveFile) {
+      return { found: false, driveFile: null, envelope: null };
+    }
+    const envelope = await this.downloadDriveBackupEnvelope(accessToken, driveFile.id);
+    return { found: true, driveFile, envelope };
+  },
+
+  async flushAllAutoBackupsBeforeLogout(
+    reason = 'Cadangan Otomatis Sebelum Keluar'
+  ): Promise<{ localSaved: boolean; driveSaved: boolean }> {
+    let localSaved = false;
+    let driveSaved = false;
+    const envelope = buildDirectEnvelope();
+    if (envelope.keyCount > 0) {
+      try {
+        await this.saveLocalAutoOverwrite(reason, 'pre_reset');
+        await this.saveLocalAutoOverwrite('Auto-Timpa HP Sebelum Keluar', 'auto');
+        await this.trySilentPhoneFileOverwrite();
+        localSaved = true;
+      } catch {
+        // continue
+      }
+
+      const prefs = loadPrefs();
+      const driveToken = FirebaseSyncService.getDriveAccessToken();
+      if (prefs.autoDriveEnabled && driveToken) {
+        try {
+          await this.uploadOverwriteDriveBackup(driveToken, sessionDrivePassword);
+          driveSaved = true;
+        } catch {
+          // Drive token expired or offline
+        }
+      }
+    }
+    return { localSaved, driveSaved };
+  },
+
   // =========================================================================
   // SAFE RESET (RESET DATA AMAN)
   // =========================================================================
@@ -703,12 +747,12 @@ export const AutoBackupService = {
           }
         }
 
-        // Only auto-overwrite Drive if user explicitly enabled & confirmed overwrite for this session
+        // Auto-overwrite Drive if user enabled autoDriveEnabled AND Drive OAuth token is active in this session
         const driveToken = FirebaseSyncService.getDriveAccessToken();
         const threeMinutes = 3 * 60 * 1000;
         if (
           prefs.autoDriveEnabled &&
-          driveOverwriteSessionConfirmed &&
+          (driveOverwriteSessionConfirmed || Boolean(driveToken)) &&
           driveToken &&
           changed &&
           Date.now() - lastDriveSyncMs >= threeMinutes
@@ -725,6 +769,8 @@ export const AutoBackupService = {
     const events = [
       AUTH_SYNC_EVENT,
       RT_SYNC_EVENT,
+      DOMPETQU_SYNC_EVENT,
+      LELUHUR_SYNC_EVENT,
       SIAGA_CIRCLE_SYNC_EVENT,
       ZERO_TRUST_SYNC_EVENT,
       MONETIZATION_SYNC_EVENT,

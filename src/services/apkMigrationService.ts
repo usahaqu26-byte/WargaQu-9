@@ -16,9 +16,32 @@ import { buildApiUrl, isNativeCapacitorApk } from './appOriginService';
 
 export const APK_MIGRATION_DONE_KEY = 'wargaqu_apk_migration_done_v1';
 export const APK_MIGRATION_BANNER_DISMISSED_KEY = 'wargaqu_apk_banner_dismissed_v1';
+export const WARGAQU_SYNC_FALLBACK_EVENT = 'wargaqu-sync-fallback-prompt';
 const LAST_SYNC_TS_KEY = 'wargaqu_last_account_sync_ts_v1';
 const LAST_APPLIED_REMOTE_TS_KEY = 'wargaqu_last_applied_remote_ts_v1';
 const PBKDF2_ITERATIONS = 100000;
+
+export type SyncFallbackReason =
+  | 'relay_unreachable'
+  | 'not_found'
+  | 'superseded'
+  | 'manual_open';
+
+export interface SyncFallbackTriggerDetail {
+  reason: SyncFallbackReason;
+  email?: string;
+  phone?: string;
+  activeContainer?: 'apk' | 'pwa' | string;
+  message?: string;
+  usedGooglePlaceholderPhone?: boolean;
+}
+
+export function dispatchSyncFallbackPrompt(detail: SyncFallbackTriggerDetail): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent<SyncFallbackTriggerDetail>(WARGAQU_SYNC_FALLBACK_EVENT, { detail })
+  );
+}
 
 const EXCLUDED_MIGRATION_KEYS = new Set<string>([
   'wargaqu_hidden_device_token_v1',
@@ -55,6 +78,8 @@ export interface PwaHandoffCreated {
 
 let autoSyncStarted = false;
 let isApplyingRemoteMigration = false;
+let loginPullInFlight = false;
+let loginPullResetTimer: number | null = null;
 let resetApplyingTimer: number | null = null;
 let lastPushedSignature = '';
 let pushDebounceTimer: number | null = null;
@@ -334,8 +359,33 @@ export const ApkMigrationService = {
     }
   },
 
+  beginLoginPullWindow(timeoutMs = 10000): void {
+    loginPullInFlight = true;
+    if (pushDebounceTimer !== null) {
+      window.clearTimeout(pushDebounceTimer);
+      pushDebounceTimer = null;
+    }
+    if (loginPullResetTimer !== null) {
+      window.clearTimeout(loginPullResetTimer);
+    }
+    loginPullResetTimer = window.setTimeout(() => {
+      loginPullInFlight = false;
+      loginPullResetTimer = null;
+    }, timeoutMs);
+  },
+
+  endLoginPullWindow(): void {
+    loginPullInFlight = false;
+    if (loginPullResetTimer !== null) {
+      window.clearTimeout(loginPullResetTimer);
+      loginPullResetTimer = null;
+    }
+  },
+
   async pushAccountSnapshotNow(force = false): Promise<boolean> {
-    if (!this.isSupported() || isApplyingRemoteMigration) return false;
+    if (!this.isSupported() || isApplyingRemoteMigration || (!force && loginPullInFlight)) {
+      return false;
+    }
     const acc = AuthService.getAccount();
     if (!acc || !acc.email || !acc.phone) return false;
 
@@ -669,14 +719,17 @@ export const ApkMigrationService = {
     };
   },
 
-  startAutoSync(onAutoRestored?: (msg: string) => void): void {
+  startAutoSync(
+    onAutoRestored?: (msg: string) => void,
+    options?: { deferInitialPull?: boolean }
+  ): void {
     if (autoSyncStarted || typeof window === 'undefined') return;
     autoSyncStarted = true;
 
     lastPushedSignature = buildSnapshotSignature(collectMigrationSnapshot());
 
     const schedulePush = () => {
-      if (isApplyingRemoteMigration) return;
+      if (isApplyingRemoteMigration || loginPullInFlight) return;
       if (!AuthService.getAccount()) return;
       if (pushDebounceTimer !== null) {
         window.clearTimeout(pushDebounceTimer);
@@ -698,10 +751,9 @@ export const ApkMigrationService = {
       'storage',
     ].forEach(ev => window.addEventListener(ev, schedulePush));
 
-    // Initial check on startup:
-    // If signed in, pull remote cloud snapshot if from other container / newer; otherwise push local edits
+    // Initial check on startup (can be deferred by App.tsx until probeSharedRelayHealth completes)
     const initialAcc = AuthService.getAccount();
-    if (initialAcc) {
+    if (initialAcc && !options?.deferInitialPull) {
       void this.pullAccountSnapshot(initialAcc.email, initialAcc.phone, { onlyIfNewer: true }).then(
         res => {
           if (res.restored) {
@@ -710,7 +762,7 @@ export const ApkMigrationService = {
                 res.source === 'apk' ? 'APK' : 'PWA'
               }.`
             );
-          } else {
+          } else if (res.serverReachable !== false) {
             void this.pushAccountSnapshotNow(false);
           }
         }
@@ -728,7 +780,7 @@ export const ApkMigrationService = {
         void this.pullAccountSnapshot(acc.email, acc.phone, { onlyIfNewer: true }).then(res => {
           if (res.restored) {
             onAutoRestored?.(`${res.keyCount} pembaruan data disinkronkan.`);
-          } else {
+          } else if (res.serverReachable !== false) {
             void this.pushAccountSnapshotNow(false);
           }
         });
@@ -744,9 +796,17 @@ export const ApkMigrationService = {
     window.addEventListener('pagehide', handlePageHide);
   },
 
-  async recheckSyncNow(onAutoRestored?: (msg: string) => void): Promise<void> {
+  async recheckSyncNow(onAutoRestored?: (msg: string) => void): Promise<{
+    restored: boolean;
+    keyCount: number;
+    source: string;
+    serverReachable?: boolean;
+    reason?: string;
+  }> {
     const acc = AuthService.getAccount();
-    if (!acc) return;
+    if (!acc) {
+      return { restored: false, keyCount: 0, source: '', serverReachable: true, reason: 'no_account' };
+    }
     const res = await this.pullAccountSnapshot(acc.email, acc.phone, { onlyIfNewer: true });
     if (res.restored) {
       onAutoRestored?.(
@@ -754,8 +814,9 @@ export const ApkMigrationService = {
           res.source === 'apk' ? 'APK' : 'PWA'
         }.`
       );
-    } else {
+    } else if (res.serverReachable !== false) {
       void this.pushAccountSnapshotNow(true);
     }
+    return res;
   },
 };

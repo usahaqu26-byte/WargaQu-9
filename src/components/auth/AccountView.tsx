@@ -65,6 +65,7 @@ import {
 import {
   ApkMigrationService,
   PwaHandoffCreated,
+  dispatchSyncFallbackPrompt,
 } from '../../services/apkMigrationService';
 import {
   APP_VERSION,
@@ -262,36 +263,63 @@ export const AccountView: React.FC<AccountViewProps> = ({
       return;
     }
 
-    const res = await AuthService.bindAndLogin({
-      email: emailInput,
-      phone: phoneInput,
-      pin: pinInput,
-    });
-    if (!res.ok || !res.account) {
-      showNotification(res.message);
-      return;
-    }
+    const wasFreshInstall = ApkMigrationService.isFreshEmptyInstallation();
+    ApkMigrationService.beginLoginPullWindow();
+    try {
+      const res = await AuthService.bindAndLogin({
+        email: emailInput,
+        phone: phoneInput,
+        pin: pinInput,
+      });
+      if (!res.ok || !res.account) {
+        showNotification(res.message);
+        return;
+      }
 
-    const saved = res.account;
-    setPinInput('');
-    RtSiagaStorage.syncAuthAccount(saved);
-    ZeroTrustService.registerOrTouchCurrentDevice(saved.email, saved.phone);
-    if (FirebaseSyncService.isCloudSignedIn()) {
-      void FirebaseSyncService.syncMyAccountRegistry('akun', true);
+      const saved = res.account;
+      setPinInput('');
+      RtSiagaStorage.syncAuthAccount(saved);
+      ZeroTrustService.registerOrTouchCurrentDevice(saved.email, saved.phone);
+      if (FirebaseSyncService.isCloudSignedIn()) {
+        void FirebaseSyncService.syncMyAccountRegistry('akun', true);
+      }
+      await probeSharedRelayHealth();
+      const regRes = await AuthService.registerActiveSessionOnServer(saved, false);
+      const pullRes = await ApkMigrationService.pullAccountSnapshot(saved.email, saved.phone, {
+        onlyIfNewer: !wasFreshInstall,
+      });
+      ApkMigrationService.endLoginPullWindow();
+
+      if (pullRes.restored) {
+        showNotification(
+          `Masuk berhasil & ${pullRes.keyCount} data akun disinkronkan dari ${
+            pullRes.source === 'apk' ? 'APK' : 'PWA'
+          }!`
+        );
+        return;
+      }
+      if (pullRes.serverReachable === false || !regRes.serverReachable) {
+        showNotification('Masuk berhasil. Membuka asisten pemulihan cadangan...');
+        dispatchSyncFallbackPrompt({
+          reason: 'relay_unreachable',
+          email: saved.email,
+          phone: saved.phone,
+        });
+        return;
+      }
+      void ApkMigrationService.pushAccountSnapshotNow(true);
+      if (pullRes.reason === 'not_found' && wasFreshInstall) {
+        dispatchSyncFallbackPrompt({
+          reason: 'not_found',
+          email: saved.email,
+          phone: saved.phone,
+        });
+        return;
+      }
+      showNotification(res.message);
+    } finally {
+      ApkMigrationService.endLoginPullWindow();
     }
-    const pullRes = await ApkMigrationService.pullAccountSnapshot(saved.email, saved.phone, {
-      onlyIfNewer: true,
-    });
-    if (pullRes.restored) {
-      showNotification(
-        `Masuk berhasil & ${pullRes.keyCount} data akun disinkronkan dari ${
-          pullRes.source === 'apk' ? 'APK' : 'PWA'
-        }!`
-      );
-      return;
-    }
-    void ApkMigrationService.pushAccountSnapshotNow(false);
-    showNotification(res.message);
   };
 
   const handleCreateLegacyPin = async (e: React.FormEvent) => {
@@ -475,9 +503,47 @@ export const AccountView: React.FC<AccountViewProps> = ({
 
   const handleConnectGoogleCloud = async () => {
     setCloudConnecting(true);
+    const wasFreshInstall = ApkMigrationService.isFreshEmptyInstallation();
+    ApkMigrationService.beginLoginPullWindow();
     try {
       const user = await FirebaseSyncService.signInWithGoogle(phoneInput);
       setCloudEmail(user.email || '');
+      const acc = AuthService.getAccount();
+      if (acc) {
+        await probeSharedRelayHealth();
+        const regRes = await AuthService.registerActiveSessionOnServer(acc, false);
+        const pullRes = await ApkMigrationService.pullAccountSnapshot(acc.email, acc.phone, {
+          onlyIfNewer: !wasFreshInstall,
+        });
+        ApkMigrationService.endLoginPullWindow();
+        const usedPlaceholderPhone = acc.phone === '0800-0000-0000';
+        if (pullRes.restored) {
+          showNotification(
+            `Google terhubung & ${pullRes.keyCount} data dari ${
+              pullRes.source === 'apk' ? 'APK' : 'PWA'
+            } disinkronkan!`
+          );
+          return;
+        }
+        if (pullRes.serverReachable === false || !regRes.serverReachable) {
+          dispatchSyncFallbackPrompt({
+            reason: 'relay_unreachable',
+            email: acc.email,
+            phone: acc.phone,
+            usedGooglePlaceholderPhone: usedPlaceholderPhone,
+          });
+        } else {
+          void ApkMigrationService.pushAccountSnapshotNow(true);
+          if (pullRes.reason === 'not_found' && (wasFreshInstall || usedPlaceholderPhone)) {
+            dispatchSyncFallbackPrompt({
+              reason: 'not_found',
+              email: acc.email,
+              phone: acc.phone,
+              usedGooglePlaceholderPhone: usedPlaceholderPhone,
+            });
+          }
+        }
+      }
       showNotification(`Cloud Firebase terhubung (${user.email}).`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
@@ -485,17 +551,20 @@ export const AccountView: React.FC<AccountViewProps> = ({
         showNotification(msg || 'Gagal menghubungkan akun Google Cloud.');
       }
     } finally {
+      ApkMigrationService.endLoginPullWindow();
       setCloudConnecting(false);
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await AutoBackupService.flushAllAutoBackupsBeforeLogout('Cadangan Otomatis Sebelum Keluar');
+    await ApkMigrationService.pushAccountSnapshotNow(true);
     AuthService.logout();
     void FirebaseSyncService.signOutCloud().catch(() => {});
     setPinInput('');
     setCloudEmail('');
     setActiveProcedure('none');
-    showNotification('Sesi ditutup. Ikatan perangkat tetap aktif untuk mencegah akun ganda.');
+    showNotification('Cadangan terakhir disimpan & sesi ditutup. Siap masuk di wadah lain.');
   };
 
   const handleCopyRecoveryCode = async () => {
@@ -773,7 +842,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
 
           {account && (
             <button
-              onClick={handleLogout}
+              onClick={() => void handleLogout()}
               className="min-h-[36px] px-2.5 border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-lg text-[11px] font-bold flex items-center gap-1"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -1644,6 +1713,21 @@ export const AccountView: React.FC<AccountViewProps> = ({
                 </div>
               </div>
             )}
+
+            <button
+              type="button"
+              onClick={() =>
+                dispatchSyncFallbackPrompt({
+                  reason: 'manual_open',
+                  email: account?.email || emailInput,
+                  phone: account?.phone || phoneInput,
+                })
+              }
+              className="w-full min-h-[36px] px-3 rounded-xl border border-emerald-300 bg-emerald-50/70 hover:bg-emerald-100 text-emerald-900 font-bold text-[11px] flex items-center justify-center gap-1.5"
+            >
+              <Cloud className="w-3.5 h-3.5 text-emerald-700" />
+              <span>Asisten Restore 1-Klik (Google Drive / HP / Token)</span>
+            </button>
           </div>
 
           <div className="border border-slate-200 bg-white rounded-xl p-2.5 space-y-2">

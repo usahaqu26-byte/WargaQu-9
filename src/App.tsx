@@ -13,6 +13,7 @@ import { LeluhurQuView } from './components/leluhurqu/LeluhurQuView';
 import { DompetQuView } from './components/dompetqu/DompetQuView';
 import { LoginModal } from './components/auth/LoginModal';
 import { AccountView } from './components/auth/AccountView';
+import { SyncFallbackModal } from './components/auth/SyncFallbackModal';
 import { AdminZeroTrustView } from './components/admin/AdminZeroTrustView';
 import { StorePreviewView, PreviewTargetScreen } from './components/store/StorePreviewView';
 import { ModuleGuideModal } from './components/common/ModuleGuideModal';
@@ -54,7 +55,11 @@ import {
   PENDING_PAIR_TOKEN_KEY,
   PairingSyncEventDetail,
 } from './services/devicePairingService';
-import { ApkMigrationService } from './services/apkMigrationService';
+import {
+  ApkMigrationService,
+  SyncFallbackTriggerDetail,
+  WARGAQU_SYNC_FALLBACK_EVENT,
+} from './services/apkMigrationService';
 import { isNativeCapacitorApk, probeSharedRelayHealth } from './services/appOriginService';
 import {
   APK_UPDATE_EVENT,
@@ -134,6 +139,7 @@ export default function App() {
   const [apkUpdateDismissed, setApkUpdateDismissed] = useState<boolean>(false);
   const [apkDownloadProgress, setApkDownloadProgress] = useState<number | null>(null);
   const [apkNeedPermission, setApkNeedPermission] = useState<boolean>(false);
+  const [syncFallbackDetail, setSyncFallbackDetail] = useState<SyncFallbackTriggerDetail | null>(null);
   const lastBroadcastSessionNonceRef = useRef<string>('');
   const lastActiveAccountRef = useRef<AuthAccount | null>(AuthService.getAccount());
   const sessionInvalidatedBySwitchRef = useRef<boolean>(false);
@@ -322,6 +328,10 @@ export default function App() {
             ? 'PWA Browser'
             : 'perangkat lain';
         const noticeMsg = `Sesi Anda di wadah ini dinonaktifkan karena akun baru saja masuk di ${containerLabel}.`;
+        void AutoBackupService.saveLocalAutoOverwrite(
+          'Cadangan Otomatis Saat Sesi Dialihkan',
+          'pre_reset'
+        );
         AuthService.setSupersededNotice(noticeMsg);
         AuthService.logout();
         ZeroTrustService.appendAudit(
@@ -331,6 +341,13 @@ export default function App() {
           'info'
         );
         setSessionSupersededNotice(noticeMsg);
+        setSyncFallbackDetail({
+          reason: 'superseded',
+          email: acc.email,
+          phone: acc.phone,
+          activeContainer: check.activeContainer,
+          message: noticeMsg,
+        });
         showNotification(noticeMsg);
       }
     };
@@ -442,17 +459,25 @@ export default function App() {
       void ApkMigrationService.recheckSyncNow(showNotification);
     };
 
+    const handleSyncFallbackPrompt = (ev: Event) => {
+      const detail = (ev as CustomEvent<SyncFallbackTriggerDetail>).detail;
+      if (detail) {
+        setSyncFallbackDetail(detail);
+      }
+    };
+
     window.addEventListener(AUTH_SYNC_EVENT, handleAuthSync);
     window.addEventListener(ACCOUNT_GOV_SYNC_EVENT, refreshGovernanceState);
     window.addEventListener(DEVICE_PAIRING_SYNC_EVENT, handlePairingSync);
     window.addEventListener(APK_UPDATE_EVENT, handleApkUpdateEvent);
     window.addEventListener('wargaqu-relay-origin-changed', handleRelayOriginSwitched);
+    window.addEventListener(WARGAQU_SYNC_FALLBACK_EVENT, handleSyncFallbackPrompt);
     window.addEventListener('focus', handleSessionWakeCheck);
     document.addEventListener('visibilitychange', handleSessionWakeCheck);
 
     RealtimeRelayService.start();
     DevicePairingService.startLiveSync(showNotification);
-    ApkMigrationService.startAutoSync(showNotification);
+    ApkMigrationService.startAutoSync(showNotification, { deferInitialPull: true });
     FirebaseSyncService.init();
     AutoBackupService.startAutoBackupMonitor();
 
@@ -567,6 +592,10 @@ export default function App() {
           sessionInvalidatedBySwitchRef.current = true;
           const noticeMsg =
             'Sesi di wadah ini otomatis ditutup karena akun Anda baru saja masuk di perangkat/wadah lain (Sesi Tunggal).';
+          void AutoBackupService.saveLocalAutoOverwrite(
+            'Cadangan Otomatis Saat Sesi Dialihkan',
+            'pre_reset'
+          );
           AuthService.setSupersededNotice(noticeMsg);
           AuthService.logout();
           ZeroTrustService.appendAudit(
@@ -576,6 +605,12 @@ export default function App() {
             'info'
           );
           setSessionSupersededNotice(noticeMsg);
+          setSyncFallbackDetail({
+            reason: 'superseded',
+            email: activeAcc.email,
+            phone: activeAcc.phone,
+            message: noticeMsg,
+          });
           showNotification(noticeMsg);
         }
       } else if (detail.eventName === 'smartcare:ticket' && detail.payload && typeof detail.payload === 'object') {
@@ -611,6 +646,7 @@ export default function App() {
       window.removeEventListener(DEVICE_PAIRING_SYNC_EVENT, handlePairingSync);
       window.removeEventListener(APK_UPDATE_EVENT, handleApkUpdateEvent);
       window.removeEventListener('wargaqu-relay-origin-changed', handleRelayOriginSwitched);
+      window.removeEventListener(WARGAQU_SYNC_FALLBACK_EVENT, handleSyncFallbackPrompt);
       window.removeEventListener('focus', handleSessionWakeCheck);
       document.removeEventListener('visibilitychange', handleSessionWakeCheck);
       window.removeEventListener(REALTIME_RELAY_EVENT, handleGlobalRelay);
@@ -1311,6 +1347,14 @@ export default function App() {
         reasonMessage={loginModal.reason}
         onClose={() => setLoginModal({ open: false })}
         onSuccess={() => setLoginModal({ open: false })}
+        showNotification={showNotification}
+      />
+
+      {/* Global Smart Sync & Recovery Fallback Modal (APK <-> PWA) */}
+      <SyncFallbackModal
+        detail={syncFallbackDetail}
+        onClose={() => setSyncFallbackDetail(null)}
+        onOpenLogin={handleOpenLogin}
         showNotification={showNotification}
       />
 
