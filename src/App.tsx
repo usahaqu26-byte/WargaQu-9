@@ -983,7 +983,7 @@ export default function App() {
 
   if (currentScreen === 'store') {
     return (
-      <div className="h-[100dvh] w-full overflow-hidden bg-white relative safe-area-shell">
+      <div className="h-[100dvh] w-full overflow-hidden bg-white relative safe-area-shell print-flow-unlock">
         {notification && (
           <div className="fixed top-16 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md z-50 bg-emerald-950/95 text-[#5eead4] px-4 py-2 rounded-2xl shadow-xl border border-emerald-500/40 text-xs font-semibold flex items-center justify-between">
             <span>{notification}</span>

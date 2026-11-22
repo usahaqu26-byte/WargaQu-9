@@ -99,6 +99,34 @@
 
 /* Print specific styles for ESC/POS receipt & LeluhurQu A0-A4 Family Tree */
 @media print {
+  html, body, #root {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    width: auto !important;
+    max-width: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+  }
+  .print-flow-unlock {
+    position: static !important;
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    width: auto !important;
+    max-width: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    transform: none !important;
+    background: transparent !important;
+  }
   body * {
     visibility: hidden !important;
   }
@@ -106,6 +134,9 @@
   #printable-family-tree, #printable-family-tree *,
   #printable-pcb-preview, #printable-pcb-preview * {
     visibility: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
   }
   #printable-receipt {
     position: absolute !important;
@@ -120,27 +151,39 @@
     box-shadow: none !important;
     border: none !important;
   }
-  #printable-family-tree,
+  #printable-pcb-preview-shell {
+    width: auto !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
   #printable-pcb-preview {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    transform: scale(1) !important;
+    transform-origin: top left !important;
+  }
+  #printable-family-tree {
     position: absolute !important;
     left: 0 !important;
     top: 0 !important;
-    margin: 0 auto !important;
+    width: 100% !important;
+    margin: 0 !important;
     box-shadow: none !important;
     border: none !important;
-    background: white !important;
-    color: black !important;
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
   }
-  /* Auto upscale & crisp image rendering for high-resolution printing / posters */
+  /* Auto upscale & crisp full-color image rendering for high-resolution printing / posters */
   #printable-family-tree img,
   #printable-pcb-preview img {
-    image-rendering: -webkit-optimize-contrast !important;
-    image-rendering: crisp-edges !important;
-    image-rendering: auto !important;
-    -webkit-filter: contrast(105%) brightness(102%) !important;
-    filter: contrast(105%) brightness(102%) !important;
+    image-rendering: high-quality !important;
+    -webkit-filter: contrast(103%) saturate(104%) !important;
+    filter: contrast(103%) saturate(104%) !important;
   }
   @page {
     margin: 5mm;

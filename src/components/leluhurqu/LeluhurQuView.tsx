@@ -66,6 +66,11 @@ import {
 import { ModuleOnboardingService } from '../../services/moduleOnboardingService';
 import { InteractiveGridCanvasView } from './InteractiveGridCanvasView';
 import { LeluhurQuizView } from './LeluhurQuizView';
+import {
+  upscaleImageToHdDataUrl,
+  dataUrlToBlob,
+  saveOrShareFileBlob,
+} from '../../utils/imageUpscale';
 import { loadQuizRounds, isAlertHandledForRound } from '../../services/leluhurQuiz/quizStorageAndSync';
 import { getRoundTimingSnapshot } from '../../services/leluhurQuiz/quizSchedulerService';
 import {
@@ -4467,14 +4472,14 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     : [];
 
   return (
-    <div className="flex-1 flex flex-col relative overflow-hidden bg-stone-100 select-none font-sans text-stone-800">
+    <div className="flex-1 flex flex-col relative overflow-hidden bg-stone-100 select-none font-sans text-stone-800 print-flow-unlock">
       {/* ========================================================= */}
       {/* 1. HEADER BAR BERSIH & MINIMALIS */}
       {/* ========================================================= */}
       {/* ========================================================= */}
       {/* 1. HEADER BAR: HANYA MENAMPILKAN IKON DAN NAMA MENU / SUBMENU */}
       {/* ========================================================= */}
-      <header className="bg-gradient-to-r from-[#047857] via-[#059669] to-[#047857] text-white px-3 py-2 flex items-center justify-between shrink-0 shadow-md border-b border-emerald-800 z-30">
+      <header className="bg-gradient-to-r from-[#047857] via-[#059669] to-[#047857] text-white px-3 py-2 flex items-center justify-between shrink-0 shadow-md border-b border-emerald-800 z-30 print:hidden">
         {/* Tombol Kembali ke WargaQu */}
         <button
           onClick={onBackToWarga}
@@ -4906,7 +4911,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       {/* 3. KANVAS UTAMA: GRID INTERAKTIF, TABEL EXCEL & MEDSOS    */}
       {/* ========================================================= */}
       <main
-        className={`flex-1 relative ${
+        className={`flex-1 relative print-flow-unlock ${
           viewMode === 'grid' && trahList.length > 0
             ? 'p-2 flex flex-col overflow-hidden'
             : 'p-4 overflow-y-auto overflow-x-auto block touch-pan-y'
@@ -5133,7 +5138,10 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
               </div>
             )}
 
-            <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
+            <div
+              id="printable-family-tree"
+              className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden"
+            >
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs text-stone-700 border-collapse">
                   <thead className="bg-stone-100 border-b border-stone-200 text-[11px] text-stone-600 font-bold uppercase tracking-wider">
@@ -5901,7 +5909,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       {/* 4. NAVBAR BAWAH: GRID, TABEL, MEDSOS, KUIS, SETTING       */}
       {/* Tampilan: Ikon Besar di Atas, Nama Kecil di Bawahnya      */}
       {/* ========================================================= */}
-      <nav className="bg-stone-900/95 backdrop-blur-md border-t border-stone-800 text-stone-300 px-2 py-1.5 shrink-0 z-30 shadow-2xl">
+      <nav className="bg-stone-900/95 backdrop-blur-md border-t border-stone-800 text-stone-300 px-2 py-1.5 shrink-0 z-30 shadow-2xl print:hidden">
         <div className="max-w-lg mx-auto grid grid-cols-5 gap-1">
           {/* 1. Grid Manual / Auto */}
           <button
@@ -6251,7 +6259,19 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                   <button
                     onClick={() => {
                       setIsSidebarOpen(false);
-                      window.print();
+                      if (viewMode === 'grid') {
+                        window.setTimeout(() => {
+                          window.dispatchEvent(new CustomEvent('leluhurqu:trigger-grid-print'));
+                        }, 80);
+                      } else if (viewMode === 'excel') {
+                        window.setTimeout(() => window.print(), 80);
+                      } else {
+                        setViewMode('grid');
+                        showNotification('Membuka Kanvas Grid untuk mencetak poster silsilah...');
+                        window.setTimeout(() => {
+                          window.dispatchEvent(new CustomEvent('leluhurqu:trigger-grid-print'));
+                        }, 350);
+                      }
                     }}
                     className="w-full py-2 px-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold text-xs flex items-center justify-between border border-stone-700 shadow-xs active:scale-95 transition"
                   >
@@ -6962,13 +6982,47 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                     </label>
 
                     {photoUrlInput && (
-                      <button
-                        type="button"
-                        onClick={handleRemovePhoto}
-                        className="px-2 py-1 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-bold text-[10px] rounded-xl transition"
-                      >
-                        Hapus
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              showNotification('Meng-upscale foto ke HD (2.5× tajam & penuh warna)...');
+                              const hdUrl = await upscaleImageToHdDataUrl(photoUrlInput, {
+                                scaleFactor: 2.5,
+                                minDimension: 960,
+                                maxDimension: 1440,
+                                outputMime: 'image/png',
+                              });
+                              const safeName = (nameInput || 'Anggota_Trah')
+                                .replace(/[^a-zA-Z0-9\s_-]/g, '')
+                                .trim()
+                                .replace(/\s+/g, '_');
+                              const blob = dataUrlToBlob(hdUrl);
+                              await saveOrShareFileBlob(
+                                blob,
+                                `${safeName || 'Foto'}_HD_Upscale.png`,
+                                `Foto HD ${nameInput || 'Anggota'}`
+                              );
+                              showNotification('Foto HD hasil auto-upscale berhasil diunduh!');
+                            } catch {
+                              showNotification('Gagal mengunduh foto HD.');
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px] rounded-xl transition"
+                          title="Unduh foto anggota ini dengan Auto-Upscale HD 2.5× penuh warna"
+                        >
+                          <Download className="w-3 h-3 text-amber-700" />
+                          <span>Unduh Foto HD</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRemovePhoto}
+                          className="px-2 py-1 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-bold text-[10px] rounded-xl transition"
+                        >
+                          Hapus
+                        </button>
+                      </>
                     )}
                   </div>
 

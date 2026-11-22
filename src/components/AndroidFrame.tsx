@@ -81,13 +81,13 @@ export const AndroidFrame: React.FC<AndroidFrameProps> = ({ children }) => {
 
   return (
     <div
-      className={`h-[100dvh] max-h-[100dvh] w-full flex flex-col items-center justify-start text-slate-800 antialiased font-sans selection:bg-emerald-600 selection:text-white overflow-hidden safe-area-shell ${
+      className={`h-[100dvh] max-h-[100dvh] w-full flex flex-col items-center justify-start text-slate-800 antialiased font-sans selection:bg-emerald-600 selection:text-white overflow-hidden safe-area-shell print-flow-unlock ${
         layout.isFullBleed ? 'bg-[#f0fdf4]' : 'bg-emerald-950/15'
       }`}
     >
       {/* Adaptive shell: full-screen responsive on HP & Laptop/PC, optional phone frame preview on desktop */}
       <div
-        className={`w-full h-full max-h-full flex flex-col relative bg-[#f0fdf4] overflow-hidden ${
+        className={`w-full h-full max-h-full flex flex-col relative bg-[#f0fdf4] overflow-hidden print-flow-unlock ${
           layout.isFullBleed ? 'max-w-none' : 'max-w-md shadow-2xl border-x border-emerald-200/70'
         }`}
       >

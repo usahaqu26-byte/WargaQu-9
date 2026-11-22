@@ -48,9 +48,19 @@ import {
   GitBranch,
   ArrowRightLeft,
   Users,
+  Download,
+  Loader2,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { FamilyMember, TrahCategory } from './LeluhurQuView';
 import { MonetizationService } from '../../services/monetizationService';
+import { isNativeCapacitorApk } from '../../services/appOriginService';
+import {
+  upscaleImageToHdDataUrl,
+  upscalePhotoMap,
+  dataUrlToBlob,
+  saveOrShareFileBlob,
+} from '../../utils/imageUpscale';
 import {
   DEVICE_PAIRING_SYNC_EVENT,
   PairingSyncEventDetail,
@@ -1491,6 +1501,16 @@ export const InteractiveGridCanvasView: React.FC<
   const [isMultiSelectMode, setIsMultiSelectMode] = useState<boolean>(false);
   const [snapToGrid, setSnapToGrid] = useState<boolean>(true);
   const [showPrintFeeModal, setShowPrintFeeModal] = useState<boolean>(false);
+  const [pendingExportAction, setPendingExportAction] = useState<'print' | 'png' | 'pdf'>('print');
+  const [isExportingPoster, setIsExportingPoster] = useState<boolean>(false);
+  const [exportPhotoMap, setExportPhotoMap] = useState<Record<string, string> | null>(null);
+  const [posterPreviewModal, setPosterPreviewModal] = useState<{
+    dataUrl: string;
+    filename: string;
+    width: number;
+    height: number;
+    upscaledCount: number;
+  } | null>(null);
 
   // Kertas A0 - A4 & Orientasi
   const [paperSize, setPaperSize] = useState<GridPaperSize>('a3');
@@ -1694,6 +1714,248 @@ export const InteractiveGridCanvasView: React.FC<
     paperOrientation === 'landscape' ? paperDim.pxW : paperDim.pxH;
   const boardHeight =
     paperOrientation === 'landscape' ? paperDim.pxH : paperDim.pxW;
+  const printPaperWmm =
+    paperOrientation === 'landscape' ? paperDim.wMm : paperDim.hMm;
+  const printPaperHmm =
+    paperOrientation === 'landscape' ? paperDim.hMm : paperDim.wMm;
+
+  const collectBoardPhotoUrls = useCallback((): string[] => {
+    const urls: string[] = [];
+    nodes.forEach((n) => {
+      if (n.photo) urls.push(n.photo);
+      if (n.mergedMembers) {
+        n.mergedMembers.forEach((mm) => {
+          if (mm.photo) urls.push(mm.photo);
+        });
+      }
+    });
+    return Array.from(new Set(urls.filter(Boolean)));
+  }, [nodes]);
+
+  const injectDynamicPrintPageStyle = useCallback(() => {
+    const styleId = 'leluhur-grid-print-page-style';
+    let styleEl = document.getElementById(styleId) as HTMLStyleElement | null;
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = styleId;
+      document.head.appendChild(styleEl);
+    }
+    styleEl.textContent = `
+      @page {
+        size: ${printPaperWmm}mm ${printPaperHmm}mm;
+        margin: 0;
+      }
+      @media print {
+        #printable-pcb-preview {
+          width: ${boardWidth}px !important;
+          height: ${boardHeight}px !important;
+          transform: scale(1) !important;
+          transform-origin: top left !important;
+        }
+      }
+    `;
+  }, [printPaperWmm, printPaperHmm, boardWidth, boardHeight]);
+
+  const executeGridPrint = useCallback(async () => {
+    if (isExportingPoster) return;
+    setIsExportingPoster(true);
+    try {
+      injectDynamicPrintPageStyle();
+      const photoUrls = collectBoardPhotoUrls();
+      if (photoUrls.length > 0) {
+        showNotification(`Menyiapkan cetak ${paperDim.label} & Auto-Upscale ${photoUrls.length} foto...`);
+        const upscaledMap = await upscalePhotoMap(photoUrls, {
+          scaleFactor: 2.5,
+          minDimension: 840,
+          maxDimension: 1280,
+          outputMime: 'image/jpeg',
+          quality: 0.94,
+        });
+        setExportPhotoMap(upscaledMap);
+        await new Promise((r) => window.setTimeout(r, 140));
+      }
+      const cleanupAfterPrint = () => {
+        setExportPhotoMap(null);
+        window.removeEventListener('afterprint', cleanupAfterPrint);
+      };
+      window.addEventListener('afterprint', cleanupAfterPrint);
+      window.print();
+      window.setTimeout(cleanupAfterPrint, 4500);
+      if (isNativeCapacitorApk()) {
+        showNotification(
+          `Jika dialog cetak Android tidak muncul di APK, gunakan tombol "PNG HD" atau "PDF" di sebelahnya!`
+        );
+      }
+    } finally {
+      setIsExportingPoster(false);
+    }
+  }, [
+    isExportingPoster,
+    injectDynamicPrintPageStyle,
+    collectBoardPhotoUrls,
+    paperDim.label,
+    showNotification,
+  ]);
+
+  const executeGridPosterExport = useCallback(
+    async (format: 'png' | 'pdf') => {
+      if (isExportingPoster || !boardRef.current) return;
+      setIsExportingPoster(true);
+      try {
+        const photoUrls = collectBoardPhotoUrls();
+        showNotification(
+          photoUrls.length > 0
+            ? `Auto-Upscale ${photoUrls.length} foto & merender poster ${paperDim.label} penuh warna...`
+            : `Merender poster ${paperDim.label} penuh warna...`
+        );
+
+        const upscaledMap =
+          photoUrls.length > 0
+            ? await upscalePhotoMap(photoUrls, {
+                scaleFactor: 2.5,
+                minDimension: 880,
+                maxDimension: 1360,
+                outputMime: 'image/jpeg',
+                quality: 0.94,
+              })
+            : {};
+
+        if (photoUrls.length > 0) {
+          setExportPhotoMap(upscaledMap);
+          await new Promise((r) => window.setTimeout(r, 160));
+        }
+
+        const pixelRatioByPaper: Record<GridPaperSize, number> = {
+          a4: 2.5,
+          a3: 2.0,
+          a2: 1.5,
+          a1: 1.25,
+          a0: 1.0,
+        };
+        const pixelRatio = pixelRatioByPaper[paperSize] || 1.8;
+        const captureOptions = {
+          width: boardWidth,
+          height: boardHeight,
+          pixelRatio,
+          skipFonts: true,
+          cacheBust: false,
+          style: {
+            transform: 'scale(1)',
+            transformOrigin: 'top left',
+            margin: '0',
+            borderRadius: '0',
+            boxShadow: 'none',
+            border: 'none',
+          },
+          filter: (domNode: HTMLElement) => {
+            if (domNode && domNode.classList && domNode.classList.contains('print:hidden')) {
+              return false;
+            }
+            return true;
+          },
+        };
+
+        const safeTrah = (designNameInput || activeTrah.name || 'Silsilah_Trah')
+          .replace(/[^a-zA-Z0-9\s_-]/g, '')
+          .trim()
+          .replace(/\s+/g, '_');
+
+        const { toPng, toJpeg } = await import('html-to-image');
+
+        if (format === 'png') {
+          const dataUrl = await toPng(boardRef.current, captureOptions);
+          const filename = `${safeTrah || 'Poster_Silsilah'}_${paperDim.label}_HD.png`;
+          const blob = dataUrlToBlob(dataUrl);
+          const method = await saveOrShareFileBlob(
+            blob,
+            filename,
+            `Poster Silsilah ${activeTrah.name} (${paperDim.label})`
+          );
+          if (isNativeCapacitorApk() || method === 'downloaded') {
+            setPosterPreviewModal({
+              dataUrl,
+              filename,
+              width: Math.round(boardWidth * pixelRatio),
+              height: Math.round(boardHeight * pixelRatio),
+              upscaledCount: photoUrls.length,
+            });
+          }
+          showNotification(
+            `Poster ${paperDim.label} HD penuh warna selesai (${photoUrls.length} foto auto-upscale)!`
+          );
+        } else {
+          const [{ jsPDF }, imgData] = await Promise.all([
+            import('jspdf'),
+            toJpeg(boardRef.current, { ...captureOptions, quality: 0.95 }),
+          ]);
+          const pdf = new jsPDF({
+            orientation: paperOrientation,
+            unit: 'mm',
+            format: [printPaperWmm, printPaperHmm],
+            compress: true,
+          });
+          pdf.addImage(imgData, 'JPEG', 0, 0, printPaperWmm, printPaperHmm);
+          const pdfBlob = pdf.output('blob');
+          const filename = `${safeTrah || 'Poster_Silsilah'}_${paperDim.label}.pdf`;
+          await saveOrShareFileBlob(
+            pdfBlob,
+            filename,
+            `Poster PDF ${activeTrah.name} (${paperDim.label})`
+          );
+          showNotification(
+            `PDF ${paperDim.label} penuh warna berhasil dibuat (${photoUrls.length} foto auto-upscale)!`
+          );
+        }
+      } catch (err) {
+        console.error('Gagal ekspor poster Grid:', err);
+        showNotification('Gagal mengekspor poster. Silakan coba tombol Cetak atau ukuran kertas lebih kecil.');
+      } finally {
+        setExportPhotoMap(null);
+        setIsExportingPoster(false);
+      }
+    },
+    [
+      isExportingPoster,
+      collectBoardPhotoUrls,
+      paperDim.label,
+      paperSize,
+      boardWidth,
+      boardHeight,
+      designNameInput,
+      activeTrah.name,
+      paperOrientation,
+      printPaperWmm,
+      printPaperHmm,
+      showNotification,
+    ]
+  );
+
+  const handleTriggerGridExportAction = useCallback(
+    (action: 'print' | 'png' | 'pdf') => {
+      const rule = MonetizationService.getRule('leluhurqu_export');
+      if (rule.enabled && !MonetizationService.hasActiveUnlock('leluhurqu_export')) {
+        setPendingExportAction(action);
+        setShowPrintFeeModal(true);
+        return;
+      }
+      if (action === 'print') {
+        void executeGridPrint();
+      } else {
+        void executeGridPosterExport(action);
+      }
+    },
+    [executeGridPrint, executeGridPosterExport]
+  );
+
+  useEffect(() => {
+    const onSidebarPrint = () => {
+      handleTriggerGridExportAction('print');
+    };
+    window.addEventListener('leluhurqu:trigger-grid-print', onSidebarPrint);
+    return () => {
+      window.removeEventListener('leluhurqu:trigger-grid-print', onSidebarPrint);
+    };
+  }, [handleTriggerGridExportAction]);
 
   const designsStorageKey = `${DESIGNS_STORAGE_PREFIX}${activeTrah.id}`;
   const activeDesignIdKey = `${ACTIVE_DESIGN_ID_PREFIX}${activeTrah.id}`;
@@ -4442,17 +4704,17 @@ export const InteractiveGridCanvasView: React.FC<
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const maxSize = 220;
+        const maxSize = 400;
         let w = img.width;
         let h = img.height;
         if (w > h) {
           if (w > maxSize) {
-            h *= maxSize / w;
+            h = Math.round((h * maxSize) / w);
             w = maxSize;
           }
         } else {
           if (h > maxSize) {
-            w *= maxSize / h;
+            w = Math.round((w * maxSize) / h);
             h = maxSize;
           }
         }
@@ -4460,10 +4722,12 @@ export const InteractiveGridCanvasView: React.FC<
         canvas.height = h;
         const ctx = canvas.getContext('2d');
         if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
           ctx.drawImage(img, 0, 0, w, h);
-          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
           updateSelectedField({ photo: compressedDataUrl });
-          showNotification('Foto dikompres ringan & dipasang!');
+          showNotification('Foto dikompres ringan (400px) & siap di-upscale HD saat unduh/cetak!');
         }
       };
       img.src = evt.target?.result as string;
@@ -4542,12 +4806,12 @@ export const InteractiveGridCanvasView: React.FC<
     <div
       className={
         isFocusMode
-          ? `fixed inset-0 z-50 flex flex-col overflow-hidden ${
+          ? `fixed inset-0 z-50 flex flex-col overflow-hidden print-flow-unlock ${
               isDark
                 ? 'bg-[#0b1120] text-slate-100'
                 : 'bg-[#e2e8f0] text-slate-900'
             }`
-          : `flex-1 flex flex-col overflow-hidden rounded-2xl border shadow-lg ${
+          : `flex-1 flex flex-col overflow-hidden rounded-2xl border shadow-lg print-flow-unlock ${
               isDark
                 ? 'bg-[#0f172a] border-slate-800 text-slate-100'
                 : 'bg-[#f1f5f9] border-stone-300 text-slate-900'
@@ -4559,7 +4823,7 @@ export const InteractiveGridCanvasView: React.FC<
       {/* ========================================================= */}
       {!isFocusMode && (
       <div
-        className={`px-3 py-1.5 border-b flex flex-wrap items-center justify-between gap-1.5 shrink-0 z-20 ${
+        className={`px-3 py-1.5 border-b flex flex-wrap items-center justify-between gap-1.5 shrink-0 z-20 print:hidden ${
           isDark
             ? 'bg-[#1e293b] border-slate-700'
             : 'bg-white border-stone-200'
@@ -4796,16 +5060,36 @@ export const InteractiveGridCanvasView: React.FC<
 
           <button
             type="button"
-            onClick={() => {
-              const rule = MonetizationService.getRule('leluhurqu_export');
-              if (rule.enabled && !MonetizationService.hasActiveUnlock('leluhurqu_export')) {
-                setShowPrintFeeModal(true);
-                return;
-              }
-              window.print();
-            }}
-            className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-black flex items-center gap-1"
-            title={`Cetak ke ukuran ${paperDim.label}`}
+            disabled={isExportingPoster}
+            onClick={() => handleTriggerGridExportAction('png')}
+            className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-[11px] font-black flex items-center gap-1"
+            title={`Unduh Gambar PNG HD ${paperDim.label} (Full Color + Foto Auto-Upscale)`}
+          >
+            {isExportingPoster ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Download className="w-3.5 h-3.5" />
+            )}
+            <span>PNG HD</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isExportingPoster}
+            onClick={() => handleTriggerGridExportAction('pdf')}
+            className="px-2 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-60 text-white text-[11px] font-black flex items-center gap-1"
+            title={`Unduh PDF ${paperDim.label} Siap Cetak (Full Color + Auto-Upscale)`}
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>PDF</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isExportingPoster}
+            onClick={() => handleTriggerGridExportAction('print')}
+            className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 text-[11px] font-black flex items-center gap-1"
+            title={`Cetak langsung ukuran ${paperDim.label} penuh warna`}
           >
             <Printer className="w-3.5 h-3.5" />
             <span>Cetak {paperDim.label}</span>
@@ -4817,14 +5101,14 @@ export const InteractiveGridCanvasView: React.FC<
       {/* ========================================================= */}
       {/* WORKSPACE: SIDEBAR EDIT / DESAIN + KANVAS A0-A4           */}
       {/* ========================================================= */}
-      <div className="flex-1 flex overflow-hidden relative">
+      <div className="flex-1 flex overflow-hidden relative print-flow-unlock">
         {isPanelOpen && (
           <aside
             className={`${
               isFocusMode
                 ? 'absolute left-2 top-14 bottom-16 rounded-2xl border shadow-2xl z-40 w-[290px] sm:w-[320px]'
                 : 'absolute sm:relative left-0 top-0 bottom-0 w-[290px] sm:w-[320px] shrink-0 border-r z-30 shadow-xl sm:shadow-none'
-            } p-3.5 flex flex-col gap-3 overflow-y-auto ${
+            } p-3.5 flex flex-col gap-3 overflow-y-auto print:hidden ${
               isDark
                 ? 'bg-[#1e293b]/95 backdrop-blur-md border-slate-700 text-slate-100'
                 : 'bg-white/95 backdrop-blur-md border-stone-200 text-stone-800'
@@ -6571,6 +6855,41 @@ export const InteractiveGridCanvasView: React.FC<
                             className="hidden"
                           />
                         </label>
+                        {primarySelectedNode.photo && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                showNotification('Meng-upscale foto ke HD (2.5× tajam & penuh warna)...');
+                                const hdUrl = await upscaleImageToHdDataUrl(
+                                  primarySelectedNode.photo,
+                                  {
+                                    scaleFactor: 2.5,
+                                    minDimension: 960,
+                                    maxDimension: 1440,
+                                    outputMime: 'image/png',
+                                  }
+                                );
+                                const safeName = (primarySelectedNode.name || 'Anggota')
+                                  .replace(/[^a-zA-Z0-9\s_-]/g, '')
+                                  .trim()
+                                  .replace(/\s+/g, '_');
+                                await saveOrShareFileBlob(
+                                  dataUrlToBlob(hdUrl),
+                                  `${safeName || 'Foto'}_HD_Upscale.png`,
+                                  `Foto HD ${primarySelectedNode.name}`
+                                );
+                                showNotification('Foto HD hasil auto-upscale berhasil diunduh!');
+                              } catch {
+                                showNotification('Gagal mengunduh foto HD.');
+                              }
+                            }}
+                            className="mt-1.5 w-full py-1.5 px-2.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 text-[10.5px] font-bold flex items-center justify-center gap-1.5"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Unduh Foto HD (Auto-Upscale 2.5×)</span>
+                          </button>
+                        )}
                       </div>
 
                       <label className="flex items-center gap-2 cursor-pointer text-[11px] font-medium">
@@ -6647,11 +6966,12 @@ export const InteractiveGridCanvasView: React.FC<
           onTouchStart={handleViewportTouchStart}
           onWheel={handleViewportWheel}
           style={{ touchAction: isPanMode ? 'none' : 'pan-x pan-y' }}
-          className={`flex-1 overflow-auto flex relative ${
+          className={`flex-1 overflow-auto flex relative print-flow-unlock ${
             isFocusMode ? 'p-3 sm:p-5' : 'p-4 sm:p-6'
           } ${isPanMode ? 'cursor-grab active:cursor-grabbing' : ''}`}
         >
           <div
+            id="printable-pcb-preview-shell"
             className="m-auto shrink-0"
             style={{
               width: `${boardWidth * zoom}px`,
@@ -6659,6 +6979,7 @@ export const InteractiveGridCanvasView: React.FC<
             }}
           >
             <div
+              id="printable-pcb-preview"
               ref={boardRef}
               onMouseDown={handleBoardMouseDown}
               style={{
@@ -6675,7 +6996,7 @@ export const InteractiveGridCanvasView: React.FC<
               {/* Watermark Info Kertas & Desain Aktif (Khusus Layar) */}
               <div className="absolute top-3 left-4 z-10 flex items-center gap-2 pointer-events-none opacity-85 print:hidden">
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-black/50 text-amber-300 border border-amber-400/30 backdrop-blur-xs">
-                  {paperDim.label} {paperOrientation === 'landscape' ? 'Lanskap' : 'Potret'} ({paperDim.wMm}×{paperDim.hMm}mm)
+                  {paperDim.label} {paperOrientation === 'landscape' ? 'Lanskap' : 'Potret'} ({printPaperWmm}×{printPaperHmm}mm)
                 </span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-black/40 text-white/85">
                   {designNameInput || activeTrah.name} • {nodes.length} Kartu
@@ -7247,6 +7568,9 @@ export const InteractiveGridCanvasView: React.FC<
                     ? 'bg-stone-100 text-amber-700'
                     : 'bg-[#0f172a] text-amber-400';
 
+                  const resolvedPhotoSrc =
+                    (photoUrl && exportPhotoMap?.[photoUrl]) || photoUrl;
+
                   if (resolvedShape === 'segi6') {
                     return (
                       <div
@@ -7263,9 +7587,9 @@ export const InteractiveGridCanvasView: React.FC<
                           style={{ clipPath: HEXAGON_CLIP_PATH }}
                           className={`w-full h-full overflow-hidden flex items-center justify-center font-extrabold text-[10px] ${innerBgClass}`}
                         >
-                          {photoUrl ? (
+                          {resolvedPhotoSrc ? (
                             <img
-                              src={photoUrl}
+                              src={resolvedPhotoSrc}
                               alt={altName}
                               className="w-full h-full object-cover pointer-events-none"
                             />
@@ -7288,9 +7612,9 @@ export const InteractiveGridCanvasView: React.FC<
                         resolvedShape === 'bulat' ? 'rounded-full' : 'rounded-[5px]'
                       } ${extraMarginClass}`}
                     >
-                      {photoUrl ? (
+                      {resolvedPhotoSrc ? (
                         <img
-                          src={photoUrl}
+                          src={resolvedPhotoSrc}
                           alt={altName}
                           className="w-full h-full object-cover pointer-events-none"
                         />
@@ -8238,6 +8562,28 @@ export const InteractiveGridCanvasView: React.FC<
               <Save className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Simpan</span>
             </button>
+
+            <button
+              type="button"
+              disabled={isExportingPoster}
+              onClick={() => handleTriggerGridExportAction('png')}
+              className="px-2 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black flex items-center gap-1 shadow-lg"
+              title={`Unduh PNG HD ${paperDim.label} (Full Color + Auto-Upscale)`}
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">PNG</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isExportingPoster}
+              onClick={() => handleTriggerGridExportAction('print')}
+              className="px-2 py-1.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 text-[11px] font-black flex items-center gap-1 shadow-lg"
+              title={`Cetak Poster ${paperDim.label}`}
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Cetak</span>
+            </button>
           </div>
         )}
 
@@ -8572,7 +8918,7 @@ export const InteractiveGridCanvasView: React.FC<
       {/* Status Bar Bawah Kanvas (Ringkas) */}
       {!isFocusMode && (
       <div
-        className={`px-3 py-1 border-t text-[10px] flex items-center justify-between gap-2 shrink-0 ${
+        className={`px-3 py-1 border-t text-[10px] flex items-center justify-between gap-2 shrink-0 print:hidden ${
           isDark
             ? 'bg-slate-900 border-slate-800 text-slate-400'
             : 'bg-stone-50 border-stone-200 text-stone-600'
@@ -8596,15 +8942,88 @@ export const InteractiveGridCanvasView: React.FC<
       <ModularFeeSheet
         isOpen={showPrintFeeModal}
         moduleId="leluhurqu_export"
-        actionLabel={`Cetak Poster Silsilah ${paperDim.label}`}
+        actionLabel={
+          pendingExportAction === 'png'
+            ? `Unduh PNG HD Silsilah ${paperDim.label}`
+            : pendingExportAction === 'pdf'
+            ? `Unduh PDF Silsilah ${paperDim.label}`
+            : `Cetak Poster Silsilah ${paperDim.label}`
+        }
         unlockModule={true}
         onClose={() => setShowPrintFeeModal(false)}
         onPaid={() => {
           setShowPrintFeeModal(false);
-          setTimeout(() => window.print(), 150);
+          setTimeout(() => {
+            if (pendingExportAction === 'print') {
+              void executeGridPrint();
+            } else {
+              void executeGridPosterExport(pendingExportAction);
+            }
+          }, 150);
         }}
         showNotification={showNotification}
       />
+
+      {/* Modal Pratinjau Hasil Unduh Poster HD (Khusus mempermudah Simpan/Bagikan di APK Android & HP) */}
+      {posterPreviewModal && (
+        <div className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 print:hidden">
+          <div className="w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden text-slate-100 flex flex-col max-h-[90dvh]">
+            <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h3 className="text-xs sm:text-sm font-black text-amber-300 flex items-center gap-1.5 truncate">
+                  <ImageIcon className="w-4 h-4 shrink-0" />
+                  <span>Poster Silsilah HD Siap (Penuh Warna)</span>
+                </h3>
+                <p className="text-[10.5px] text-slate-400 truncate">
+                  {posterPreviewModal.width} × {posterPreviewModal.height} px •{' '}
+                  {posterPreviewModal.upscaledCount > 0
+                    ? `${posterPreviewModal.upscaledCount} foto otomatis di-upscale 2.5× tajam`
+                    : 'Resolusi tinggi penuh warna'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPosterPreviewModal(null)}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-3 bg-slate-950 overflow-auto flex-1 flex items-center justify-center">
+              <img
+                src={posterPreviewModal.dataUrl}
+                alt={posterPreviewModal.filename}
+                className="max-w-full max-h-[60dvh] object-contain rounded-lg border border-slate-800 shadow-lg"
+              />
+            </div>
+            <div className="px-4 py-3 border-t border-slate-800 flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  const blob = dataUrlToBlob(posterPreviewModal.dataUrl);
+                  await saveOrShareFileBlob(
+                    blob,
+                    posterPreviewModal.filename,
+                    `Poster Silsilah ${activeTrah.name}`
+                  );
+                  showNotification(`Menyimpan / membagikan ${posterPreviewModal.filename}...`);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs flex items-center gap-1.5"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Simpan / Bagikan PNG HD</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPosterPreviewModal(null)}
+                className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
