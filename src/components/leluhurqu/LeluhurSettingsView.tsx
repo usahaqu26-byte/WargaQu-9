@@ -198,7 +198,7 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
     };
     setDraftProfile(cleaned);
     onUpdateAccountProfile(cleaned);
-    showNotification('Profil akun LeluhurQu berhasil disimpan!');
+    showNotification('Profil akun NasabQu berhasil disimpan!');
   };
 
   const startEditTrah = (t: TrahCategory) => {
@@ -859,7 +859,7 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
                 <span>Pulihkan Cadangan (.JSON)</span>
               </div>
               <p className="text-[11px] text-stone-600">
-                Impor kembali file cadangan <code className="font-mono">.json</code> yang pernah diunduh dari LeluhurQu.
+                Impor kembali file cadangan <code className="font-mono">.json</code> yang pernah diunduh dari NasabQu.
               </p>
               <input
                 ref={backupInputRef}
@@ -904,7 +904,7 @@ export const LeluhurSettingsView: React.FC<LeluhurSettingsViewProps> = ({
           {/* Menu Awal */}
           <div className="space-y-1.5">
             <label className="text-xs font-extrabold text-stone-800 block">
-              Menu Utama Saat LeluhurQu Dibuka
+              Menu Utama Saat NasabQu Dibuka
             </label>
             <div className="grid grid-cols-3 gap-2">
               {[

@@ -1,5 +1,12 @@
+import { APP_VERSION } from '../config/appVersion';
+import { buildApiUrl, isNativeCapacitorApk } from './appOriginService';
 import { AuthService } from './authService';
-import { RealtimeRelayService } from './realtimeRelayService';
+import { GuideModuleId, MODULE_GUIDES } from './moduleOnboardingService';
+import {
+  getAccountSessionChannel,
+  RealtimeRelayService,
+  RelayConnectionState,
+} from './realtimeRelayService';
 
 export type SmartCareTriageStatus =
   | 'new'
@@ -19,6 +26,20 @@ export interface SmartCareReporterNote {
   time: string;
 }
 
+export interface SafeDiagnosticsSnapshot {
+  container: 'apk' | 'pwa';
+  appVersion: string;
+  online: boolean;
+  relayStatus: RelayConnectionState;
+  storageUsedKb: number;
+  storageLimitKb: number;
+  storagePct: number;
+  hasLoggedInAccount: boolean;
+  accountRoleLabel: string;
+  collectedAt: string;
+  warnings: string[];
+}
+
 export interface SmartCareLogEntry {
   id: string;
   complaint: string;
@@ -30,6 +51,7 @@ export interface SmartCareLogEntry {
   reporterName: string;
   reporterEmail?: string;
   reporterPhone?: string;
+  reporterKey?: string;
   hiddenDeviceId?: string;
   createdAt: string;
   updatedAt: string;
@@ -38,6 +60,12 @@ export interface SmartCareLogEntry {
   reporters: SmartCareReporterNote[];
   mergedIntoId?: string;
   sentToAdminAt?: string;
+  aiSummary?: string;
+  aiQuickSteps?: string[];
+  adminReply?: string;
+  adminReplyAt?: string;
+  adminRepliedBy?: string;
+  diagnosticsSnapshot?: SafeDiagnosticsSnapshot;
 }
 
 export interface SimilarityAnalysis {
@@ -45,6 +73,33 @@ export interface SimilarityAnalysis {
   label: 'Sama Persis' | 'Mirip' | 'Baru';
   score: number; // 0..1
   matchedEntry?: SmartCareLogEntry;
+}
+
+export interface SmartCareAiChatResult {
+  reply: string;
+  detectedModule: string;
+  severity: 'High Severity' | 'Medium' | 'Low';
+  quickSteps: string[];
+  recommendedTarget: 'panduan' | 'akun' | 'escalate' | 'none';
+  recommendedGuideId?: GuideModuleId | '';
+  needsAdminEscalation: boolean;
+  escalatedSummary: string;
+  suggestedFixPrompt: string;
+}
+
+export interface SmartCareChatTurn {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  timestamp: string;
+  aiMeta?: SmartCareAiChatResult;
+}
+
+export interface OfflineGuideMatch {
+  moduleId: GuideModuleId;
+  moduleName: string;
+  questionOrTitle: string;
+  answer: string;
 }
 
 export const SMART_CARE_SYNC_EVENT = 'wargaqu-smartcare-sync';
@@ -90,7 +145,6 @@ const STOP_WORDS = new Set([
   'mau',
   'jadi',
   'nya',
-  'di',
 ]);
 
 function normalizeTokens(text: string): string[] {
@@ -112,11 +166,12 @@ function nowLabel(): string {
 }
 
 function detectDeviceSummary(): string {
-  if (typeof navigator === 'undefined') return 'User Device';
+  const containerLabel = isNativeCapacitorApk() ? 'APK Android' : 'Web / PWA';
+  if (typeof navigator === 'undefined') return containerLabel;
   const ua = navigator.userAgent || '';
-  if (/Android/i.test(ua)) return 'Android Browser / PWA';
-  if (/iPhone|iPad|iPod/i.test(ua)) return 'iOS Safari / PWA';
-  return 'Desktop / Web Browser';
+  if (/Android/i.test(ua)) return `${containerLabel} (Android v${APP_VERSION})`;
+  if (/iPhone|iPad|iPod/i.test(ua)) return `${containerLabel} (iOS v${APP_VERSION})`;
+  return `${containerLabel} (Desktop v${APP_VERSION})`;
 }
 
 function loadLogs(): SmartCareLogEntry[] {
@@ -156,6 +211,180 @@ export const SmartCareService = {
     return OWNER_EMAILS.includes(email);
   },
 
+  getReporterKey(): string {
+    const acc = AuthService.getAccount();
+    if (acc?.email) {
+      return `email:${acc.email.trim().toLowerCase()}`;
+    }
+    return `dev:${AuthService.getHiddenDeviceId()}`;
+  },
+
+  collectSafeDiagnostics(): SafeDiagnosticsSnapshot {
+    const container: 'apk' | 'pwa' = isNativeCapacitorApk() ? 'apk' : 'pwa';
+    const online = typeof navigator !== 'undefined' ? navigator.onLine !== false : true;
+    const relayStatus = RealtimeRelayService.getStatus();
+    const acc = AuthService.getAccount();
+    const hasLoggedInAccount = Boolean(acc?.email);
+
+    let totalBytes = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        const val = localStorage.getItem(key) || '';
+        totalBytes += (key.length + val.length) * 2;
+      }
+    } catch {
+      // ignore storage read issues
+    }
+
+    const storageLimitKb = 5120;
+    const storageUsedKb = Math.round(totalBytes / 1024);
+    const storagePct = Math.min(100, Math.round((storageUsedKb / storageLimitKb) * 100));
+
+    const warnings: string[] = [];
+    if (!online) {
+      warnings.push('Perangkat sedang offline — asisten AI & sinkronisasi relay menunggu internet.');
+    } else if (relayStatus === 'offline') {
+      warnings.push('Koneksi Relay Real-Time sedang terputus; coba muat ulang jika sinkronisasi tertunda.');
+    }
+    if (storagePct >= 80) {
+      warnings.push(
+        `Penyimpanan lokal terpakai ${storagePct}%. Disarankan ekspor cadangan .wqbak & bersihkan cache tidak terpakai.`
+      );
+    }
+    if (!hasLoggedInAccount) {
+      warnings.push(
+        'Akun berjalan dalam Mode Tamu — login Email + No HP untuk mengaktifkan sinkronisasi sesi tunggal & backup APK/PWA.'
+      );
+    }
+
+    return {
+      container,
+      appVersion: APP_VERSION,
+      online,
+      relayStatus,
+      storageUsedKb,
+      storageLimitKb,
+      storagePct,
+      hasLoggedInAccount,
+      accountRoleLabel: hasLoggedInAccount
+        ? this.isDeveloperOrAdmin()
+          ? 'Admin / Developer'
+          : 'Anggota Terverifikasi'
+        : 'Tamu Lokal',
+      collectedAt: nowLabel(),
+      warnings,
+    };
+  },
+
+  findOfflineModuleFaq(query: string): OfflineGuideMatch[] {
+    const tokens = normalizeTokens(query);
+    if (tokens.length === 0) return [];
+
+    const scored: Array<{ score: number; match: OfflineGuideMatch }> = [];
+
+    for (const guide of MODULE_GUIDES) {
+      for (const faq of guide.faq) {
+        const hay = `${guide.name} ${faq.q} ${faq.a}`.toLowerCase();
+        const hits = tokens.filter((t) => hay.includes(t)).length;
+        if (hits > 0) {
+          scored.push({
+            score: hits + 0.5,
+            match: {
+              moduleId: guide.id,
+              moduleName: guide.name,
+              questionOrTitle: faq.q,
+              answer: faq.a,
+            },
+          });
+        }
+      }
+      for (const step of guide.steps) {
+        const hay = `${guide.name} ${step.title} ${step.desc}`.toLowerCase();
+        const hits = tokens.filter((t) => hay.includes(t)).length;
+        if (hits >= 2) {
+          scored.push({
+            score: hits,
+            match: {
+              moduleId: guide.id,
+              moduleName: guide.name,
+              questionOrTitle: step.title,
+              answer: step.desc,
+            },
+          });
+        }
+      }
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, 3).map((s) => s.match);
+  },
+
+  async askGeminiSmartCare(params: {
+    messages: Array<{ role: 'user' | 'assistant'; text: string }>;
+    diagnostics?: SafeDiagnosticsSnapshot;
+  }): Promise<SmartCareAiChatResult> {
+    const diagnostics = params.diagnostics || this.collectSafeDiagnostics();
+    const res = await fetch(buildApiUrl('/api/smartcare/chat'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'user_assist',
+        messages: params.messages.slice(-10),
+        diagnostics,
+      }),
+    });
+
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      error?: string;
+      result?: SmartCareAiChatResult;
+    };
+
+    if (!res.ok || !data?.ok || !data?.result) {
+      throw new Error(
+        data?.error ||
+          `Gagal menghubungi WargaQu Smart Care AI (HTTP ${res.status || 500}).`
+      );
+    }
+
+    return data.result;
+  },
+
+  async draftAdminReplyWithAi(ticket: SmartCareLogEntry): Promise<SmartCareAiChatResult> {
+    const res = await fetch(buildApiUrl('/api/smartcare/chat'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'admin_reply_draft',
+        ticketContext: {
+          ticketId: ticket.id,
+          reporterName: ticket.reporterName,
+          module: ticket.module,
+          detectedError: ticket.detectedError,
+          complaint: ticket.complaint,
+        },
+        diagnostics: ticket.diagnosticsSnapshot || this.collectSafeDiagnostics(),
+      }),
+    });
+
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      error?: string;
+      result?: SmartCareAiChatResult;
+    };
+
+    if (!res.ok || !data?.ok || !data?.result) {
+      throw new Error(
+        data?.error ||
+          `Gagal menyusun draf balasan AI (HTTP ${res.status || 500}).`
+      );
+    }
+
+    return data.result;
+  },
+
   analyzeComplaint(rawComplaint: string): {
     module: string;
     detectedError: string;
@@ -166,7 +395,7 @@ export const SmartCareService = {
     const lower = text.toLowerCase();
 
     let module = 'src/App.tsx -> generalWorkflow()';
-    let detectedError = 'Runtime Logic Exception / User Reported Issue';
+    let detectedError = 'User Reported Issue / Workflow Inquiry';
     let severity: SmartCareSeverity = 'Auto Analyzed';
     let specificSteps = [
       'Analisa alur komponen terkait sesuai deskripsi keluhan user di atas.',
@@ -182,22 +411,45 @@ export const SmartCareService = {
       lower.includes('struk') ||
       lower.includes('nota')
     ) {
-      module = 'services/printer.ts -> printReceipt()';
-      detectedError = 'Bluetooth Connection Drop / Null Pointer Exception';
-      severity = 'High Severity';
-      specificSteps = [
-        'Tambahkan try-catch dan pengecekan koneksi printer Bluetooth sebelum mengirim ESC/POS buffer.',
-        'Simpan transaksi lebih dulu ke localStorage agar nota tidak hilang bila printer gagal cetak.',
-        'Sediakan fallback cetak PDF / browser print bila Web Bluetooth terputus.',
-      ];
-    } else if (lower.includes('trah') || lower.includes('leluhur') || lower.includes('silsilah') || lower.includes('grid')) {
+      if (
+        lower.includes('trah') ||
+        lower.includes('nasab') ||
+        lower.includes('leluhur') ||
+        lower.includes('grid') ||
+        lower.includes('silsilah')
+      ) {
+        module = 'components/leluhurqu/InteractiveGridCanvasView.tsx -> printGridPdf()';
+        detectedError = 'NasabQu Grid Print / Card Export Layout';
+        severity = 'Medium';
+        specificSteps = [
+          'Periksa aturan print CSS full-color (print-color-adjust: exact) serta scaling kertas A0–A4 di InteractiveGridCanvasView.',
+          'Pastikan auto-upscale foto anggota berjalan sebelum ekspor PNG/PDF.',
+        ];
+      } else {
+        module = 'services/printer.ts -> printReceipt()';
+        detectedError = 'Bluetooth Connection Drop / Print Fallback';
+        severity = 'High Severity';
+        specificSteps = [
+          'Tambahkan try-catch dan pengecekan koneksi printer Bluetooth sebelum mengirim ESC/POS buffer.',
+          'Simpan transaksi lebih dulu ke localStorage agar nota tidak hilang bila printer gagal cetak.',
+          'Sediakan fallback cetak PDF / browser print bila Web Bluetooth terputus.',
+        ];
+      }
+    } else if (
+      lower.includes('trah') ||
+      lower.includes('nasab') ||
+      lower.includes('leluhur') ||
+      lower.includes('silsilah') ||
+      lower.includes('grid') ||
+      lower.includes('card') ||
+      lower.includes('upscale')
+    ) {
       module = 'components/leluhurqu/LeluhurQuView.tsx -> silsilahEngine()';
       detectedError = 'Trah Sync / Layout Canvas / Invite Token Issue';
       severity = 'Medium';
       specificSteps = [
-        'Periksa sinkronisasi penyimpanan per-akun, urutan anak (orderIndex), serta render semua node pada InteractiveGridCanvasView.',
-        'Pastikan link undangan pendek (?t=Q...) terdecode dan otomatis tersimpan ke akun penerima.',
-        'Catat perubahan ke log aktivitas Trah.',
+        'Periksa sinkronisasi penyimpanan per-akun, urutan anak (orderIndex), serta 3 mode card pada InteractiveGridCanvasView.',
+        'Pastikan alur 3 langkah (Ajukan -> Approve -> Tarik Pembaruan) memperbarui penanda waktu dan nomor versi modul.',
       ];
     } else if (
       lower.includes('rt') ||
@@ -223,41 +475,31 @@ export const SmartCareService = {
         'Pastikan circle keluarga/RT tujuan terverifikasi dan koordinat lokasi terkirim akurat.',
       ];
     } else if (
-      lower.includes('tampilan') ||
-      lower.includes('layar') ||
-      lower.includes('hp') ||
-      lower.includes('lebar') ||
-      lower.includes('kecil') ||
-      lower.includes('potong')
+      lower.includes('dompet') ||
+      lower.includes('saldo') ||
+      lower.includes('pin') ||
+      lower.includes('suara')
     ) {
-      module = 'components/AndroidFrame.tsx & Responsive Layout';
-      detectedError = 'Mobile Viewport / Desktop-Site Scaling Mismatch';
+      module = 'components/dompetqu/DompetQuView.tsx & dompetQuService.ts';
+      detectedError = 'DompetQu Voice Parse / Private Ledger Isolation';
       severity = 'Medium';
       specificSteps = [
-        'Periksa deteksi layar sentuh/mobile dan auto-scaling rem font-size pada AndroidFrame.tsx.',
-        'Pastikan kontainer bersifat full-bleed tanpa margin abu-abu berlebih di HP lain.',
+        'Pastikan endpoint /api/dompetqu/parse-speech menerima daftar kantong saldo aktif dan mengisolasi data per akun.',
       ];
-    } else if (lower.includes('stok') || lower.includes('habis') || lower.includes('bahan') || lower.includes('tempo')) {
-      module = 'services/storage.ts & ModularQuView.tsx -> updateStock()';
-      detectedError = 'Inventory Deduct Mismatch / Asynchronous State Delay';
-      severity = 'Medium';
-      specificSteps = [
-        'Sinkronkan pengurangan stok bahan/produk untuk transaksi tunai, QRIS, maupun pelunasan tempo.',
-        'Cegah stok minus atau double-deduct saat edit transaksi.',
-      ];
-    } else if (lower.includes('qris') || lower.includes('bayar') || lower.includes('kasir') || lower.includes('meja')) {
-      module = 'components/usahaqu & kasir -> handleCheckout()';
-      detectedError = 'Payment Flow / Order State Transition Lock';
+    } else if (
+      lower.includes('apk') ||
+      lower.includes('pwa') ||
+      lower.includes('login') ||
+      lower.includes('akun') ||
+      lower.includes('backup') ||
+      lower.includes('enkripsi') ||
+      lower.includes('sesi')
+    ) {
+      module = 'services/authService.ts & accountSyncService.ts';
+      detectedError = 'APK/PWA Single-Session / Encrypted Backup Sync';
       severity = 'High Severity';
       specificSteps = [
-        'Validasi nominal bayar, status meja, serta pencatatan ledger sebelum menutup modal pembayaran.',
-      ];
-    } else if (lower.includes('login') || lower.includes('akun') || lower.includes('backup') || lower.includes('enkripsi')) {
-      module = 'services/authService.ts & encryptedBackupService.ts';
-      detectedError = 'Account Scoping / Encrypted Backup Validation';
-      severity = 'High Severity';
-      specificSteps = [
-        'Pastikan scoping data per akun dan pemulihan file .wqbak berjalan konsisten setelah ganti akun.',
+        'Pastikan validasi sesi tunggal APK vs PWA berjalan terpisah dari sinkronisasi modul, dan auto-restore E2EE/.wqbak berjalan lancar.',
       ];
     }
 
@@ -275,6 +517,21 @@ ${specificSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`;
 
   getLogs(): SmartCareLogEntry[] {
     return loadLogs();
+  },
+
+  getMyTickets(): SmartCareLogEntry[] {
+    const acc = AuthService.getAccount();
+    const myEmail = acc?.email?.trim().toLowerCase() || '';
+    const myKey = this.getReporterKey();
+    const myDeviceId = acc?.deviceId || AuthService.getHiddenDeviceId();
+
+    return loadLogs().filter((l) => {
+      if (l.triageStatus === 'merged') return false;
+      if (l.reporterKey && l.reporterKey === myKey) return true;
+      if (myEmail && l.reporterEmail?.trim().toLowerCase() === myEmail) return true;
+      if (l.hiddenDeviceId && l.hiddenDeviceId === myDeviceId) return true;
+      return false;
+    });
   },
 
   analyzeSimilarity(
@@ -313,7 +570,6 @@ ${specificSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`;
       const union = new Set([...aTokens, ...bTokens]).size;
       let jaccard = union > 0 ? intersection / union : 0;
 
-      // Boost slightly when target module is identical and at least 2 meaningful keywords overlap
       if (mod && candidate.module === mod && intersection >= 2) {
         jaccard = Math.min(1, jaccard + 0.16);
       }
@@ -349,6 +605,9 @@ ${specificSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`;
     module?: string;
     detectedError?: string;
     severity?: SmartCareSeverity;
+    aiSummary?: string;
+    aiQuickSteps?: string[];
+    diagnosticsSnapshot?: SafeDiagnosticsSnapshot;
     sendToAdmin?: boolean;
     existingId?: string;
   }): SmartCareLogEntry {
@@ -357,7 +616,36 @@ ${specificSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`;
     const analysis = this.analyzeComplaint(params.complaint);
     const stamp = nowLabel();
     const reporterName = acc ? AuthService.getDisplayName(acc) : 'Warga Tamu';
+    const reporterKey = this.getReporterKey();
     const device = detectDeviceSummary();
+    const diagnostics = params.diagnosticsSnapshot || this.collectSafeDiagnostics();
+
+    const syncToRelayMailbox = (entry: SmartCareLogEntry) => {
+      RealtimeRelayService.publish('admin:policy', 'smartcare:ticket', entry);
+      if (typeof fetch !== 'undefined') {
+        void fetch(buildApiUrl('/api/smartcare/tickets'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: entry.id,
+            reporterKey: entry.reporterKey || reporterKey,
+            reporterName: entry.reporterName,
+            device: entry.device,
+            module: entry.module,
+            detectedError: entry.detectedError,
+            severity: entry.severity,
+            complaint: entry.complaint,
+            autoPrompt: entry.autoPrompt,
+            aiSummary: entry.aiSummary,
+            aiQuickSteps: entry.aiQuickSteps,
+            triageStatus: entry.triageStatus,
+            createdAt: entry.createdAt,
+            updatedAt: entry.updatedAt,
+            sentToAdminAt: entry.sentToAdminAt,
+          }),
+        }).catch(() => {});
+      }
+    };
 
     if (params.existingId) {
       const existing = logs.find((l) => l.id === params.existingId);
@@ -369,6 +657,10 @@ ${specificSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`;
           detectedError: params.detectedError || analysis.detectedError,
           severity: params.severity || analysis.severity,
           autoPrompt: params.autoPrompt?.trim() || analysis.autoPrompt,
+          aiSummary: params.aiSummary || existing.aiSummary,
+          aiQuickSteps: params.aiQuickSteps || existing.aiQuickSteps,
+          reporterKey: existing.reporterKey || reporterKey,
+          diagnosticsSnapshot: diagnostics,
           updatedAt: stamp,
           sentToAdminAt: params.sendToAdmin ? stamp : existing.sentToAdminAt,
           reporters: existing.reporters.map((r, idx) =>
@@ -377,7 +669,7 @@ ${specificSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`;
         };
         saveLogs(logs.map((l) => (l.id === existing.id ? updated : l)));
         if (params.sendToAdmin) {
-          RealtimeRelayService.publish('admin:policy', 'smartcare:ticket', updated);
+          syncToRelayMailbox(updated);
         }
         return updated;
       }
@@ -390,10 +682,13 @@ ${specificSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`;
       detectedError: params.detectedError || analysis.detectedError,
       severity: params.severity || analysis.severity,
       autoPrompt: params.autoPrompt?.trim() || analysis.autoPrompt,
+      aiSummary: params.aiSummary,
+      aiQuickSteps: params.aiQuickSteps,
       device,
       reporterName,
       reporterEmail: acc?.email,
       reporterPhone: acc?.phone,
+      reporterKey,
       hiddenDeviceId: acc?.deviceId || AuthService.getHiddenDeviceId(),
       createdAt: stamp,
       updatedAt: stamp,
@@ -410,13 +705,85 @@ ${specificSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`;
         },
       ],
       sentToAdminAt: params.sendToAdmin ? stamp : undefined,
+      diagnosticsSnapshot: diagnostics,
     };
 
     saveLogs([newEntry, ...logs]);
     if (params.sendToAdmin) {
-      RealtimeRelayService.publish('admin:policy', 'smartcare:ticket', newEntry);
+      syncToRelayMailbox(newEntry);
     }
     return newEntry;
+  },
+
+  replyToTicket(params: {
+    entryId: string;
+    replyText: string;
+    markResolved?: boolean;
+  }): SmartCareLogEntry | null {
+    const cleanReply = params.replyText.trim();
+    if (!cleanReply) return null;
+
+    const acc = AuthService.getAccount();
+    const logs = loadLogs();
+    const target = logs.find((l) => l.id === params.entryId);
+    if (!target) return null;
+
+    const stamp = nowLabel();
+    const adminName = acc ? AuthService.getDisplayName(acc) : 'Admin WargaQu';
+    const nextStatus: SmartCareTriageStatus = params.markResolved
+      ? 'resolved'
+      : target.triageStatus === 'new'
+      ? 'queued'
+      : target.triageStatus;
+
+    const updated: SmartCareLogEntry = {
+      ...target,
+      adminReply: cleanReply,
+      adminReplyAt: stamp,
+      adminRepliedBy: adminName,
+      triageStatus: nextStatus,
+      updatedAt: stamp,
+    };
+
+    saveLogs(logs.map((l) => (l.id === target.id ? updated : l)));
+
+    const replyPayload = {
+      id: target.id,
+      reporterKey: target.reporterKey,
+      reporterEmail: target.reporterEmail,
+      hiddenDeviceId: target.hiddenDeviceId,
+      adminReply: cleanReply,
+      adminReplyAt: stamp,
+      adminRepliedBy: adminName,
+      triageStatus: nextStatus,
+    };
+
+    RealtimeRelayService.publish('admin:policy', 'smartcare:reply', replyPayload);
+    if (target.reporterEmail) {
+      RealtimeRelayService.publish(
+        getAccountSessionChannel(target.reporterEmail),
+        'smartcare:reply',
+        replyPayload
+      );
+    }
+
+    if (typeof fetch !== 'undefined' && acc?.email) {
+      void fetch(
+        buildApiUrl(`/api/smartcare/tickets/${encodeURIComponent(target.id)}/reply`),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            adminEmail: acc.email,
+            adminReply: cleanReply,
+            adminRepliedBy: adminName,
+            triageStatus: nextStatus,
+          }),
+        }
+      ).catch(() => {});
+    }
+
+    return updated;
   },
 
   ingestRemoteReport(incoming: SmartCareLogEntry) {
@@ -424,10 +791,110 @@ ${specificSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`;
     const logs = loadLogs();
     const idx = logs.findIndex((l) => l.id === incoming.id);
     if (idx !== -1) {
-      const next = logs.map((l, i) => (i === idx ? { ...l, ...incoming } : l));
+      const merged: SmartCareLogEntry = {
+        ...logs[idx],
+        ...incoming,
+        adminReply: incoming.adminReply || logs[idx].adminReply,
+        adminReplyAt: incoming.adminReplyAt || logs[idx].adminReplyAt,
+        adminRepliedBy: incoming.adminRepliedBy || logs[idx].adminRepliedBy,
+      };
+      const next = logs.map((l, i) => (i === idx ? merged : l));
       saveLogs(next);
     } else {
       saveLogs([{ ...incoming, triageStatus: incoming.triageStatus || 'new' }, ...logs]);
+    }
+  },
+
+  ingestRemoteReply(payload: {
+    id?: string;
+    adminReply?: string;
+    adminReplyAt?: string;
+    adminRepliedBy?: string;
+    triageStatus?: SmartCareTriageStatus;
+  }): boolean {
+    if (!payload?.id || !payload?.adminReply) return false;
+    const logs = loadLogs();
+    const idx = logs.findIndex((l) => l.id === payload.id);
+    if (idx === -1) return false;
+    const current = logs[idx];
+    const nextEntry: SmartCareLogEntry = {
+      ...current,
+      adminReply: payload.adminReply,
+      adminReplyAt: payload.adminReplyAt || nowLabel(),
+      adminRepliedBy: payload.adminRepliedBy || 'Admin WargaQu',
+      triageStatus: payload.triageStatus || current.triageStatus,
+      updatedAt: payload.adminReplyAt || nowLabel(),
+    };
+    saveLogs(logs.map((l, i) => (i === idx ? nextEntry : l)));
+    return true;
+  },
+
+  async syncTicketsFromRelay(isAdmin: boolean): Promise<{ pulled: number; newReplies: number }> {
+    if (typeof fetch === 'undefined') return { pulled: 0, newReplies: 0 };
+    const acc = AuthService.getAccount();
+    const reporterKey = this.getReporterKey();
+    const query =
+      isAdmin && acc?.email
+        ? `adminEmail=${encodeURIComponent(acc.email)}`
+        : `reporterKey=${encodeURIComponent(reporterKey)}`;
+
+    try {
+      const res = await fetch(buildApiUrl(`/api/smartcare/tickets?${query}`), {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) return { pulled: 0, newReplies: 0 };
+      const data = (await res.json()) as { tickets?: SmartCareLogEntry[] };
+      const remoteList = Array.isArray(data?.tickets) ? data.tickets : [];
+      if (remoteList.length === 0) return { pulled: 0, newReplies: 0 };
+
+      const logs = loadLogs();
+      const map = new Map<string, SmartCareLogEntry>();
+      logs.forEach((l) => map.set(l.id, l));
+
+      let pulled = 0;
+      let newReplies = 0;
+
+      for (const rt of remoteList) {
+        if (!rt?.id || !rt?.complaint) continue;
+        const local = map.get(rt.id);
+        if (!local) {
+          map.set(rt.id, {
+            ...rt,
+            triageStatus: (rt.triageStatus as SmartCareTriageStatus) || 'new',
+            occurrenceCount: rt.occurrenceCount || 1,
+            reporters: Array.isArray(rt.reporters) && rt.reporters.length > 0
+              ? rt.reporters
+              : [
+                  {
+                    name: rt.reporterName || 'Warga',
+                    device: rt.device || 'Perangkat WargaQu',
+                    complaint: rt.complaint,
+                    time: rt.createdAt || nowLabel(),
+                  },
+                ],
+          });
+          pulled += 1;
+          if (rt.adminReply) newReplies += 1;
+        } else if (rt.adminReply && rt.adminReply !== local.adminReply) {
+          map.set(rt.id, {
+            ...local,
+            adminReply: rt.adminReply,
+            adminReplyAt: rt.adminReplyAt || nowLabel(),
+            adminRepliedBy: rt.adminRepliedBy || 'Admin WargaQu',
+            triageStatus:
+              (rt.triageStatus as SmartCareTriageStatus) || local.triageStatus,
+            updatedAt: rt.updatedAt || local.updatedAt,
+          });
+          newReplies += 1;
+        }
+      }
+
+      if (pulled > 0 || newReplies > 0) {
+        saveLogs(Array.from(map.values()));
+      }
+      return { pulled, newReplies };
+    } catch {
+      return { pulled: 0, newReplies: 0 };
     }
   },
 

@@ -621,6 +621,33 @@ export default function App() {
             `Laporan Smart Care baru (${entry.id}) dari ${entry.reporterName}: "${entry.complaint.slice(0, 45)}..."`
           );
         }
+      } else if (detail.eventName === 'smartcare:reply' && detail.payload && typeof detail.payload === 'object') {
+        const replyPayload = detail.payload as {
+          id?: string;
+          reporterKey?: string;
+          reporterEmail?: string;
+          hiddenDeviceId?: string;
+          adminReply?: string;
+          adminReplyAt?: string;
+          adminRepliedBy?: string;
+          triageStatus?: SmartCareLogEntry['triageStatus'];
+        };
+        const currentAcc = AuthService.getAccount();
+        const myEmail = currentAcc?.email?.trim().toLowerCase() || '';
+        const myDeviceId = currentAcc?.deviceId || AuthService.getHiddenDeviceId();
+        const myKey = SmartCareService.getReporterKey();
+        const isTargetReporter =
+          (replyPayload.reporterKey && replyPayload.reporterKey === myKey) ||
+          (myEmail && replyPayload.reporterEmail?.trim().toLowerCase() === myEmail) ||
+          (replyPayload.hiddenDeviceId && replyPayload.hiddenDeviceId === myDeviceId);
+        if (isTargetReporter || SmartCareService.isDeveloperOrAdmin()) {
+          const updated = SmartCareService.ingestRemoteReply(replyPayload);
+          if (updated && isTargetReporter && replyPayload.adminReply) {
+            showNotification(
+              `Balasan Admin Smart Care untuk tiket ${replyPayload.id || ''}: "${replyPayload.adminReply.slice(0, 55)}..."`
+            );
+          }
+        }
       }
     };
     window.addEventListener(REALTIME_RELAY_EVENT, handleGlobalRelay);
@@ -823,7 +850,7 @@ export default function App() {
   const handleOpenLeluhurQu = () => {
     setCurrentScreen('leluhurqu');
     window.history.pushState({ screen: 'leluhurqu' }, '', '#leluhurqu');
-    showNotification('Membuka LeluhurQu: Silsilah Trah Keluarga');
+    showNotification('Membuka NasabQu: Silsilah Trah Keluarga');
   };
 
   const handleOpenRtQu = (tab?: 'ringkasan' | 'forum' | 'keuangan' | 'iuran' | 'pengurus') => {
@@ -856,7 +883,7 @@ export default function App() {
   const handleOpenBantuan = () => {
     setCurrentScreen('bantuan');
     window.history.pushState({ screen: 'bantuan' }, '', '#bantuan');
-    showNotification('Membuka UsahaQu Smart Care & Pusat Bantuan');
+    showNotification('Membuka WargaQu Smart Care & Pusat Bantuan');
   };
 
   const handleOpenChatQu = (tab?: 'community' | 'chats' | 'announcements' | 'emergency') => {
@@ -1324,7 +1351,7 @@ export default function App() {
         />
       )}
 
-      {/* Screen 9: UsahaQu Smart Care & Pusat Bantuan */}
+      {/* Screen 9: WargaQu Smart Care & Pusat Bantuan */}
       {currentScreen === 'bantuan' && (
         <BantuanView
           onBackToWarga={handleBackToWarga}

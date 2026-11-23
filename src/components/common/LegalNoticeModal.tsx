@@ -95,7 +95,7 @@ export const LegalNoticeModal: React.FC<LegalNoticeModalProps> = ({
                 <div className="font-extrabold">Prinsip Data Lokal &amp; Relay Tanpa Simpan</div>
                 <p className="text-[11px]">
                   Data operasional utama (catatan DompetQu, kasir UsahaQu, katalog AreaQu, dan
-                  pohon silsilah LeluhurQu) disimpan di perangkat Anda sendiri. Server relay
+                  pohon silsilah NasabQu) disimpan di perangkat Anda sendiri. Server relay
                   real-time hanya meneruskan sinyal antarperangkat yang sedang online.
                 </p>
               </div>
@@ -181,7 +181,7 @@ export const LegalNoticeModal: React.FC<LegalNoticeModalProps> = ({
               <div className="space-y-1.5 text-[11px]">
                 <p>
                   Rancangan alur terpadu, struktur antarmuka, nama ekosistem modul (<strong>WargaQu,
-                  RtQu, SiagaQu, AreaQu, UsahaQu, ModularQu, DompetQu, MuamalahQu, LeluhurQu, ChatQu,
+                  RtQu, SiagaQu, AreaQu, UsahaQu, ModularQu, DompetQu, MuamalahQu, NasabQu, ChatQu,
                   dan Smart Care</strong>) merupakan karya cipta asli milik pengembang WargaQu.
                 </p>
                 <p>

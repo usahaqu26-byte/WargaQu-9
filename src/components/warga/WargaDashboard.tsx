@@ -417,18 +417,18 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
           </div>
 
           <div className="grid grid-cols-4 gap-y-5 gap-x-2 lg:gap-4">
-            {/* 1. LeluhurQu */}
+            {/* 1. NasabQu */}
             <button
               type="button"
               onClick={onOpenLeluhurQu}
               className="flex flex-col items-center group relative active:scale-95 transition min-h-[44px]"
-              title="LeluhurQu · Silsilah Trah Keluarga"
+              title="NasabQu · Silsilah Trah Keluarga"
             >
               <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-700 group-hover:scale-105 transition shadow-xs">
                 <GitFork className="w-6 h-6 rotate-180 text-emerald-700" />
               </div>
               <span className="text-[11px] font-medium text-slate-700 mt-1.5 text-center leading-tight">
-                LeluhurQu
+                NasabQu
               </span>
             </button>
 
@@ -540,7 +540,7 @@ export const WargaDashboard: React.FC<WargaDashboardProps> = ({
               type="button"
               onClick={onOpenBantuan}
               className="flex flex-col items-center group active:scale-95 transition min-h-[44px]"
-              title="Smart Care · Pusat Bantuan & Konsol CS"
+              title="WargaQu Smart Care · Asisten AI & Pusat Bantuan"
             >
               <div className="w-12 h-12 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 group-hover:scale-105 transition shadow-xs">
                 <Headphones className="w-6 h-6" />

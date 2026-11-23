@@ -94,12 +94,6 @@ export function getBaseCardSizeForScale(
   scale = 1
 ): { w: number; h: number } {
   const p = BASE_PHOTO_DIMS[photoSize] || BASE_PHOTO_DIMS['3x4'];
-  if (displayMode === 'photo_only') {
-    return {
-      w: Math.round((p.w + 8) * scale),
-      h: Math.round((p.h + 8) * scale),
-    };
-  }
   if (displayMode === 'photo_name') {
     return {
       w: Math.round(Math.max(106, p.w + 16) * scale),
@@ -127,18 +121,6 @@ export function getUniformSubCardSize(
   const pDim = BASE_PHOTO_DIMS[photoSize] || BASE_PHOTO_DIMS['2x3'];
   const aspect = pDim.h / Math.max(1, pDim.w);
 
-  if (displayMode === 'photo_only') {
-    const photoW = Math.max(18, Math.round(pDim.w * cardScale));
-    const photoH = Math.max(18, Math.round(photoW * aspect));
-    return {
-      w: photoW + 6,
-      h: photoH + 6,
-      photoW,
-      photoH,
-      badgeH: 0,
-    };
-  }
-
   if (displayMode === 'photo_name') {
     const photoW = Math.max(20, Math.round(pDim.w * cardScale));
     const photoH = Math.max(20, Math.round(photoW * aspect));
@@ -154,12 +136,12 @@ export function getUniformSubCardSize(
     return { w, h, photoW: 0, photoH: 0, badgeH: h - 4 };
   }
 
-  // 'full'
+  // 'full': Foto + Badge Lengkap (Nama, Tahun Lahir/Wafat - Kota)
   const photoW = Math.max(22, Math.round(pDim.w * cardScale));
   const photoH = Math.max(22, Math.round(photoW * aspect));
-  const badgeH = Math.max(24, Math.round(42 * cardScale));
-  const w = Math.max(photoW + 10, Math.round(Math.max(96, pDim.w + 24) * cardScale));
-  const h = photoH + badgeH + 6;
+  const badgeH = Math.max(28, Math.round(42 * cardScale));
+  const w = Math.max(photoW + 10, Math.round(Math.max(106, pDim.w + 26) * cardScale));
+  const h = photoH + badgeH + 8;
   return { w, h, photoW, photoH, badgeH };
 }
 
@@ -344,10 +326,7 @@ export function computeModularContainerPlan(
   );
   const padX = Math.max(5, Math.round(looseGap * 0.55));
   const padY = Math.max(5, Math.round(looseGap * 0.5));
-  const headerH =
-    displayMode === 'photo_only'
-      ? 0
-      : Math.max(15, Math.round(19 * Math.max(0.65, cardScale)));
+  const headerH = Math.max(15, Math.round(19 * Math.max(0.65, cardScale)));
 
   if (
     (modularSubLayout === 'I' || modularSubLayout === 'L') &&

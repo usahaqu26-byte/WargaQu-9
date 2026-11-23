@@ -66,7 +66,7 @@ export const MODULE_GUIDES: ModuleGuideInfo[] = [
   },
   {
     id: 'leluhurqu',
-    name: 'LeluhurQu',
+    name: 'NasabQu',
     category: 'Silsilah Keluarga',
     tagline: 'Catat pohon nasab lintas generasi, undang saudara lewat 1 link ringkas, hingga cetak buku & poster A0–A4.',
     benefits: [

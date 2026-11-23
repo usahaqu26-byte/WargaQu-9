@@ -18,15 +18,24 @@ import {
 
 interface SmartCareModuleGuidesPanelProps {
   showNotification: (msg: string) => void;
+  initialModuleId?: GuideModuleId;
 }
 
 export const SmartCareModuleGuidesPanel: React.FC<SmartCareModuleGuidesPanelProps> = ({
   showNotification,
+  initialModuleId,
 }) => {
   const [query, setQuery] = useState('');
-  const [expandedId, setExpandedId] = useState<GuideModuleId>('leluhurqu');
+  const [expandedId, setExpandedId] = useState<GuideModuleId>(initialModuleId || 'leluhurqu');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [, setSyncTick] = useState(0);
+
+  React.useEffect(() => {
+    if (initialModuleId) {
+      setExpandedId(initialModuleId);
+      setQuery('');
+    }
+  }, [initialModuleId]);
 
   React.useEffect(() => {
     const onSync = () => setSyncTick((t) => t + 1);

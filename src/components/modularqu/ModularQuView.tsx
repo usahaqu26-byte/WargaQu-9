@@ -948,7 +948,7 @@ export const ModularQuView: React.FC<ModularQuViewProps> = ({
             <button
               onClick={onOpenBantuan}
               className="w-7 h-7 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center border border-slate-700 active:scale-95"
-              title="Pusat Bantuan UsahaQu & Smart Care"
+              title="WargaQu Smart Care · Asisten AI & Bantuan"
             >
               <Headphones className="w-3.5 h-3.5 text-emerald-400" />
             </button>

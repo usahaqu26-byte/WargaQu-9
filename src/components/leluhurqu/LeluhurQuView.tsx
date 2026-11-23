@@ -3735,7 +3735,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
     if (newTrahCreateIntroPost) {
       const introLines = [
-        `🌳 Trah baru "${newTrah.name}" resmi dibuat di LeluhurQu.`,
+        `🌳 Trah baru "${newTrah.name}" resmi dibuat di NasabQu.`,
         descText !== 'Keluarga Besar Silsilah Trah' ? `Catatan: ${descText}` : '',
         initialMembers.length > 0
           ? `Tercatat ${initialMembers.length} anggota awal (${initialMembers[0].name}${parsedChildren.length > 0 ? ` + ${parsedChildren.length} keturunan langsung` : ''}).`
@@ -4185,7 +4185,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     }
 
     const payload = {
-      app: 'LeluhurQu',
+      app: 'NasabQu',
       version: 2,
       exportedAt: new Date().toISOString(),
       accountProfile,
@@ -4205,7 +4205,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       const link = document.createElement('a');
       link.href = url;
       const dateStamp = new Date().toISOString().slice(0, 10);
-      link.setAttribute('download', `LeluhurQu_Cadangan_${dateStamp}.json`);
+      link.setAttribute('download', `NasabQu_Cadangan_${dateStamp}.json`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -4522,8 +4522,8 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             type="button"
             onClick={() => ModuleOnboardingService.openGuide('leluhurqu')}
             className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 transition flex items-center justify-center text-emerald-100 hover:text-white"
-            title="Panduan & Manfaat LeluhurQu"
-            aria-label="Panduan LeluhurQu"
+            title="Panduan & Manfaat NasabQu"
+            aria-label="Panduan NasabQu"
           >
             <HelpCircle className="w-4 h-4" />
           </button>
@@ -6066,7 +6066,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                 <div className="min-w-0 flex-1">
                   <h3 className="font-bold text-sm text-white truncate">{accountProfile.displayName}</h3>
                   <p className="text-[10px] text-emerald-300 truncate">
-                    {accountProfile.email || accountProfile.kinshipRole || 'LeluhurQu'}
+                    {accountProfile.email || accountProfile.kinshipRole || 'NasabQu'}
                   </p>
                 </div>
               </div>
@@ -7722,7 +7722,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
               const roleLabelText = getTrahRoleMeta(inviteAccessRole).shortLabel;
               const expiryLabelText = formatInviteExpiryLabel(inviteExpiryHours);
-              const inviteText = `Undangan Silsilah *${target.name}* (${target.members.length} anggota) di LeluhurQu.\nHak Akses: ${roleLabelText} • ${expiryLabelText}\nKlik link berikut untuk langsung membuka silsilah:\n${inviteLink}`;
+              const inviteText = `Undangan Silsilah *${target.name}* (${target.members.length} anggota) di NasabQu.\nHak Akses: ${roleLabelText} • ${expiryLabelText}\nKlik link berikut untuk langsung membuka silsilah:\n${inviteLink}`;
 
               const recordShareLog = (channel: string) => {
                 appendActivityLog({

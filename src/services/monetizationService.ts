@@ -85,7 +85,7 @@ const DEFAULT_RULES: ModuleMonetizationRule[] = [
   },
   {
     moduleId: 'leluhurqu_export',
-    moduleName: 'LeluhurQu (Print & Download)',
+    moduleName: 'NasabQu (Print & Download)',
     triggerLabel: 'Cetak Poster A0-A4, Buku PDF & Ekspor Data',
     description: 'Biaya cetak/download paket dokumen silsilah keluarga beresolusi tinggi.',
     enabled: false,

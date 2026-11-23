@@ -1307,7 +1307,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
               <div className="text-[11px] text-amber-900 leading-snug space-y-1">
                 <p>
                   Sebelum akun baru masuk, <strong>seluruh data lokal akun lama di perangkat ini disapu bersih</strong>{' '}
-                  agar riwayat DompetQu, RTQu, ChatQu, UsahaQu, LeluhurQu, dan SiagaQu tidak tercampur.
+                  agar riwayat DompetQu, RTQu, ChatQu, UsahaQu, NasabQu, dan SiagaQu tidak tercampur.
                 </p>
                 {cooldownStatus.allowedNow ? (
                   <p>
@@ -1416,7 +1416,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
                   />
                   <span>
                     Saya mengerti ini HP bekas / ganti pengguna: <strong>hapus bersih seluruh data lokal akun lama</strong>{' '}
-                    (DompetQu, RTQu, ChatQu, UsahaQu, LeluhurQu, SiagaQu) sebelum akun baru masuk.
+                    (DompetQu, RTQu, ChatQu, UsahaQu, NasabQu, SiagaQu) sebelum akun baru masuk.
                   </span>
                 </label>
               )}
@@ -1600,7 +1600,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
             ))}
           </div>
           <p className="text-[11px] text-slate-500 leading-snug">
-            Otomatis melebar di monitor Laptop/PC agar Kanvas LeluhurQu, RtQu &amp; UsahaQu lebih
+            Otomatis melebar di monitor Laptop/PC agar Kanvas NasabQu, RtQu &amp; UsahaQu lebih
             lega, dan tetap ringkas saat dibuka di HP.
           </p>
         </section>
@@ -1976,7 +1976,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
           {[
             { name: 'AreaQu', desc: 'Identitas pedagang & konsumen otomatis dari Email & No HP' },
             { name: 'MuamalahQu & UsahaQu', desc: 'Profil pemilik & kontak toko tersinkron' },
-            { name: 'LeluhurQu, ChatQu & Bantuan', desc: 'Identitas pengirim, silsilah & tiket tersambung' },
+            { name: 'NasabQu, ChatQu & Bantuan', desc: 'Identitas pengirim, silsilah & tiket tersambung' },
           ].map(mod => (
             <div key={mod.name} className="px-4 py-3 flex items-center justify-between gap-2">
               <div>

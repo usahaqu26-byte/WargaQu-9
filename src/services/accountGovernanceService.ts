@@ -27,7 +27,7 @@ export interface GovernanceModuleMeta {
 }
 
 export const GOVERNANCE_MODULES: GovernanceModuleMeta[] = [
-  { id: 'leluhurqu', label: 'LeluhurQu (Trah)', desc: 'Silsilah keluarga & pohon trah' },
+  { id: 'leluhurqu', label: 'NasabQu (Trah)', desc: 'Silsilah keluarga & pohon trah' },
   { id: 'rtqu', label: 'RTQu', desc: 'Pengurusan warga RT / RW' },
   { id: 'paguyubanqu', label: 'Paguyuban / Org / Sosial', desc: 'Komunitas, ormas & yayasan sosial' },
   { id: 'areaqu', label: 'AreaQu', desc: 'Peta kawasan, lapak & radar' },
@@ -39,7 +39,7 @@ export const GOVERNANCE_MODULES: GovernanceModuleMeta[] = [
 
 export const MONETIZABLE_MODULE_OPTIONS: Array<{ id: MonetizableModuleId; label: string }> = [
   { id: 'areaqu_lapak', label: 'AreaQu Lapak' },
-  { id: 'leluhurqu_export', label: 'LeluhurQu Print/PDF' },
+  { id: 'leluhurqu_export', label: 'NasabQu Print/PDF' },
   { id: 'rtqu_iuran', label: 'RTQu Iuran' },
   { id: 'muamalahqu_tx', label: 'MuamalahQu Checkout' },
   { id: 'usahaqu_pro', label: 'UsahaQu POS Pro' },

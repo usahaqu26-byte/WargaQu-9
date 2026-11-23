@@ -482,6 +482,411 @@ ATURAN EKSTRAKSI:
     }
   });
 
+  // Stateless Gemini AI Assistant for WargaQu Smart Care (Customer Care & Troubleshooting)
+  const SMARTCARE_OWNER_EMAILS = new Set(['usahaqu2026@gmail.com', 'usahaqu26@gmail.com']);
+  const SMARTCARE_TICKET_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+  const volatileSmartCareTickets = new Map<
+    string,
+    {
+      id: string;
+      reporterKey: string;
+      reporterName: string;
+      device: string;
+      module: string;
+      detectedError: string;
+      severity: string;
+      complaint: string;
+      autoPrompt: string;
+      aiSummary?: string;
+      aiQuickSteps?: string[];
+      triageStatus: string;
+      adminReply?: string;
+      adminReplyAt?: string;
+      adminRepliedBy?: string;
+      createdAt: string;
+      updatedAt: string;
+      sentToAdminAt?: string;
+      expiresAt: number;
+    }
+  >();
+
+  function pruneSmartCareTickets() {
+    const now = Date.now();
+    for (const [k, v] of volatileSmartCareTickets.entries()) {
+      if (v.expiresAt <= now) volatileSmartCareTickets.delete(k);
+    }
+    while (volatileSmartCareTickets.size > 120) {
+      const oldest = volatileSmartCareTickets.keys().next().value;
+      if (!oldest) break;
+      volatileSmartCareTickets.delete(oldest);
+    }
+  }
+
+  app.post('/api/smartcare/chat', express.json({ limit: '512kb' }), async (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({
+        error:
+          'Layanan AI Smart Care belum dikonfigurasi di server (GEMINI_API_KEY tidak tersedia). Anda tetap bisa membaca Panduan Modul Offline atau mengirim tiket ke Admin.',
+      });
+      return;
+    }
+
+    const body = req.body as {
+      mode?: unknown;
+      messages?: unknown;
+      diagnostics?: unknown;
+      ticketContext?: unknown;
+    };
+
+    const mode: 'user_assist' | 'admin_reply_draft' =
+      body?.mode === 'admin_reply_draft' ? 'admin_reply_draft' : 'user_assist';
+
+    const rawMessages = Array.isArray(body?.messages) ? body.messages.slice(-10) : [];
+    const cleanMessages: Array<{ role: 'user' | 'model'; text: string }> = [];
+    for (const item of rawMessages) {
+      if (!item || typeof item !== 'object') continue;
+      const m = item as { role?: unknown; text?: unknown };
+      const text = typeof m.text === 'string' ? m.text.trim().slice(0, 1200) : '';
+      if (!text) continue;
+      cleanMessages.push({
+        role: m.role === 'assistant' || m.role === 'model' ? 'model' : 'user',
+        text,
+      });
+    }
+
+    if (mode === 'user_assist' && !cleanMessages.some((m) => m.role === 'user')) {
+      res.status(400).json({ error: 'Tuliskan atau rekam pertanyaan/keluhan terlebih dahulu.' });
+      return;
+    }
+
+    const rawDiag =
+      body?.diagnostics && typeof body.diagnostics === 'object'
+        ? (body.diagnostics as Record<string, unknown>)
+        : null;
+    const diagSummary = rawDiag
+      ? [
+          `Wadah: ${String(rawDiag.container || 'pwa').toUpperCase()}`,
+          `Versi App: ${String(rawDiag.appVersion || '1.5.8').slice(0, 24)}`,
+          `Jaringan: ${rawDiag.online === false ? 'Offline' : 'Online'}`,
+          `Relay Realtime: ${String(rawDiag.relayStatus || 'unknown').slice(0, 24)}`,
+          `Penyimpanan Lokal: ${Math.max(0, Number(rawDiag.storagePct || 0))}% (${Math.max(0, Number(rawDiag.storageUsedKb || 0))} KB)`,
+          `Status Login: ${rawDiag.hasLoggedInAccount ? 'Sudah Login Akun' : 'Mode Tamu / Belum Login'}`,
+          rawDiag.warnings && Array.isArray(rawDiag.warnings) && rawDiag.warnings.length > 0
+            ? `Peringatan Perangkat: ${rawDiag.warnings
+                .slice(0, 4)
+                .map((w) => String(w).slice(0, 120))
+                .join('; ')}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' | ')
+      : 'Tidak ada snapshot diagnostik.';
+
+    const ticketCtx =
+      body?.ticketContext && typeof body.ticketContext === 'object'
+        ? (body.ticketContext as Record<string, unknown>)
+        : null;
+
+    const systemInstruction = `Anda adalah "WargaQu Smart Care AI", asisten Customer Care & troubleshooting resmi aplikasi WargaQu (ekosistem PWA Web & APK Android berbasis WebView tanpa database warga raksasa di server).
+
+PENGETAHUAN NYATA MODUL WARGAQU:
+1. NasabQu (sebelumnya bernama LeluhurQu — Silsilah Keluarga):
+   - Mendukung hingga 4 trah keluarga, akun baru mulai bersih (0 trah) dan gabung via tautan undangan (?t=...).
+   - Mode Card di Kanvas Grid memiliki 3 opsi resmi: (1) Nama Lengkap Saja, (2) Foto + Badge Nama, (3) Foto + Badge Lengkap (Nama, tahun lahir/wafat, kota).
+   - Cetak Grid PDF mendukung warna penuh (print-color-adjust) termasuk ukuran A0–A4, dan unduh/ekspor foto dilengkapi auto-upscale HD agar tajam saat dicetak.
+   - Alur sinkronisasi 3 langkah: Anggota ajukan/ubah data (tercatat di log aktivitas modul) -> Admin/Pengurus Trah Approve (menaikkan nomor versi data modul) -> Anggota tarik pembaruan & reload UI dengan penanda waktu sinkronisasi terakhir.
+2. RTQu & PaguyubanQu:
+   - Mendukung komunitas paralel (RT, Paguyuban Cluster/Perumahan, Organisasi, Sosial/DKM).
+   - Buku kas transparan, kartu iuran 12 bulan per KK, Smart Import dokumen/foto/Excel ke tabel warga, dan undangan 1-link.
+3. SiagaQu:
+   - Modul darurat ringan & mandiri: tombol SOS harus ditahan 3 detik penuh untuk mencegah salah pencet, Mode Simulasi untuk latihan, circle Keluarga/RT, SandiQu/MorseQu, dan Zero Trust pemblokiran perangkat HP hilang.
+4. DompetQu:
+   - Catatan keuangan pribadi 100% terisolasi per akun, mendukung Smart Catat Suara, saldo gabungan Cash/ATM/E-Wallet, ikon mata tertutup otomatis, dan PIN privasi.
+5. UsahaQu & ModularQu:
+   - Kasir 2-in-1 (Resto Meja & POS Modular Suara), stok bahan/tempo, serta cetak struk Bluetooth ESC/POS 58mm dengan fallback simpan PDF jika printer terputus.
+6. AreaQu, MuamalahQu & ChatQu:
+   - AreaQu (peta radar UMKM/DKM radius 500m–5km), MuamalahQu (marketplace warga), ChatQu (obrolan & pengumuman warga).
+7. Akun, Sesi Tunggal APK vs PWA & Cadangan:
+   - Hanya 1 sesi aktif terbaru yang berlaku per akun (jika login di APK, sesi lama PWA otomatis ditutup dan sebaliknya).
+   - Gunakan login Akun (Email + No HP) atau ekspor/impor file cadangan terenkripsi (.wqbak) serta transfer 1-ketuk PWA -> APK untuk sinkronisasi aman tanpa database pusat.
+   - Update APK mendukung pengecekan versi rilis (v1.5.8) & pasang timpa langsung tanpa uninstall jika izin "Pasang aplikasi tak dikenal" aktif.
+
+ATURAN MENJAWAB:
+- Jawab dalam bahasa Indonesia yang ramah, ringkas, praktis, dan jujur berdasarkan fitur WargaQu di atas (JANGAN mengarang tombol atau menu yang tidak ada).
+- Perhatikan kondisi diagnostik perangkat pengguna:
+  ${diagSummary}
+- Jika diagnostik menunjukkan pengguna memakai Mode Tamu saat bertanya sinkron APK/PWA, atau penyimpanan lokal >80%, atau relay offline, sebutkan secara spesifik.
+- Jika masalah berupa bug kode/crash atau butuh intervensi Admin/Pengurus/Developer yang tidak bisa diselesaikan sendiri oleh pengguna, set needsAdminEscalation = true dan siapkan escalatedSummary + suggestedFixPrompt yang jelas.
+- Jangan menulis HTML mentah. Gunakan teks polos yang rapi.`;
+
+    const contents =
+      mode === 'admin_reply_draft' && ticketCtx
+        ? [
+            {
+              role: 'user' as const,
+              parts: [
+                {
+                  text: `Bantu Admin WargaQu menyusun draf balasan yang ramah, jelas, dan solutif untuk pelapor tiket berikut:
+ID Tiket: ${String(ticketCtx.ticketId || '-').slice(0, 32)}
+Nama Pelapor: ${String(ticketCtx.reporterName || 'Warga').slice(0, 60)}
+Modul: ${String(ticketCtx.module || 'Umum').slice(0, 80)}
+Diagnosa Awal: ${String(ticketCtx.detectedError || '-').slice(0, 120)}
+Keluhan Pelapor: "${String(ticketCtx.complaint || '').slice(0, 800)}"
+
+Tuliskan draf balasan langsung yang siap dikirim Admin ke pelapor di field "reply", dan langkah tindak lanjut singkat di "quickSteps".`,
+                },
+              ],
+            },
+          ]
+        : cleanMessages.map((m) => ({
+            role: m.role,
+            parts: [{ text: m.text }],
+          }));
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
+      const response = await generateContentWithRetry(ai, {
+        model: 'gemini-4-hydrogen',
+        contents,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              reply: { type: Type.STRING },
+              detectedModule: { type: Type.STRING },
+              severity: { type: Type.STRING },
+              quickSteps: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              recommendedTarget: { type: Type.STRING },
+              recommendedGuideId: { type: Type.STRING },
+              needsAdminEscalation: { type: Type.BOOLEAN },
+              escalatedSummary: { type: Type.STRING },
+              suggestedFixPrompt: { type: Type.STRING },
+            },
+            required: [
+              'reply',
+              'detectedModule',
+              'severity',
+              'quickSteps',
+              'recommendedTarget',
+              'needsAdminEscalation',
+            ],
+          },
+        },
+      });
+
+      const rawText = response.text;
+      if (!rawText) {
+        res.status(502).json({ error: 'Respons AI Smart Care kosong. Silakan coba kirim ulang.' });
+        return;
+      }
+
+      const parsed = parseGeminiJsonObject<{
+        reply?: string;
+        detectedModule?: string;
+        severity?: string;
+        quickSteps?: unknown[];
+        recommendedTarget?: string;
+        recommendedGuideId?: string;
+        needsAdminEscalation?: boolean;
+        escalatedSummary?: string;
+        suggestedFixPrompt?: string;
+      }>(rawText);
+
+      const safeReply = String(parsed?.reply || '').trim();
+      if (!safeReply) {
+        res.status(502).json({ error: 'AI belum menghasilkan jawaban lengkap. Silakan coba lagi.' });
+        return;
+      }
+
+      const normalizedSeverity =
+        parsed?.severity === 'High Severity' ||
+        parsed?.severity === 'Medium' ||
+        parsed?.severity === 'Low'
+          ? parsed.severity
+          : 'Medium';
+
+      const normalizedTarget =
+        parsed?.recommendedTarget === 'panduan' ||
+        parsed?.recommendedTarget === 'akun' ||
+        parsed?.recommendedTarget === 'escalate'
+          ? parsed.recommendedTarget
+          : 'none';
+
+      const quickSteps = Array.isArray(parsed?.quickSteps)
+        ? parsed.quickSteps
+            .map((s) => String(s || '').trim())
+            .filter(Boolean)
+            .slice(0, 4)
+        : [];
+
+      res.json({
+        ok: true,
+        result: {
+          reply: safeReply,
+          detectedModule: String(parsed?.detectedModule || 'Umum').slice(0, 64),
+          severity: normalizedSeverity,
+          quickSteps,
+          recommendedTarget: normalizedTarget,
+          recommendedGuideId: String(parsed?.recommendedGuideId || '').slice(0, 24),
+          needsAdminEscalation: Boolean(parsed?.needsAdminEscalation),
+          escalatedSummary: String(parsed?.escalatedSummary || '').slice(0, 300),
+          suggestedFixPrompt: String(parsed?.suggestedFixPrompt || '').slice(0, 1800),
+        },
+      });
+    } catch (err) {
+      console.error('[WargaQu SmartCare AI] Gemini error:', err);
+      const friendly = formatFriendlyGeminiError(
+        err,
+        'Terjadi kendala saat menghubungi layanan Smart Care AI.'
+      );
+      res.status(friendly.status).json({
+        error: friendly.message,
+      });
+    }
+  });
+
+  // Volatile RAM-only Smart Care Ticket & Admin Reply Mailbox (zero citizen DB / zero disk)
+  app.post('/api/smartcare/tickets', express.json({ limit: '128kb' }), (req, res) => {
+    pruneSmartCareTickets();
+    const body = req.body as Record<string, unknown>;
+    const id = String(body?.id || '')
+      .trim()
+      .replace(/[^a-zA-Z0-9#_-]/g, '')
+      .slice(0, 32);
+    const reporterKey = String(body?.reporterKey || '')
+      .trim()
+      .replace(/[^a-zA-Z0-9._:@-]/g, '')
+      .slice(0, 96);
+    const complaint = String(body?.complaint || '').trim().slice(0, 1200);
+
+    if (!id || !reporterKey || !complaint) {
+      res.status(400).json({ error: 'Payload tiket Smart Care tidak valid.' });
+      return;
+    }
+
+    const existing = volatileSmartCareTickets.get(id);
+    const quickSteps = Array.isArray(body?.aiQuickSteps)
+      ? body.aiQuickSteps.map((s) => String(s || '').slice(0, 240)).filter(Boolean).slice(0, 4)
+      : existing?.aiQuickSteps;
+
+    volatileSmartCareTickets.set(id, {
+      id,
+      reporterKey,
+      reporterName: String(body?.reporterName || existing?.reporterName || 'Warga').slice(0, 80),
+      device: String(body?.device || existing?.device || 'Perangkat WargaQu').slice(0, 80),
+      module: String(body?.module || existing?.module || 'Umum').slice(0, 80),
+      detectedError: String(body?.detectedError || existing?.detectedError || '').slice(0, 160),
+      severity: String(body?.severity || existing?.severity || 'Medium').slice(0, 32),
+      complaint,
+      autoPrompt: String(body?.autoPrompt || existing?.autoPrompt || '').slice(0, 2500),
+      aiSummary:
+        typeof body?.aiSummary === 'string' ? body.aiSummary.slice(0, 400) : existing?.aiSummary,
+      aiQuickSteps: quickSteps,
+      triageStatus: String(body?.triageStatus || existing?.triageStatus || 'new').slice(0, 24),
+      adminReply: existing?.adminReply,
+      adminReplyAt: existing?.adminReplyAt,
+      adminRepliedBy: existing?.adminRepliedBy,
+      createdAt: String(body?.createdAt || existing?.createdAt || new Date().toISOString()).slice(0, 48),
+      updatedAt: String(body?.updatedAt || new Date().toISOString()).slice(0, 48),
+      sentToAdminAt:
+        typeof body?.sentToAdminAt === 'string'
+          ? body.sentToAdminAt.slice(0, 48)
+          : existing?.sentToAdminAt,
+      expiresAt: Date.now() + SMARTCARE_TICKET_TTL_MS,
+    });
+
+    res.json({ ok: true, id });
+  });
+
+  app.get('/api/smartcare/tickets', (req, res) => {
+    pruneSmartCareTickets();
+    const adminEmail = String(req.query.adminEmail || '').trim().toLowerCase();
+    const reporterKey = String(req.query.reporterKey || '')
+      .trim()
+      .replace(/[^a-zA-Z0-9._:@-]/g, '')
+      .slice(0, 96);
+
+    const isOwnerAdmin = Boolean(adminEmail && SMARTCARE_OWNER_EMAILS.has(adminEmail));
+    const all = Array.from(volatileSmartCareTickets.values());
+
+    if (isOwnerAdmin) {
+      res.json({ ok: true, scope: 'admin', tickets: all });
+      return;
+    }
+
+    if (!reporterKey) {
+      res.status(400).json({ error: 'Parameter reporterKey diperlukan.' });
+      return;
+    }
+
+    const scoped = all.filter((t) => t.reporterKey === reporterKey);
+    res.json({ ok: true, scope: 'reporter', tickets: scoped });
+  });
+
+  app.post('/api/smartcare/tickets/:id/reply', express.json({ limit: '64kb' }), (req, res) => {
+    pruneSmartCareTickets();
+    const id = decodeURIComponent(String(req.params.id || ''))
+      .trim()
+      .replace(/[^a-zA-Z0-9#_-]/g, '')
+      .slice(0, 32);
+    const body = req.body as {
+      adminEmail?: unknown;
+      adminReply?: unknown;
+      adminRepliedBy?: unknown;
+      triageStatus?: unknown;
+    };
+    const adminEmail = String(body?.adminEmail || '').trim().toLowerCase();
+    if (!SMARTCARE_OWNER_EMAILS.has(adminEmail)) {
+      res.status(403).json({ error: 'Akses balasan tiket khusus Admin Smart Care.' });
+      return;
+    }
+    const adminReply = String(body?.adminReply || '').trim().slice(0, 1200);
+    if (!id || !adminReply) {
+      res.status(400).json({ error: 'ID tiket dan isi balasan tidak boleh kosong.' });
+      return;
+    }
+
+    const existing = volatileSmartCareTickets.get(id);
+    const replyAt = new Date().toLocaleString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const nextStatus =
+      body?.triageStatus === 'resolved' || body?.triageStatus === 'queued'
+        ? body.triageStatus
+        : 'resolved';
+
+    if (existing) {
+      volatileSmartCareTickets.set(id, {
+        ...existing,
+        adminReply,
+        adminReplyAt: replyAt,
+        adminRepliedBy: String(body?.adminRepliedBy || 'Admin WargaQu').slice(0, 64),
+        triageStatus: nextStatus,
+        updatedAt: replyAt,
+        expiresAt: Date.now() + SMARTCARE_TICKET_TTL_MS,
+      });
+    }
+
+    res.json({ ok: true, id, adminReplyAt: replyAt, triageStatus: nextStatus });
+  });
+
   // Volatile RAM pairing & live-sync mailboxes (zero DB / zero disk / auto-pruned)
   const pairJsonParser = express.json({ limit: '15mb' });
   const volatilePairSessions = new Map<

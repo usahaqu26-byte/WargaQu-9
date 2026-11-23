@@ -498,7 +498,7 @@ export const UsahaQuView: React.FC<UsahaQuViewProps> = ({
               <button
                 onClick={onOpenBantuan}
                 className="w-7 h-7 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center justify-center border border-zinc-700 active:scale-95"
-                title="Pusat Bantuan UsahaQu & Smart Care"
+                title="WargaQu Smart Care · Asisten AI & Bantuan"
               >
                 <Headphones className="w-3.5 h-3.5 text-emerald-400" />
               </button>
@@ -565,7 +565,7 @@ export const UsahaQuView: React.FC<UsahaQuViewProps> = ({
             <button
               onClick={onOpenBantuan}
               className="w-7 h-7 rounded-xl bg-emerald-950/80 hover:bg-emerald-950 text-[#5eead4] border border-[#5eead4]/40 flex items-center justify-center font-bold shadow-xs active:scale-95"
-              title="Pusat Bantuan UsahaQu & Smart Care"
+              title="WargaQu Smart Care · Asisten AI & Bantuan"
             >
               <Headphones className="w-3.5 h-3.5 text-[#5eead4]" />
             </button>

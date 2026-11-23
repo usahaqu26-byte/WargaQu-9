@@ -6,8 +6,12 @@ import {
   Copy,
   Edit3,
   GitMerge,
+  Loader2,
+  MessageSquareReply,
   Plus,
+  RefreshCw,
   Scissors,
+  Send,
   SkipForward,
   Sparkles,
   Trash2,
@@ -40,6 +44,10 @@ export const SmartCareAdminTriagePanel: React.FC<SmartCareAdminTriagePanelProps>
   const [showPasteBox, setShowPasteBox] = useState<boolean>(false);
   const [pasteInput, setPasteInput] = useState<string>('');
   const [mergePickerSourceId, setMergePickerSourceId] = useState<string | null>(null);
+  const [replyingId, setReplyingId] = useState<string | null>(null);
+  const [replyDraftText, setReplyDraftText] = useState<string>('');
+  const [isDraftingReplyAi, setIsDraftingReplyAi] = useState<boolean>(false);
+  const [isSyncingRelay, setIsSyncingRelay] = useState<boolean>(false);
 
   useEffect(() => {
     const sync = () => setLogs(SmartCareService.getLogs());
@@ -160,18 +168,43 @@ export const SmartCareAdminTriagePanel: React.FC<SmartCareAdminTriagePanelProps>
               Deteksi otomatis keluhan Baru / Mirip / Sama Persis untuk digabung, ditambahkan, atau dilewatkan sebelum Copy/Cut.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowPasteBox((v) => !v)}
-            className={`px-2.5 py-1.5 rounded-lg border text-[10px] font-bold flex items-center gap-1 shrink-0 ${
-              lightTheme
-                ? 'border-slate-300 bg-white hover:bg-slate-50 text-slate-700'
-                : 'border-slate-600 bg-slate-900 hover:bg-slate-700 text-slate-200'
-            }`}
-          >
-            <ClipboardPaste className="w-3.5 h-3.5" />
-            <span>Tempel Log WA</span>
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              disabled={isSyncingRelay}
+              onClick={async () => {
+                setIsSyncingRelay(true);
+                const res = await SmartCareService.syncTicketsFromRelay(true);
+                setIsSyncingRelay(false);
+                showNotification(
+                  res.pulled > 0
+                    ? `${res.pulled} tiket baru ditarik dari relay.`
+                    : 'Daftar tiket sudah mutakhir.'
+                );
+              }}
+              className={`px-2.5 py-1.5 rounded-lg border text-[10px] font-bold flex items-center gap-1 ${
+                lightTheme
+                  ? 'border-slate-300 bg-white hover:bg-slate-50 text-slate-700'
+                  : 'border-slate-600 bg-slate-900 hover:bg-slate-700 text-slate-200'
+              }`}
+              title="Tarik laporan warga terbaru dari relay"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingRelay ? 'animate-spin' : ''}`} />
+              <span>Tarik</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowPasteBox((v) => !v)}
+              className={`px-2.5 py-1.5 rounded-lg border text-[10px] font-bold flex items-center gap-1 ${
+                lightTheme
+                  ? 'border-slate-300 bg-white hover:bg-slate-50 text-slate-700'
+                  : 'border-slate-600 bg-slate-900 hover:bg-slate-700 text-slate-200'
+              }`}
+            >
+              <ClipboardPaste className="w-3.5 h-3.5" />
+              <span>Tempel WA</span>
+            </button>
+          </div>
         </div>
 
         {showPasteBox && (
@@ -412,6 +445,20 @@ export const SmartCareAdminTriagePanel: React.FC<SmartCareAdminTriagePanelProps>
                         ))}
                       </div>
                     )}
+                    {item.adminReply && (
+                      <div
+                        className={`rounded-xl p-2 border text-[11px] space-y-0.5 ${
+                          lightTheme
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                            : 'bg-emerald-950/50 border-emerald-500/30 text-emerald-200'
+                        }`}
+                      >
+                        <div className="text-[10px] font-bold text-emerald-400">
+                          Balasan Terkirim ({item.adminReplyAt || item.updatedAt}):
+                        </div>
+                        <p className="leading-snug">{item.adminReply}</p>
+                      </div>
+                    )}
                   </>
                 )}
 
@@ -510,6 +557,112 @@ export const SmartCareAdminTriagePanel: React.FC<SmartCareAdminTriagePanelProps>
                       <Edit3 className="w-3 h-3" />
                       <span>Edit</span>
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (replyingId === item.id) {
+                          setReplyingId(null);
+                        } else {
+                          setReplyingId(item.id);
+                          setReplyDraftText(item.adminReply || '');
+                        }
+                      }}
+                      className="px-2 py-1 rounded-lg bg-sky-500/15 border border-sky-500/40 text-sky-400 font-bold text-[10px] flex items-center gap-1"
+                    >
+                      <MessageSquareReply className="w-3 h-3" />
+                      <span>{item.adminReply ? 'Ubah Balasan' : 'Balas User'}</span>
+                    </button>
+                  </div>
+                )}
+
+                {replyingId === item.id && (
+                  <div className="pt-2 border-t border-slate-700/40 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-sky-400">
+                        Balas ke {item.reporterName}:
+                      </span>
+                      <button
+                        type="button"
+                        disabled={isDraftingReplyAi}
+                        onClick={async () => {
+                          setIsDraftingReplyAi(true);
+                          try {
+                            const draft = await SmartCareService.draftAdminReplyWithAi(item);
+                            setReplyDraftText(draft.reply);
+                            showNotification('Draf balasan AI siap ditinjau sebelum dikirim.');
+                          } catch (err) {
+                            showNotification(
+                              err instanceof Error ? err.message : 'Gagal membuat draf AI.'
+                            );
+                          } finally {
+                            setIsDraftingReplyAi(false);
+                          }
+                        }}
+                        className="px-2 py-1 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-400 font-bold text-[10px] flex items-center gap-1 disabled:opacity-50"
+                      >
+                        {isDraftingReplyAi ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-3 h-3" />
+                        )}
+                        <span>Draf AI</span>
+                      </button>
+                    </div>
+                    <textarea
+                      rows={3}
+                      value={replyDraftText}
+                      onChange={(e) => setReplyDraftText(e.target.value)}
+                      placeholder="Tulis balasan solusi yang dikirim ke tab Tiket Saya milik pelapor..."
+                      className={`w-full rounded-xl border p-2 text-xs focus:outline-none ${
+                        lightTheme
+                          ? 'bg-white border-slate-300 text-slate-900'
+                          : 'bg-slate-950 border-slate-700 text-slate-100'
+                      }`}
+                    />
+                    <div className="flex flex-wrap justify-end gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setReplyingId(null)}
+                        className="px-2.5 py-1 rounded-lg text-[10px] font-bold text-slate-400"
+                      >
+                        Batal
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!replyDraftText.trim()) return;
+                          SmartCareService.replyToTicket({
+                            entryId: item.id,
+                            replyText: replyDraftText,
+                            markResolved: false,
+                          });
+                          setReplyingId(null);
+                          showNotification(`Balasan terkirim ke pelapor tiket ${item.id}.`);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-sky-600 text-white text-[10px] font-bold flex items-center gap-1"
+                      >
+                        <Send className="w-3 h-3" />
+                        <span>Kirim Balasan</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!replyDraftText.trim()) return;
+                          SmartCareService.replyToTicket({
+                            entryId: item.id,
+                            replyText: replyDraftText,
+                            markResolved: true,
+                          });
+                          setReplyingId(null);
+                          showNotification(`Balasan terkirim & tiket ${item.id} ditandai Selesai.`);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold flex items-center gap-1"
+                      >
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Kirim &amp; Selesai</span>
+                      </button>
+                    </div>
                   </div>
                 )}
 

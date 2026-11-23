@@ -112,7 +112,7 @@ const WargaQuLogoBadge: React.FC<{
   uid: string;
   size?: 'sm' | 'md' | 'lg';
   subtitle?: string;
-}> = ({ uid, size = 'md', subtitle = 'LeluhurQu • Arsip Silsilah Keluarga' }) => {
+}> = ({ uid, size = 'md', subtitle = 'NasabQu • Arsip Silsilah Keluarga' }) => {
   const iconBoxClass =
     size === 'lg' ? 'w-14 h-14' : size === 'sm' ? 'w-6 h-6' : 'w-9 h-9';
   const titleClass =
@@ -684,7 +684,7 @@ export const LeluhurBookModal: React.FC<LeluhurBookModalProps> = ({
             <WargaQuLogoBadge
               uid={uid}
               size="md"
-              subtitle="Modul LeluhurQu · Arsip Silsilah"
+              subtitle="Modul NasabQu · Arsip Silsilah"
             />
             <div className="text-right">
               <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-900">
@@ -806,7 +806,7 @@ export const LeluhurBookModal: React.FC<LeluhurBookModalProps> = ({
 
     const renderRunningFooter = (pageNum: number) => (
       <div className="flex items-center justify-between border-t border-stone-300 pt-3 mt-auto">
-        <WargaQuLogoBadge uid={`${uid}_runft`} size="sm" subtitle="LeluhurQu" />
+        <WargaQuLogoBadge uid={`${uid}_runft`} size="sm" subtitle="NasabQu" />
         <div className="text-[11px] font-semibold text-stone-600 tabular-nums">
           Halaman {pageNum} dari {pages.length} · Ukuran {paperSize}
         </div>
@@ -1152,7 +1152,7 @@ export const LeluhurBookModal: React.FC<LeluhurBookModalProps> = ({
             </span>
           </div>
           <span className="italic text-stone-500">
-            Disimpan melalui WargaQu · LeluhurQu
+            Disimpan melalui WargaQu · NasabQu
           </span>
         </div>
 

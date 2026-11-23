@@ -493,7 +493,7 @@ export const PhoneScanPairModal: React.FC<PhoneScanPairModalProps> = ({
                   Sesi Laptop Siap Ditautkan (Kode {parsedTarget.sessionId})
                 </div>
                 <div className="text-[11px] text-emerald-800 mt-0.5">
-                  Data akun, RTQu, LeluhurQu, UsahaQu, ChatQu &amp; AreaQu akan disinkronkan
+                  Data akun, RTQu, NasabQu, UsahaQu, ChatQu &amp; AreaQu akan disinkronkan
                   terenkripsi langsung ke browser Laptop Anda.
                 </div>
               </div>

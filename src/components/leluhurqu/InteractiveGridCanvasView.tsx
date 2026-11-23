@@ -85,7 +85,17 @@ export type CanvasTheme = 'dark' | 'light';
 export type CanvasBackground = '' | 'bg-gunung' | 'bg-pohon' | 'bg-galaksi';
 export type GridPaperSize = 'a4' | 'a3' | 'a2' | 'a1' | 'a0';
 export type GridPaperOrientation = 'landscape' | 'portrait';
-export type CardDisplayMode = 'full' | 'photo_name' | 'name_only' | 'photo_only';
+export type CardDisplayMode = 'name_only' | 'photo_name' | 'full';
+
+function normalizeCardDisplayMode(mode?: string): CardDisplayMode {
+  if (mode === 'name_only' || mode === 'photo_name' || mode === 'full') {
+    return mode;
+  }
+  if (mode === 'photo_only') {
+    return 'photo_name';
+  }
+  return 'full';
+}
 export type PhotoFrameSize = 'kotak' | 'bulat' | '2x3' | '3x4' | '4x6';
 export type GridPhotoShape = 'kotak' | 'bulat' | 'segi6';
 export type GenGradientPaletteId =
@@ -437,7 +447,7 @@ function getDefaultCaptionInfo(
     familyTitle: `Keluarga Besar ${trahName}`,
     subtitleNote: 'Bagan Silsilah & Jejak Nasab Lintas Generasi',
     createdYear: createdYear || String(new Date().getFullYear()),
-    createdByApp: 'LeluhurQu',
+    createdByApp: 'NasabQu',
     curatorName,
     showLineLegend: true,
   };
@@ -505,13 +515,6 @@ function getNodeSize(
   }
 
   const pDim = PHOTO_DIMENSIONS[photoSize] || PHOTO_DIMENSIONS['3x4'];
-
-  if (displayMode === 'photo_only') {
-    return {
-      w: Math.round((pDim.w + 8) * effScale),
-      h: Math.round((pDim.h + 8) * effScale),
-    };
-  }
 
   if (displayMode === 'photo_name') {
     const u = getUniformSubCardSize(displayMode, photoSize, effScale);
@@ -2124,7 +2127,7 @@ export const InteractiveGridCanvasView: React.FC<
         const pDim = GRID_PAPER_MAP[pKey];
         const pW = (target.paperOrientation || 'landscape') === 'landscape' ? pDim.pxW : pDim.pxH;
         const pH = (target.paperOrientation || 'landscape') === 'landscape' ? pDim.pxH : pDim.pxW;
-        const cMode = target.cardDisplayMode || 'full';
+        const cMode = normalizeCardDisplayMode(target.cardDisplayMode);
         const phSize = target.photoFrameSize || '3x4';
         const curScale = target.cardScale ?? 1;
 
@@ -2217,7 +2220,7 @@ export const InteractiveGridCanvasView: React.FC<
       setQuickText(target.quickText);
       setPaperSize(target.paperSize || 'a3');
       setPaperOrientation(target.paperOrientation || 'landscape');
-      setCardDisplayMode(target.cardDisplayMode || 'full');
+      setCardDisplayMode(normalizeCardDisplayMode(target.cardDisplayMode));
       setPhotoFrameSize(target.photoFrameSize || '3x4');
       setPhotoShape(target.photoShape || defaultPhotoShape);
       setCardScale(target.cardScale ?? 1);
@@ -2388,7 +2391,9 @@ export const InteractiveGridCanvasView: React.FC<
         if (target.quickText) setQuickText(target.quickText);
         if (target.paperSize) setPaperSize(target.paperSize);
         if (target.paperOrientation) setPaperOrientation(target.paperOrientation);
-        if (target.cardDisplayMode) setCardDisplayMode(target.cardDisplayMode);
+        if (target.cardDisplayMode) {
+          setCardDisplayMode(normalizeCardDisplayMode(target.cardDisplayMode));
+        }
         if (target.photoFrameSize) setPhotoFrameSize(target.photoFrameSize);
         if (target.photoShape) setPhotoShape(target.photoShape);
         if (typeof target.cardScale === 'number') setCardScale(target.cardScale);
@@ -2931,7 +2936,7 @@ export const InteractiveGridCanvasView: React.FC<
     setQuickText(design.quickText);
     setPaperSize(design.paperSize || 'a3');
     setPaperOrientation(design.paperOrientation || 'landscape');
-    setCardDisplayMode(design.cardDisplayMode || 'full');
+    setCardDisplayMode(normalizeCardDisplayMode(design.cardDisplayMode));
     setPhotoFrameSize(design.photoFrameSize || '3x4');
     setPhotoShape(design.photoShape || defaultPhotoShape);
     setCardScale(design.cardScale ?? 1);
@@ -5194,10 +5199,9 @@ export const InteractiveGridCanvasView: React.FC<
                             : 'bg-stone-50 border-stone-300 text-stone-900'
                         }`}
                       >
-                        <option value="full">Lengkap (1mm Foto+Thn+Kota)</option>
-                        <option value="photo_name">Foto 2×3 + Badge Ringkas</option>
-                        <option value="name_only">Nama Lengkap Saja</option>
-                        <option value="photo_only">Foto Saja</option>
+                        <option value="name_only">1. Nama Lengkap Saja</option>
+                        <option value="photo_name">2. Foto + Badge Nama</option>
+                        <option value="full">3. Foto + Badge Lengkap (Nama, Lahir/Wafat, Kota)</option>
                       </select>
                     </div>
 
@@ -6001,7 +6005,7 @@ export const InteractiveGridCanvasView: React.FC<
                             createdByApp: e.target.value,
                           }))
                         }
-                        placeholder="LeluhurQu"
+                        placeholder="NasabQu"
                         className={`w-full px-2 py-1 rounded-lg border text-[11px] font-bold outline-hidden ${
                           isDark
                             ? 'bg-[#0f172a] border-slate-700 text-white'
@@ -7525,7 +7529,7 @@ export const InteractiveGridCanvasView: React.FC<
                   effScale
                 );
                 const pDim =
-                  isModularUnitNode && cardDisplayMode === 'photo_name'
+                  isModularUnitNode && (cardDisplayMode === 'photo_name' || cardDisplayMode === 'full')
                     ? { w: uniformUnit.photoW, h: uniformUnit.photoH }
                     : getScaledPhotoDim(photoFrameSize, effScale);
                 const scaledNamePx = Math.max(7.5, Math.round(11.5 * effScale));
@@ -7888,11 +7892,7 @@ export const InteractiveGridCanvasView: React.FC<
                                 ...(subBorder ? { borderColor: subBorder } : {}),
                               }}
                               title={mm.sub ? `${mm.name} (${mm.sub})` : mm.name}
-                              className={`flex flex-col items-center justify-between rounded-lg border overflow-hidden shrink-0 ${
-                                cardDisplayMode === 'photo_only'
-                                  ? 'p-[2px]'
-                                  : 'p-[2px]'
-                              } ${
+                              className={`flex flex-col items-center justify-between rounded-lg border overflow-hidden shrink-0 p-[2px] ${
                                 !subBg
                                   ? isCardLight
                                     ? 'bg-stone-100/90 border-stone-300/80'
@@ -7927,11 +7927,32 @@ export const InteractiveGridCanvasView: React.FC<
                                 </div>
                               )}
 
-                              {cardDisplayMode !== 'photo_only' &&
-                                cardDisplayMode !== 'photo_name' && (
+                              {cardDisplayMode === 'name_only' && (
+                                <div
+                                  style={{ fontSize: `${cellNamePx}px` }}
+                                  className="font-bold leading-tight text-center break-words whitespace-normal w-full my-auto"
+                                >
+                                  {mm.gender && (
+                                    <span className="mr-0.5">
+                                      {mm.gender === 'P' ? '👩' : '👨'}
+                                    </span>
+                                  )}
+                                  {mm.name}
+                                </div>
+                              )}
+
+                              {cardDisplayMode === 'full' && (
+                                <div
+                                  style={{ minHeight: `${plan.badgeH}px` }}
+                                  className={`w-full rounded px-1 py-0.5 flex flex-col items-center justify-center text-center leading-tight ${
+                                    subIsLight
+                                      ? 'bg-black/[0.07] text-slate-900'
+                                      : 'bg-black/30 text-white'
+                                  }`}
+                                >
                                   <div
                                     style={{ fontSize: `${cellNamePx}px` }}
-                                    className="font-bold leading-tight text-center break-words whitespace-normal w-full"
+                                    className="font-extrabold leading-tight break-words whitespace-normal w-full line-clamp-2"
                                   >
                                     {mm.gender && (
                                       <span className="mr-0.5">
@@ -7940,16 +7961,16 @@ export const InteractiveGridCanvasView: React.FC<
                                     )}
                                     {mm.name}
                                   </div>
-                                )}
-
-                              {cardDisplayMode === 'full' && mm.sub && (
-                                <div
-                                  style={{ fontSize: `${cellSubPx}px` }}
-                                  className={`mt-0.5 leading-tight text-center break-words w-full opacity-80 ${
-                                    subIsLight ? 'text-slate-600' : 'text-slate-300'
-                                  }`}
-                                >
-                                  {mm.sub}
+                                  {mm.sub && (
+                                    <div
+                                      style={{ fontSize: `${cellSubPx}px` }}
+                                      className={`mt-0.5 leading-tight break-words w-full line-clamp-2 opacity-85 ${
+                                        subIsLight ? 'text-slate-700' : 'text-slate-200'
+                                      }`}
+                                    >
+                                      {mm.sub}
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -8007,8 +8028,7 @@ export const InteractiveGridCanvasView: React.FC<
                               </button>
                             )}
 
-                            {cardDisplayMode !== 'photo_only' && (
-                              <div
+                            <div
                                 style={{
                                   height: `${plan.headerH}px`,
                                   fontSize: `${Math.max(8, Math.round(9.5 * Math.max(0.7, effScale)))}px`,
@@ -8026,7 +8046,6 @@ export const InteractiveGridCanvasView: React.FC<
                                     : `${mList.length} Foto`}
                                 </span>
                               </div>
-                            )}
 
                             {plan.layout === 'I' ? (
                               (() => {
@@ -8171,16 +8190,22 @@ export const InteractiveGridCanvasView: React.FC<
                           </span>
                         )}
 
-                        {/* Mode Card: Foto Saja (Kotak / Bulat / Segi-6, jarak 1mm) */}
-                        {cardDisplayMode === 'photo_only' &&
-                          renderPhotoFrame(
-                            node.photo,
-                            node.name,
-                            pDim.w,
-                            pDim.h
-                          )}
+                        {/* 1. Mode Card: Nama Lengkap Saja */}
+                        {cardDisplayMode === 'name_only' && (
+                          <div
+                            style={{ fontSize: `${scaledNamePx}px` }}
+                            className="font-extrabold leading-snug break-words whitespace-normal w-full text-center"
+                          >
+                            {node.gender && (
+                              <span className="mr-0.5 opacity-90">
+                                {node.gender === 'P' ? '👩' : '👨'}
+                              </span>
+                            )}
+                            <span>{node.name}</span>
+                          </div>
+                        )}
 
-                        {/* Mode Card: Foto 2x3 + Badge Nama Ringkas (Seragam G3+ & Poros G1-G2) */}
+                        {/* 2. Mode Card: Foto + Badge Nama */}
                         {cardDisplayMode === 'photo_name' && (
                           <div className="w-full h-full flex flex-col items-center justify-between overflow-hidden">
                             {renderPhotoFrame(
@@ -8205,60 +8230,45 @@ export const InteractiveGridCanvasView: React.FC<
                           </div>
                         )}
 
-                        {/* Mode Card: Nama Lengkap Saja */}
-                        {cardDisplayMode === 'name_only' && (
-                          <div
-                            style={{ fontSize: `${scaledNamePx}px` }}
-                            className="font-extrabold leading-snug break-words whitespace-normal w-full text-center"
-                          >
-                            {node.gender && (
-                              <span className="mr-0.5 opacity-90">
-                                {node.gender === 'P' ? '👩' : '👨'}
-                              </span>
-                            )}
-                            <span>{node.name}</span>
-                          </div>
-                        )}
-
-                        {/* Mode Card: Lengkap (Foto 1mm + Nama Lengkap + Tahun Lahir/Wafat - Kota) */}
+                        {/* 3. Mode Card: Foto + Badge Lengkap (Nama, Lahir/Wafat, Kota) */}
                         {cardDisplayMode === 'full' && (
-                          <>
+                          <div className="w-full h-full flex flex-col items-center justify-between overflow-hidden gap-0.5">
                             {renderPhotoFrame(
                               node.photo,
                               node.name,
                               pDim.w,
-                              pDim.h,
-                              undefined,
-                              'mb-0.5'
+                              pDim.h
                             )}
                             <div
-                              style={{ fontSize: `${scaledNamePx}px` }}
-                              className="font-bold leading-tight break-words whitespace-normal w-full"
+                              className={`w-full rounded-md px-1.5 py-0.5 flex flex-col items-center justify-center text-center leading-tight ${
+                                isCardLight
+                                  ? 'bg-black/[0.07] text-slate-900'
+                                  : 'bg-black/30 text-white'
+                              }`}
                             >
-                              {node.gender && (
-                                <span className="mr-0.5">
-                                  {node.gender === 'P' ? '👩' : '👨'}
-                                </span>
-                              )}
-                              {node.name}
-                            </div>
-                            {node.sub && (
                               <div
-                                style={{ fontSize: `${scaledSubPx}px` }}
-                                className={`mt-0.5 leading-tight break-words w-full ${
-                                  effectiveBg
-                                    ? isCardLight
-                                      ? 'text-slate-600'
-                                      : 'text-slate-300'
-                                    : isDark
-                                    ? 'text-slate-400'
-                                    : 'text-slate-500'
-                                }`}
+                                style={{ fontSize: `${Math.max(7, Math.round(9.5 * effScale))}px` }}
+                                className="font-extrabold leading-tight break-words whitespace-normal w-full"
                               >
-                                {node.sub}
+                                {node.gender && (
+                                  <span className="mr-0.5">
+                                    {node.gender === 'P' ? '👩' : '👨'}
+                                  </span>
+                                )}
+                                <span>{node.name}</span>
                               </div>
-                            )}
-                          </>
+                              {node.sub && (
+                                <div
+                                  style={{ fontSize: `${Math.max(6, Math.round(8 * effScale))}px` }}
+                                  className={`mt-0.5 leading-tight break-words w-full opacity-90 ${
+                                    isCardLight ? 'text-slate-700' : 'text-slate-200'
+                                  }`}
+                                >
+                                  {node.sub}
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         )}
                       </>
                     )}

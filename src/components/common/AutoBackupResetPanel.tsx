@@ -713,7 +713,7 @@ export const AutoBackupResetPanel: React.FC<AutoBackupResetPanelProps> = ({
               {confirmDialog.kind === 'safe_reset' && (
                 <>
                   <p>
-                    Semua data lokal WargaQu (LeluhurQu, RTQu, POS/UsahaQu, AreaQu, ChatQu, dan
+                    Semua data lokal WargaQu (NasabQu, RTQu, POS/UsahaQu, AreaQu, ChatQu, dan
                     pengaturan lokal) di HP ini akan dikosongkan.
                   </p>
                   <label className="flex items-start gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 text-[11px] text-emerald-950 cursor-pointer">

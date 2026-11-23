@@ -569,7 +569,7 @@ export const AccountGovernancePanel: React.FC<AccountGovernancePanelProps> = ({
             onChange={e => setNewCommKind(e.target.value as 'trah' | 'rt_paguyuban')}
             className="min-h-[38px] border border-slate-300 rounded-xl px-2.5 bg-white font-semibold text-[11px] shrink-0"
           >
-            <option value="trah">Trah (LeluhurQu)</option>
+            <option value="trah">Trah (NasabQu)</option>
             <option value="rt_paguyuban">RT / Paguyuban</option>
           </select>
           <input

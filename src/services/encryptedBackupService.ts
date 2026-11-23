@@ -265,7 +265,7 @@ export const EncryptedBackupService = {
 
     const dateStamp = new Date().toISOString().slice(0, 10);
     const scopeLabel =
-      scope === 'leluhurqu' ? 'LeluhurQu' : scope === 'rtqu' ? 'RTQu' : 'SemuaData';
+      scope === 'leluhurqu' ? 'NasabQu' : scope === 'rtqu' ? 'RTQu' : 'SemuaData';
     const filename = `WargaQu_${scopeLabel}_Terenkripsi_${dateStamp}.wqbak.json`;
 
     const blob = new Blob([JSON.stringify(envelope, null, 2)], {

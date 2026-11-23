@@ -76,7 +76,7 @@ const MODULE_SHOWCASE: ModuleShowcaseItem[] = [
   },
   {
     id: 'leluhurqu',
-    title: 'LeluhurQu',
+    title: 'NasabQu',
     subtitle: 'Silsilah A3 & Kuis Trah',
     caption: 'Pohon keluarga modular 100+ anggota siap cetak A3 dan kuis trah seru.',
     accentBg: 'bg-teal-900',
@@ -716,7 +716,7 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
               <div className="p-4 rounded-2xl border border-slate-200 space-y-1.5">
                 <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
                   <Users className="w-4 h-4 text-emerald-700" />
-                  <span>LeluhurQu &amp; Kuis Trah</span>
+                  <span>NasabQu &amp; Kuis Trah</span>
                 </div>
                 <p className="text-xs text-slate-600 leading-relaxed">
                   Tata letak silsilah keluarga besar 100+ anggota skala A3 tanpa garis kusut, serta
@@ -745,7 +745,7 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
                 <li>• Sesi tunggal aktif APK vs PWA (login di satu wadah menutup sesi lama di wadah lain).</li>
                 <li>• Sinkronisasi data akun APK ↔ PWA lebih cepat dengan server relay bersama.</li>
                 <li>• Sistem timpa APK (in-place update) memakai kunci penandatanganan tetap + pengunduh pembaruan bawaan.</li>
-                <li>• Alur 3 langkah LeluhurQu (Ajukan → Admin Approve → Tarik Pembaruan) terisolasi per modul.</li>
+                <li>• Alur 3 langkah NasabQu (Ajukan → Admin Approve → Tarik Pembaruan) terisolasi per modul.</li>
               </ul>
             </div>
           </aside>

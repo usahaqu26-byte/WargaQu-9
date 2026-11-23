@@ -178,7 +178,8 @@ function isSyncRelayApiPath(cleanPath: string): boolean {
     cleanPath.startsWith('/api/leluhur/') ||
     cleanPath.startsWith('/api/invite-room') ||
     cleanPath.startsWith('/api/relay-') ||
-    cleanPath.startsWith('/api/quiz-rounds')
+    cleanPath.startsWith('/api/quiz-rounds') ||
+    cleanPath.startsWith('/api/smartcare/tickets')
   );
 }
 

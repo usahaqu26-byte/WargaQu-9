@@ -826,7 +826,7 @@ export const AdminZeroTrustView: React.FC<AdminZeroTrustViewProps> = ({
               {ledger.length === 0 ? (
                 <div className="p-4 text-xs text-slate-500">
                   Belum ada transaksi monetisasi. Aktifkan tarif di tab Monetisasi lalu coba sewa lapak
-                  AreaQu, cetak LeluhurQu, bayar iuran RTQu, atau checkout MuamalahQu.
+                  AreaQu, cetak NasabQu, bayar iuran RTQu, atau checkout MuamalahQu.
                 </div>
               ) : (
                 ledger.slice(0, 10).map(item => (

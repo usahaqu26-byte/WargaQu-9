@@ -95,7 +95,7 @@ export const TrahQrCodeCard: React.FC<TrahQrCodeCardProps> = ({
       ctx.fillStyle = '#fde68a';
       ctx.font = 'bold 13px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('BARCODE UNDANGAN SILSILAH LELUHURQU', width / 2, 34);
+      ctx.fillText('BARCODE UNDANGAN SILSILAH NASABQU', width / 2, 34);
 
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 20px sans-serif';
@@ -118,7 +118,7 @@ export const TrahQrCodeCard: React.FC<TrahQrCodeCardProps> = ({
       // Footer instruction
       ctx.fillStyle = '#064e3b';
       ctx.font = 'bold 13px sans-serif';
-      ctx.fillText('Scan dari Kamera HP atau Menu Scan QR LeluhurQu', width / 2, 494);
+      ctx.fillText('Scan dari Kamera HP atau Menu Scan QR NasabQu', width / 2, 494);
 
       ctx.fillStyle = '#57534e';
       ctx.font = '11px sans-serif';
@@ -132,7 +132,7 @@ export const TrahQrCodeCard: React.FC<TrahQrCodeCardProps> = ({
 
       ctx.fillStyle = '#78716c';
       ctx.font = '10px sans-serif';
-      ctx.fillText('WargaQu • LeluhurQu Keluarga Nusantara', width / 2, 540);
+      ctx.fillText('WargaQu • NasabQu Keluarga Nusantara', width / 2, 540);
 
       const link = document.createElement('a');
       const fileSlug = trahName
@@ -196,7 +196,7 @@ export const TrahQrCodeCard: React.FC<TrahQrCodeCardProps> = ({
           </div>
           <p className="text-[10px] text-stone-600 leading-snug max-w-xs">
             Saudara cukup <strong>scan barcode ini</strong> lewat kamera HP atau tombol{' '}
-            <strong>Scan QR</strong> di LeluhurQu (atau unggah gambar QR ini dari galeri).
+            <strong>Scan QR</strong> di NasabQu (atau unggah gambar QR ini dari galeri).
           </p>
         </div>
       ) : (
