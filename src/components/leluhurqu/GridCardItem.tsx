@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Check } from 'lucide-react';
 import type {
   CardDisplayMode,
+  CardFrameMode,
   GenGradientPaletteId,
   GridLayoutMode,
   GridPhotoShape,
@@ -31,6 +32,7 @@ export interface GridCardItemProps {
   isHolding: boolean;
   isUnlocked: boolean;
   cardDisplayMode: CardDisplayMode;
+  cardFrameMode: CardFrameMode;
   photoFrameSize: PhotoFrameSize;
   photoShape: GridPhotoShape;
   cardScale: number;
@@ -58,6 +60,7 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
   isHolding,
   isUnlocked,
   cardDisplayMode,
+  cardFrameMode,
   photoFrameSize,
   photoShape,
   cardScale,
@@ -203,18 +206,46 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
     );
   };
 
-  const cardCustomStyle: React.CSSProperties = {
-    left: `${node.x}px`,
-    top: `${node.y}px`,
-    width: `${size.w}px`,
-    ...(isModularUnitNode
-      ? { height: `${size.h}px` }
-      : { minHeight: `${size.h}px` }),
-    ...(containerBg ? { backgroundColor: containerBg } : {}),
-    ...(effectiveBorder && !isSelected && !isConnectSource && !isUnlocked
-      ? { borderColor: effectiveBorder }
-      : {}),
-  };
+  const useLeafFrame =
+    !isModularContainer &&
+    (cardFrameMode === 'leaf' ||
+      (cardFrameMode === 'auto' && node.cardShape === 'leaf'));
+  const leafAngleDeg = node.leafAngleDeg ?? 0;
+  const isLightLeaf =
+    node.leafTone === 'light' ||
+    (node.leafTone !== 'dark' && (node.genLevel ?? 0) >= 4);
+  const leafFillPrimary = isLightLeaf ? '#84cc16' : '#15803d';
+  const leafFillShade = isLightLeaf ? '#65a30d' : '#166534';
+  const leafStrokeCol = isUnlocked
+    ? '#34d399'
+    : isSelected
+    ? '#f59e0b'
+    : isConnectSource
+    ? '#38bdf8'
+    : isLightLeaf
+    ? '#d9f99d'
+    : '#4ade80';
+  const leafVeinCol = isLightLeaf ? '#ecfccb' : '#86efac';
+
+  const cardCustomStyle: React.CSSProperties = useLeafFrame
+    ? {
+        left: `${node.x}px`,
+        top: `${node.y}px`,
+        width: `${size.w}px`,
+        minHeight: `${size.h}px`,
+      }
+    : {
+        left: `${node.x}px`,
+        top: `${node.y}px`,
+        width: `${size.w}px`,
+        ...(isModularUnitNode
+          ? { height: `${size.h}px` }
+          : { minHeight: `${size.h}px` }),
+        ...(containerBg ? { backgroundColor: containerBg } : {}),
+        ...(effectiveBorder && !isSelected && !isConnectSource && !isUnlocked
+          ? { borderColor: effectiveBorder }
+          : {}),
+      };
 
   return (
     <div
@@ -223,14 +254,18 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
       onTouchStart={(e) => onStartInteraction(e, node.id)}
       onClick={(e) => e.stopPropagation()}
       style={cardCustomStyle}
-      className={`group absolute rounded-xl border-2 flex flex-col items-center justify-center text-center select-none ${
-        lodLite ? '' : 'shadow-lg transition-shadow'
-      } ${
-        cardDisplayMode === 'name_only'
-          ? 'px-2 py-1'
-          : isModularContainer
-          ? 'p-1'
-          : 'p-[3px]'
+      className={`group absolute flex flex-col items-center justify-center text-center select-none ${
+        useLeafFrame
+          ? 'overflow-visible bg-transparent border-0 p-[2px]'
+          : `rounded-xl border-2 ${
+              lodLite ? '' : 'shadow-lg transition-shadow'
+            } ${
+              cardDisplayMode === 'name_only'
+                ? 'px-2 py-1'
+                : isModularContainer
+                ? 'p-1'
+                : 'p-[3px]'
+            }`
       } ${
         layoutMode === 'manual'
           ? isUnlocked || !safeHoldMove
@@ -238,7 +273,11 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
             : 'cursor-pointer'
           : 'cursor-pointer'
       } ${
-        isUnlocked
+        useLeafFrame
+          ? isUnlocked || isSelected || isConnectSource
+            ? 'z-40'
+            : 'z-10 hover:brightness-105'
+          : isUnlocked
           ? 'z-50 border-emerald-400 ring-4 ring-emerald-400/40'
           : isSelected
           ? 'z-40 border-amber-500 ring-3 ring-amber-500/35'
@@ -249,15 +288,65 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
             ? 'z-10 bg-[#1e293b] border-slate-600 hover:border-amber-400'
             : 'z-10 bg-white border-stone-300 hover:border-amber-500'
           : 'z-10 hover:brightness-105'
-      } ${isCardLight ? 'text-slate-900' : 'text-slate-100'} ${
-        node.wafat ? 'border-dashed opacity-90' : ''
-      }`}
+      } ${
+        useLeafFrame
+          ? 'text-white'
+          : isCardLight
+          ? 'text-slate-900'
+          : 'text-slate-100'
+      } ${node.wafat && !useLeafFrame ? 'border-dashed opacity-90' : ''}`}
       title={
         safeHoldMove && layoutMode === 'manual' && !isUnlocked
           ? `${node.name} • Tahan 2 detik atau pakai tombol Pindah di panel bawah`
           : node.name
       }
     >
+      {/* Bingkai Daun Organik (Berputar segala arah • Foto & Badge di atasnya tetap tegak 0°) */}
+      {useLeafFrame && (
+        <div
+          aria-hidden="true"
+          style={{
+            transform: `rotate(${leafAngleDeg}deg)`,
+          }}
+          className={`pointer-events-none absolute -inset-[16%] z-0 flex items-center justify-center ${
+            node.wafat ? 'opacity-85' : ''
+          }`}
+        >
+          <svg
+            viewBox="0 0 120 150"
+            preserveAspectRatio="none"
+            className="w-full h-full drop-shadow-md overflow-visible"
+          >
+            {/* Belahan kiri daun */}
+            <path
+              d="M 60 6 C 12 42 10 104 60 144 Z"
+              fill={leafFillPrimary}
+            />
+            {/* Belahan kanan daun (sedikit lebih gelap untuk kedalaman) */}
+            <path
+              d="M 60 6 C 108 42 110 104 60 144 Z"
+              fill={leafFillShade}
+            />
+            {/* Garis tepi luar daun */}
+            <path
+              d="M 60 6 C 108 42 110 104 60 144 C 10 104 12 42 60 6 Z"
+              fill="none"
+              stroke={leafStrokeCol}
+              strokeWidth={isSelected || isUnlocked ? 4.2 : 2.2}
+              strokeDasharray={node.wafat ? '6 4' : undefined}
+            />
+            {/* Tulang daun tengah & urat samping halus */}
+            <path
+              d="M 60 148 L 60 22 M 60 106 L 34 84 M 60 88 L 86 68 M 60 68 L 36 50 M 60 50 L 82 36"
+              fill="none"
+              stroke={leafVeinCol}
+              strokeWidth={1.8}
+              strokeLinecap="round"
+              opacity={0.72}
+            />
+          </svg>
+        </div>
+      )}
       {/* Indikator Progress Hold 2 Detik (CSS/DOM animation, 0 React re-render) */}
       {isHolding && (
         <div className="absolute -top-7 left-1/2 -translate-x-1/2 z-50 px-2 py-0.5 rounded-full bg-slate-950/95 border border-emerald-400 text-[9px] font-black text-emerald-300 whitespace-nowrap shadow-lg flex items-center gap-1.5 pointer-events-none">
@@ -655,7 +744,13 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
           {cardDisplayMode === 'name_only' && (
             <div
               style={{ fontSize: `${scaledNamePx}px` }}
-              className="font-extrabold leading-snug break-words whitespace-normal w-full text-center"
+              className={`relative z-10 font-extrabold leading-snug break-words whitespace-normal w-full text-center ${
+                useLeafFrame
+                  ? isDark
+                    ? 'px-1.5 py-0.5 rounded-md bg-stone-950/90 border border-emerald-400/70 text-white shadow-md'
+                    : 'px-1.5 py-0.5 rounded-md bg-white/95 border border-emerald-700/60 text-slate-950 shadow-md'
+                  : ''
+              }`}
             >
               {node.gender && (
                 <span className="mr-0.5 opacity-90">
@@ -668,17 +763,30 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
 
           {/* 2. Foto + Badge Nama */}
           {cardDisplayMode === 'photo_name' && (
-            <div className="w-full h-full flex flex-col items-center justify-between overflow-hidden">
-              {renderPhotoFrame(node.photo, node.name, pDim.w, pDim.h)}
+            <div className="relative z-10 w-full h-full flex flex-col items-center justify-between overflow-visible">
+              <div className="relative z-10 shrink-0">
+                {renderPhotoFrame(
+                  node.photo,
+                  node.name,
+                  pDim.w,
+                  pDim.h,
+                  useLeafFrame ? leafStrokeCol : undefined,
+                  useLeafFrame ? 'shadow-md' : ''
+                )}
+              </div>
               <div
                 style={{
                   height: `${uniformUnit.badgeH}px`,
                   fontSize: `${Math.max(7, Math.round(9.5 * effScale))}px`,
                 }}
-                className={`w-full rounded px-1 flex items-center justify-center font-extrabold leading-none truncate ${
-                  isCardLight
-                    ? 'bg-black/[0.07] text-slate-900'
-                    : 'bg-black/30 text-white'
+                className={`relative z-20 w-full px-1 flex items-center justify-center font-extrabold leading-none truncate ${
+                  useLeafFrame
+                    ? isDark
+                      ? 'mt-0.5 rounded-md bg-stone-950/92 border border-emerald-400/75 text-white shadow-md'
+                      : 'mt-0.5 rounded-md bg-white/95 border border-emerald-700/65 text-slate-950 shadow-md'
+                    : isCardLight
+                    ? 'rounded bg-black/[0.07] text-slate-900'
+                    : 'rounded bg-black/30 text-white'
                 }`}
               >
                 <span className="truncate">{node.name}</span>
@@ -688,11 +796,24 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
 
           {/* 3. Foto + Badge Lengkap (Nama, Lahir/Wafat, Kota) */}
           {cardDisplayMode === 'full' && (
-            <div className="w-full h-full flex flex-col items-center justify-between overflow-hidden gap-0.5">
-              {renderPhotoFrame(node.photo, node.name, pDim.w, pDim.h)}
+            <div className="relative z-10 w-full h-full flex flex-col items-center justify-between overflow-visible gap-0.5">
+              <div className="relative z-10 shrink-0">
+                {renderPhotoFrame(
+                  node.photo,
+                  node.name,
+                  pDim.w,
+                  pDim.h,
+                  useLeafFrame ? leafStrokeCol : undefined,
+                  useLeafFrame ? 'shadow-md' : ''
+                )}
+              </div>
               <div
-                className={`w-full rounded-md px-1.5 py-0.5 flex flex-col items-center justify-center text-center leading-tight ${
-                  isCardLight
+                className={`relative z-20 w-full rounded-md px-1.5 py-0.5 flex flex-col items-center justify-center text-center leading-tight ${
+                  useLeafFrame
+                    ? isDark
+                      ? 'bg-stone-950/92 border border-emerald-400/75 text-white shadow-md'
+                      : 'bg-white/95 border border-emerald-700/65 text-slate-950 shadow-md'
+                    : isCardLight
                     ? 'bg-black/[0.07] text-slate-900'
                     : 'bg-black/30 text-white'
                 }`}
@@ -716,7 +837,13 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
                       fontSize: `${Math.max(6, Math.round(8 * effScale))}px`,
                     }}
                     className={`mt-0.5 leading-tight break-words w-full opacity-90 ${
-                      isCardLight ? 'text-slate-700' : 'text-slate-200'
+                      useLeafFrame
+                        ? isDark
+                          ? 'text-lime-200'
+                          : 'text-emerald-800'
+                        : isCardLight
+                        ? 'text-slate-700'
+                        : 'text-slate-200'
                     }`}
                   >
                     {node.sub}

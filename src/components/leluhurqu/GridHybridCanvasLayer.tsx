@@ -3,6 +3,7 @@ import { Compass, X } from 'lucide-react';
 import type {
   CanvasBackground,
   CardDisplayMode,
+  CardFrameMode,
   ConnectorLineStyle,
   GenGradientPaletteId,
   GridPhotoShape,
@@ -47,16 +48,30 @@ export interface ComputedCanvasEdgeItem {
   gradId: string;
 }
 
+export interface TreeSkeletonData {
+  rootPaths: Array<{ d: string; color: string }>;
+  trunkOuterPaths: Array<{ d: string; color: string }>;
+  trunkInnerPaths: Array<{ d: string; color: string }>;
+  boughPaths: Array<{
+    d: string;
+    color: string;
+    innerD?: string;
+    innerColor?: string;
+  }>;
+}
+
 interface GridHybridSnapshotCanvasProps {
   visible: boolean;
   boardWidth: number;
   boardHeight: number;
   nodes: InteractiveNode[];
   computedEdges: ComputedCanvasEdgeItem[];
+  treeSkeleton?: TreeSkeletonData | null;
   selectedIds: string[];
   lineStyle: ConnectorLineStyle;
   lineThickness: number;
   cardDisplayMode: CardDisplayMode;
+  cardFrameMode: CardFrameMode;
   photoFrameSize: PhotoFrameSize;
   photoShape: GridPhotoShape;
   cardScale: number;
@@ -81,10 +96,12 @@ export const GridHybridSnapshotCanvas: React.FC<
     boardHeight,
     nodes,
     computedEdges,
+    treeSkeleton,
     selectedIds,
     lineStyle,
     lineThickness,
     cardDisplayMode,
+    cardFrameMode,
     photoFrameSize,
     photoShape,
     cardScale,
@@ -124,6 +141,33 @@ export const GridHybridSnapshotCanvas: React.FC<
         ctx.save();
         ctx.clearRect(0, 0, targetW, targetH);
         ctx.scale(scale, scale);
+
+        // 0. Kerangka Akar & Batang Kayu Pohon Besar (di belakang semua garis & kartu)
+        if (treeSkeleton) {
+          const fillPathList = (items: Array<{ d: string; color: string }>) => {
+            items.forEach((it) => {
+              try {
+                ctx.fillStyle = it.color;
+                ctx.fill(new Path2D(it.d));
+              } catch {
+                // ignore invalid path
+              }
+            });
+          };
+          fillPathList(treeSkeleton.rootPaths);
+          fillPathList(treeSkeleton.trunkOuterPaths);
+          fillPathList(treeSkeleton.boughPaths);
+          treeSkeleton.boughPaths.forEach((bp) => {
+            if (!bp.innerD || !bp.innerColor) return;
+            try {
+              ctx.fillStyle = bp.innerColor;
+              ctx.fill(new Path2D(bp.innerD));
+            } catch {
+              // ignore
+            }
+          });
+          fillPathList(treeSkeleton.trunkInnerPaths);
+        }
 
         // 1. Garis Konektor
         if (lineStyle !== 'none') {
@@ -333,7 +377,127 @@ export const GridHybridSnapshotCanvas: React.FC<
               : isLightHexColor(effectiveBg)
             : !isDark;
 
+          const useLeafFrame =
+            !isModular &&
+            (cardFrameMode === 'leaf' ||
+              (cardFrameMode === 'auto' && node.cardShape === 'leaf'));
+
           ctx.save();
+          if (useLeafFrame) {
+            const cx = node.x + size.w / 2;
+            const cy = node.y + size.h / 2;
+            const leafW = size.w * 1.28;
+            const leafH = size.h * 1.28;
+            const angleRad = ((node.leafAngleDeg ?? 0) * Math.PI) / 180;
+            const isLightLeaf =
+              node.leafTone === 'light' ||
+              (node.leafTone !== 'dark' && (node.genLevel ?? 0) >= 4);
+
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(angleRad);
+            // Bentuk daun runcing organik simetris (puncak atas, pangkal tangkai bawah)
+            ctx.beginPath();
+            ctx.moveTo(0, -leafH * 0.54);
+            ctx.bezierCurveTo(
+              leafW * 0.52,
+              -leafH * 0.24,
+              leafW * 0.52,
+              leafH * 0.28,
+              0,
+              leafH * 0.52
+            );
+            ctx.bezierCurveTo(
+              -leafW * 0.52,
+              leafH * 0.28,
+              -leafW * 0.52,
+              -leafH * 0.24,
+              0,
+              -leafH * 0.54
+            );
+            ctx.closePath();
+            ctx.fillStyle = isLightLeaf ? '#65a30d' : '#15803d';
+            ctx.fill();
+            ctx.lineWidth = selectedSet.has(node.id) ? 3.2 : 1.8;
+            ctx.strokeStyle = selectedSet.has(node.id)
+              ? '#f59e0b'
+              : isLightLeaf
+              ? '#bef264'
+              : '#4ade80';
+            ctx.stroke();
+
+            // Tulang daun tengah
+            ctx.beginPath();
+            ctx.moveTo(0, leafH * 0.5);
+            ctx.lineTo(0, -leafH * 0.44);
+            ctx.strokeStyle = isLightLeaf ? '#ecfccb' : '#86efac';
+            ctx.lineWidth = 1.4;
+            ctx.stroke();
+            ctx.restore();
+
+            if (cardDisplayMode === 'name_only') {
+              ctx.fillStyle = 'rgba(12, 10, 9, 0.88)';
+              drawCardRoundedRect(
+                node.x + 2,
+                node.y + size.h / 2 - 12,
+                size.w - 4,
+                24,
+                6
+              );
+              ctx.fill();
+              ctx.fillStyle = '#ffffff';
+              ctx.font = `800 ${Math.max(8, Math.round(10.5 * effScale))}px sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(node.name, cx, node.y + size.h / 2, size.w - 10);
+            } else {
+              // Pas foto tetap tegak 0° dan terpisah dari bingkai daun!
+              const pDim = getScaledPhotoDim(photoFrameSize, effScale);
+              const px = node.x + (size.w - pDim.w) / 2;
+              const py = node.y + 3;
+              loadAndDrawPhoto(
+                node.photo,
+                px,
+                py,
+                pDim.w,
+                pDim.h,
+                node.name,
+                false
+              );
+
+              // Badge nama terpisah tegak 0° berdekatan di bawah foto
+              const badgeY = py + pDim.h + 2;
+              const badgeH = Math.max(15, size.h - (pDim.h + 8));
+              ctx.fillStyle = isDark
+                ? 'rgba(12, 10, 9, 0.9)'
+                : 'rgba(255, 255, 255, 0.94)';
+              drawCardRoundedRect(node.x + 2, badgeY, size.w - 4, badgeH, 6);
+              ctx.fill();
+              ctx.strokeStyle = isLightLeaf ? '#84cc16' : '#22c55e';
+              ctx.lineWidth = 1;
+              ctx.stroke();
+
+              ctx.fillStyle = isDark ? '#ffffff' : '#0f172a';
+              ctx.font = `800 ${Math.max(7.5, Math.round(9.5 * effScale))}px sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'top';
+              ctx.fillText(node.name, cx, badgeY + 2, size.w - 10);
+
+              if (cardDisplayMode === 'full' && node.sub) {
+                ctx.fillStyle = isDark ? '#d9f99d' : '#166534';
+                ctx.font = `600 ${Math.max(6.5, Math.round(8 * effScale))}px sans-serif`;
+                ctx.fillText(
+                  node.sub,
+                  cx,
+                  badgeY + Math.max(11, Math.round(12 * effScale)),
+                  size.w - 10
+                );
+              }
+            }
+            ctx.restore();
+            return;
+          }
+
           drawCardRoundedRect(node.x, node.y, size.w, size.h, 11);
           ctx.fillStyle = fillCol;
           ctx.fill();
@@ -450,10 +614,12 @@ export const GridHybridSnapshotCanvas: React.FC<
       boardHeight,
       nodes,
       computedEdges,
+      treeSkeleton,
       selectedIds,
       lineStyle,
       lineThickness,
       cardDisplayMode,
+      cardFrameMode,
       photoFrameSize,
       photoShape,
       cardScale,

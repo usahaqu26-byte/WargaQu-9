@@ -1162,12 +1162,12 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
   },
   {
     id: 'pohon_hayat_besar',
-    title: 'Pohon Besar (G1 Batang Bawah ➔ Kanopi G5)',
-    subtitle: 'Batang 20px Coklat Kayu ➔ Ranting 1px Hijau Daun • Rantai & Panah',
+    title: 'Pohon Besar (Batang G1–G2 ➔ Dahan G3 ➔ Daun G4–G5)',
+    subtitle: 'Batang 50→45px • Dahan 40px • Ranting 30→20px • Daun Segala Arah',
     badge: 'Pohon Besar',
     category: 'klasik',
     description:
-      'G1 menjadi pangkal batang tebal 20px di bawah tengah, bercabang naik menjadi dahan 15px (G2), cabang 10px (G3), hingga ranting tipis 5–1px (G4–G5) di mahkota daun hijau.',
+      'G1 pangkal batang akar (50px) & G2 berantai ke atas (45px) di poros tengah, G3 dahan kanan-kiri di tengah batang (40px), hingga G4 (30px berantai) & G5 (20px) membentuk kanopi daun hijau segala arah dengan pas foto tetap tegak.',
     recommendedTheme: 'dark',
     recommendedBg: '',
     recommendedOrientation: 'landscape',
@@ -1632,107 +1632,451 @@ export function generateSmartLayoutFromTable(
   }
 
   // -------------------------------------------------------------------------
-  // MODE POHON BESAR (G1 DI BAWAH = BATANG 20px ➔ G5 DI ATAS = RANTING 1px)
+  // MODE POHON BESAR ORGANIK (G1 BATANG BAWAH 50px -> G2 NAIK 45px -> G3 DAHAN 40px -> G4-G5 DAUN 30-20px)
   // -------------------------------------------------------------------------
   if (presetId === 'pohon_hayat_besar') {
-    const maxLeafCols = Math.max(
-      3,
-      Math.min(5, Math.floor((boardWidth - 96) / (cardW + compactSiblingGap)))
-    );
-    const treeRowGap = Math.max(compactRowGap + 18, Math.round(cardH * 0.56));
-    runCompactTreeLayout({
-      wrapLeafSiblingsMaxCols: maxLeafCols,
-      leftMargin: 36,
-      rightMargin: 36,
-      rowStepY: treeRowGap,
-      rootGapX: Math.max(30, Math.round(cardW * 0.34)),
-    });
+    const trunkX = Math.round(boardWidth / 2);
+    const minLeftBound = 26;
+    const maxRightBound = Math.max(minLeftBound + 40, boardWidth - 26 - cardW);
+    const minTopBound = 68;
+    const rootFootMargin = Math.max(58, Math.min(88, Math.round(boardHeight * 0.085)));
+    const g1Y = Math.max(minTopBound + 120, Math.round(boardHeight - rootFootMargin - cardH));
 
-    if (nodes.length > 0) {
-      const minX = Math.min(...nodes.map((n) => n.x));
-      const maxX = Math.max(...nodes.map((n) => n.x + cardW));
-      const minY = Math.min(...nodes.map((n) => n.y));
-      const maxY = Math.max(...nodes.map((n) => n.y + cardH));
+    const placedMemberIds = new Set<string>();
+    const rootLockedIds = new Set<string>();
+    const nodePosByMember = new Map<string, { id: string; x: number; y: number; gen: number }>();
 
-      const minBoundX = 28;
-      const maxBoundX = Math.max(minBoundX + 40, boardWidth - 28 - cardW);
-      const minBoundY = 66;
-      const maxBoundY = Math.max(minBoundY + 40, boardHeight - 36 - cardH);
+    const countSubtreeSize = (m: FamilyMember, guard = new Set<string>()): number => {
+      if (guard.has(m.id)) return 0;
+      guard.add(m.id);
+      const kids = childrenMap.get(m.id) || [];
+      return 1 + kids.reduce((s, k) => s + countSubtreeSize(k, guard), 0);
+    };
 
-      const curSpanX = Math.max(1, maxX - minX - cardW);
-      const availW = Math.max(80, boardWidth - 56 - cardW);
-      const scaleX = curSpanX > availW ? availW / curSpanX : 1;
-      const renderedSpanX = curSpanX * scaleX + cardW;
-      const offsetX =
-        scaleX === 1
-          ? Math.max(minBoundX, (boardWidth - renderedSpanX) / 2)
-          : minBoundX;
+    const addMemberUnit = (
+      m: FamilyMember,
+      x: number,
+      y: number,
+      gen: number,
+      parentNodeId: string | null,
+      optsNode?: {
+        spouseDir?: 1 | -1;
+        cardShape?: 'rect' | 'leaf';
+        leafAngleDeg?: number;
+        leafTone?: 'dark' | 'light';
+        lockUnit?: boolean;
+      }
+    ): string => {
+      if (placedMemberIds.has(m.id)) {
+        return nodePosByMember.get(m.id)?.id || `n_${m.id}`;
+      }
+      placedMemberIds.add(m.id);
 
-      const curSpanY = Math.max(1, maxY - minY - cardH);
-      const availH = Math.max(140, maxBoundY - minBoundY);
-      const scaleY = curSpanY > availH ? availH / curSpanY : 1;
+      const clampedX = Math.max(minLeftBound, Math.min(maxRightBound, Math.round(x)));
+      const clampedY = Math.max(
+        minTopBound,
+        Math.min(boardHeight - 24 - cardH, Math.round(y))
+      );
+      const primaryId = `n_${m.id}`;
 
-      const boardCenterX = boardWidth / 2;
-      const halfBoardW = Math.max(120, boardWidth * 0.48);
-
-      const rootLockedIds = new Set<string>();
-      const rootMemberIds = new Set(roots.map((r) => r.id));
-
-      const mirrored = nodes.map((n) => {
-        const mappedX =
-          scaleX === 1
-            ? offsetX + (n.x - minX)
-            : minBoundX + (n.x - minX) * scaleX;
-        const normFromTop = (n.y - minY) * scaleY;
-        // Balik vertikal: G1 (y awal paling atas) dipindah ke paling bawah (pangkal batang)!
-        let flippedY = maxBoundY - normFromTop;
-
-        const gen = n.genLevel ?? 0;
-        if (gen >= 2) {
-          // Lengkungan kanopi lembut di bagian atas tengah agar menyerupai mahkota pohon
-          const normDx = Math.min(
-            1,
-            Math.abs(mappedX + cardW / 2 - boardCenterX) / halfBoardW
-          );
-          const archLift = Math.round(
-            Math.cos(normDx * Math.PI * 0.45) * Math.min(34, cardH * 0.38)
-          );
-          flippedY = Math.max(minBoundY, flippedY - archLift);
-        }
-        if (gen === 0 || (n.memberId && rootMemberIds.has(n.memberId))) {
-          rootLockedIds.add(n.id);
-        }
-
-        return {
-          ...n,
-          x: Math.max(minBoundX, Math.min(maxBoundX, Math.round(mappedX))),
-          y: Math.max(minBoundY, Math.min(maxBoundY, Math.round(flippedY))),
-        };
+      nodes.push({
+        id: primaryId,
+        name: m.name,
+        sub: formatMemberLifeSubtitle(m),
+        x: clampedX,
+        y: clampedY,
+        photo: m.photoUrl || '',
+        wafat: m.isDeceased,
+        gender: m.gender,
+        memberId: m.id,
+        genLevel: m.generationLevel ?? gen,
+        cardShape: optsNode?.cardShape ?? (gen >= 3 ? 'leaf' : 'rect'),
+        leafAngleDeg: optsNode?.leafAngleDeg,
+        leafTone: optsNode?.leafTone,
       });
 
-      const cleanTreeNodes = resolveCollisionsNearParents4Dir(
-        mirrored,
-        edges,
-        boardWidth,
-        boardHeight,
-        displayMode,
-        photoSize,
-        cardScale,
+      if (optsNode?.lockUnit) {
+        rootLockedIds.add(primaryId);
+      }
+      nodePosByMember.set(m.id, { id: primaryId, x: clampedX, y: clampedY, gen });
+
+      if (parentNodeId) {
+        edges.push({ from: parentNodeId, to: primaryId, type: 'child' });
+      }
+
+      const spDir = optsNode?.spouseDir ?? 1;
+      (m.spouses || []).forEach((sp, sIdx) => {
+        const spId = `n_${m.id}_sp_${sIdx + 1}`;
+        const spX = Math.max(
+          minLeftBound,
+          Math.min(
+            maxRightBound,
+            clampedX + spDir * (sIdx + 1) * (cardW + coupleGap)
+          )
+        );
+        nodes.push({
+          id: spId,
+          name: sp.name,
+          sub: `Pasangan (${
+            sp.status === 'cerai_mati'
+              ? 'Wafat'
+              : sp.status === 'cerai_hidup'
+              ? 'Cerai'
+              : 'Menikah'
+          })`,
+          x: spX,
+          y: clampedY,
+          photo: '',
+          wafat: sp.status === 'cerai_mati',
+          gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
+          genLevel: m.generationLevel ?? gen,
+          cardShape: optsNode?.cardShape ?? (gen >= 3 ? 'leaf' : 'rect'),
+          leafAngleDeg:
+            optsNode?.leafAngleDeg !== undefined
+              ? optsNode.leafAngleDeg + (spDir > 0 ? 14 : -14)
+              : undefined,
+          leafTone:
+            optsNode?.leafTone === 'dark'
+              ? 'light'
+              : optsNode?.leafTone === 'light'
+              ? 'dark'
+              : undefined,
+        });
+        edges.push({ from: primaryId, to: spId, type: 'couple' });
+      });
+
+      return primaryId;
+    };
+
+    // 1. Tempatkan G1 (Pangkal Batang Bawah Tengah)
+    const primaryRoots = roots.length > 0 ? roots : members.slice(0, 1);
+    const rootSpreadStep = Math.max(cardW * 2.2, Math.round(boardWidth * 0.24));
+    primaryRoots.forEach((rootM, rIdx) => {
+      const offsetMul =
+        rIdx === 0
+          ? 0
+          : (rIdx % 2 === 1 ? -1 : 1) * Math.ceil(rIdx / 2);
+      const rx = trunkX - cardW / 2 + offsetMul * rootSpreadStep;
+      addMemberUnit(rootM, rx, g1Y, rootM.generationLevel ?? 0, null, {
+        spouseDir: offsetMul < 0 ? -1 : 1,
+        cardShape: 'rect',
+        lockUnit: true,
+      });
+    });
+
+    // 2. Tempatkan G2 (Berantai ke atas sepanjang batang poros tengah)
+    interface TrunkEntry {
+      member: FamilyMember;
+      nodeId: string;
+      x: number;
+      y: number;
+      parentRootId: string;
+    }
+    const g2Entries: TrunkEntry[] = [];
+    const g2All: Array<{ member: FamilyMember; parentNodeId: string }> = [];
+    primaryRoots.forEach((rootM) => {
+      const pNodeId = nodePosByMember.get(rootM.id)?.id || `n_${rootM.id}`;
+      const kids = childrenMap.get(rootM.id) || [];
+      kids.forEach((k) => {
+        if (!placedMemberIds.has(k.id)) {
+          g2All.push({ member: k, parentNodeId: pNodeId });
+        }
+      });
+    });
+
+    const canopyHubY = Math.round(
+      minTopBound + Math.max(120, (g1Y - minTopBound) * 0.44)
+    );
+    const trunkTopLimitY = Math.max(minTopBound + 92, canopyHubY - 36);
+    const trunkBottomY = g1Y - cardH - Math.max(18, Math.round(cardH * 0.22));
+    const trunkSpanH = Math.max(cardH + 14, trunkBottomY - trunkTopLimitY);
+    const g2Count = g2All.length;
+    const g2StepY =
+      g2Count <= 1
+        ? 0
+        : Math.max(cardH + 12, Math.min(trunkSpanH / (g2Count - 1), cardH + 46));
+
+    // Susun dari paling muda di bawah naik ke paling tua (kakak) di puncak batang
+    g2All.forEach(({ member: g2M, parentNodeId }, idx) => {
+      const revIdx = g2Count - 1 - idx; // 0 = paling bawah (termuda), g2Count-1 = paling atas (kakak)
+      const basePosY =
+        g2Count <= 1
+          ? Math.round((trunkBottomY + trunkTopLimitY) / 2)
+          : Math.round(trunkBottomY - revIdx * g2StepY);
+      const safeG2Y = Math.max(minTopBound + 54, Math.min(trunkBottomY, basePosY));
+      const spDir: 1 | -1 = idx % 2 === 0 ? 1 : -1;
+      const g2NodeId = addMemberUnit(
+        g2M,
+        trunkX - cardW / 2,
+        safeG2Y,
+        g2M.generationLevel ?? 1,
+        parentNodeId,
         {
-          minLeftX: 24,
-          rightMargin: 24,
-          minTopY: 64,
-          bottomMargin: 26,
-          padX: solverCommonOpts.padX,
-          padY: solverCommonOpts.padY,
-          anchorMaxGen: 2,
-          lockedNodeIds: rootLockedIds,
+          spouseDir: spDir,
+          cardShape: 'rect',
+          lockUnit: true,
         }
       );
-      return { nodes: cleanTreeNodes, edges };
-    }
+      const pos = nodePosByMember.get(g2M.id);
+      if (pos) {
+        g2Entries.push({
+          member: g2M,
+          nodeId: g2NodeId,
+          x: pos.x,
+          y: pos.y,
+          parentRootId: parentNodeId,
+        });
+      }
+    });
 
-    return { nodes, edges };
+    // 3. Tempatkan G3 di TENGAH Dahan Kanan & Kiri (seimbang kiri-kanan)
+    interface BoughPlacement {
+      member: FamilyMember;
+      nodeId: string;
+      wing: -1 | 1;
+      angleRad: number;
+      anchorX: number;
+      anchorY: number;
+    }
+    const g3Boughs: BoughPlacement[] = [];
+    const leftQueue: Array<{ child: FamilyMember; parent: TrunkEntry }> = [];
+    const rightQueue: Array<{ child: FamilyMember; parent: TrunkEntry }> = [];
+
+    let leftWeight = 0;
+    let rightWeight = 0;
+    g2Entries.forEach((g2e) => {
+      const g3Kids = (childrenMap.get(g2e.member.id) || []).filter(
+        (k) => !placedMemberIds.has(k.id)
+      );
+      g3Kids.forEach((g3k) => {
+        const w = countSubtreeSize(g3k);
+        if (leftWeight <= rightWeight) {
+          leftQueue.push({ child: g3k, parent: g2e });
+          leftWeight += w;
+        } else {
+          rightQueue.push({ child: g3k, parent: g2e });
+          rightWeight += w;
+        }
+      });
+    });
+
+    const wingRadiusX = Math.max(150, Math.round(boardWidth * 0.41 - cardW * 0.55));
+    const wingRadiusY = Math.max(130, Math.round((g1Y - minTopBound) * 0.48));
+
+    const placeWingBoughs = (
+      queue: Array<{ child: FamilyMember; parent: TrunkEntry }>,
+      wing: -1 | 1
+    ) => {
+      const n = queue.length;
+      if (n === 0) return;
+      queue.forEach((item, idx) => {
+        const frac = n === 1 ? 0.45 : idx / (n - 1); // 0 = tinggi ke atas, 1 = mendatar melebar ke samping
+        // Sudut radian layar: -PI/2 = atas lurus, 0 = kanan lurus, -PI = kiri lurus
+        const angleRad =
+          wing === -1
+            ? -Math.PI * (0.64 + frac * 0.33) // kiri: -115° s/d -175°
+            : -Math.PI * (0.36 - frac * 0.33); // kanan: -65° s/d -5°
+
+        const trunkAnchorX = item.parent.x + cardW / 2;
+        const trunkAnchorY = item.parent.y + cardH / 2;
+        // G3 diletakkan di TENGAH dahan (~46% jarak ke tepi kanopi) agar dahan kayu terus memanjang melewati G3!
+        const boughFrac = 0.44 + (idx % 2) * 0.06;
+        const gx =
+          trunkAnchorX + Math.cos(angleRad) * wingRadiusX * boughFrac - cardW / 2;
+        const gy =
+          Math.min(g1Y - cardH - 36, trunkAnchorY) +
+          Math.sin(angleRad) * wingRadiusY * boughFrac -
+          cardH / 2;
+
+        const g3NodeId = addMemberUnit(
+          item.child,
+          gx,
+          gy,
+          item.child.generationLevel ?? 2,
+          item.parent.nodeId,
+          {
+            spouseDir: wing,
+            cardShape: 'rect',
+          }
+        );
+        const placedPos = nodePosByMember.get(item.child.id);
+        if (placedPos) {
+          g3Boughs.push({
+            member: item.child,
+            nodeId: g3NodeId,
+            wing,
+            angleRad,
+            anchorX: placedPos.x + cardW / 2,
+            anchorY: placedPos.y + cardH / 2,
+          });
+        }
+      });
+    };
+
+    placeWingBoughs(leftQueue, -1);
+    placeWingBoughs(rightQueue, 1);
+
+    // 4. Tempatkan G4 (berantai kanan/kiri) & G5+ (langsung) sebagai DAUN segala arah membentuk mahkota kanopi!
+    const treeCenterForAngleX = trunkX;
+    const treeCenterForAngleY = Math.round(g1Y - cardH * 0.55);
+
+    const computeAllDirLeafAngle = (
+      cx: number,
+      cy: number,
+      sibIdx: number,
+      totalSibs: number,
+      wingHint?: -1 | 1
+    ): number => {
+      // Vektor keluar dari inti pohon: 0° = ke atas, +90° = ke kanan, -90° = ke kiri, ±180° = ke bawah
+      const dx = cx - treeCenterForAngleX;
+      const dy = cy - treeCenterForAngleY;
+      let deg = (Math.atan2(dx, -dy) * 180) / Math.PI;
+      // Variasi alami kanan, kiri, atas, bawah antar daun berdekatan seperti gambar referensi
+      const fanOffsets = [0, -34, 34, -68, 68, -112, 112, 150];
+      let offset = fanOffsets[sibIdx % fanOffsets.length];
+      if (totalSibs >= 3 && sibIdx % 4 === 3) {
+        // Beberapa daun ranting bawah/luar condong turun-keluar (kanan-bawah / kiri-bawah)
+        offset += wingHint ? wingHint * 28 : 26;
+      }
+      deg += offset;
+      while (deg > 180) deg -= 360;
+      while (deg < -180) deg += 360;
+      return Math.round(deg);
+    };
+
+    const placeCanopyBranchRecursive = (
+      parentMember: FamilyMember,
+      parentNodeId: string,
+      parentCx: number,
+      parentCy: number,
+      baseAngleRad: number,
+      wing: -1 | 1,
+      depth: number
+    ) => {
+      const kids = (childrenMap.get(parentMember.id) || []).filter(
+        (k) => !placedMemberIds.has(k.id)
+      );
+      if (kids.length === 0) return;
+
+      const stepDist =
+        depth === 3
+          ? Math.max(cardW * 1.18, Math.round(wingRadiusX * 0.34))
+          : Math.max(cardW * 0.96, Math.round(cardH * 1.15));
+
+      kids.forEach((kid, idx) => {
+        const spread = kids.length <= 1 ? 0 : (idx / (kids.length - 1) - 0.5) * 1.35;
+        const radialAngle = baseAngleRad + spread;
+        // Agar G4 berantai & G5 tersebar atas/bawah/kiri/kanan di ujung ranting
+        const ringMul = depth === 3 ? 1 + (idx % 2) * 0.32 : 0.92 + (idx % 3) * 0.24;
+        const targetCx = parentCx + Math.cos(radialAngle) * stepDist * ringMul;
+        const targetCy = parentCy + Math.sin(radialAngle) * stepDist * ringMul * 0.85;
+
+        const leafDeg = computeAllDirLeafAngle(
+          targetCx,
+          targetCy,
+          idx,
+          kids.length,
+          wing
+        );
+        const leafTone: 'dark' | 'light' =
+          (idx + depth) % 2 === 0 ? 'dark' : 'light';
+
+        const kidNodeId = addMemberUnit(
+          kid,
+          targetCx - cardW / 2,
+          targetCy - cardH / 2,
+          kid.generationLevel ?? depth,
+          parentNodeId,
+          {
+            spouseDir: wing,
+            cardShape: 'leaf',
+            leafAngleDeg: leafDeg,
+            leafTone,
+          }
+        );
+
+        const placedPos = nodePosByMember.get(kid.id);
+        const nextCx = placedPos ? placedPos.x + cardW / 2 : targetCx;
+        const nextCy = placedPos ? placedPos.y + cardH / 2 : targetCy;
+
+        placeCanopyBranchRecursive(
+          kid,
+          kidNodeId,
+          nextCx,
+          nextCy,
+          radialAngle,
+          wing,
+          depth + 1
+        );
+      });
+    };
+
+    g3Boughs.forEach((b) => {
+      placeCanopyBranchRecursive(
+        b.member,
+        b.nodeId,
+        b.anchorX,
+        b.anchorY,
+        b.angleRad,
+        b.wing,
+        3
+      );
+    });
+
+    // Tangkap sisa anggota yang belum ditempatkan (mis. jika struktur generasi melompat)
+    members.forEach((m, idx) => {
+      if (placedMemberIds.has(m.id)) return;
+      const pPos = m.parentId ? nodePosByMember.get(m.parentId) : undefined;
+      const fallbackWing: -1 | 1 = idx % 2 === 0 ? -1 : 1;
+      const fx = pPos
+        ? pPos.x + fallbackWing * (cardW + 24)
+        : trunkX + fallbackWing * (cardW * 1.5);
+      const fy = pPos
+        ? pPos.y - cardH - 18
+        : minTopBound + 90 + (idx % 4) * (cardH + 14);
+      const gen = m.generationLevel ?? (pPos ? pPos.gen + 1 : 3);
+      addMemberUnit(
+        m,
+        fx,
+        fy,
+        gen,
+        pPos?.id || null,
+        {
+          spouseDir: fallbackWing,
+          cardShape: gen >= 3 ? 'leaf' : 'rect',
+          leafAngleDeg:
+            gen >= 3
+              ? computeAllDirLeafAngle(fx + cardW / 2, fy + cardH / 2, idx, 4, fallbackWing)
+              : undefined,
+          leafTone: idx % 2 === 0 ? 'dark' : 'light',
+        }
+      );
+    });
+
+    // Solver anti-tumpuk 4-arah: kunci poros batang G1-G2 agar tegak kokoh, rapikan G3-G5 tanpa tumpang tindih!
+    const treePadX = Math.max(14, Math.round(cardW * 0.16));
+    const treePadY = Math.max(14, Math.round(cardH * 0.16));
+    const cleanTreeNodes = resolveCollisionsNearParents4Dir(
+      nodes,
+      edges,
+      boardWidth,
+      boardHeight,
+      displayMode,
+      photoSize,
+      cardScale,
+      {
+        minLeftX: 22,
+        rightMargin: 22,
+        minTopY: 64,
+        bottomMargin: 24,
+        padX: treePadX,
+        padY: treePadY,
+        anchorMaxGen: 2,
+        lockedNodeIds: rootLockedIds,
+        radialCenter: { x: trunkX, y: treeCenterForAngleY },
+      }
+    );
+    return { nodes: cleanTreeNodes, edges };
   }
 
   // -------------------------------------------------------------------------

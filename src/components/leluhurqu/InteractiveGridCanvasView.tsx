@@ -53,6 +53,12 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Trees,
+  Leaf,
+  Square,
+  Type,
+  ArrowUpRight,
+  GitFork,
 } from 'lucide-react';
 import { FamilyMember, TrahCategory } from './LeluhurQuView';
 import { MonetizationService } from '../../services/monetizationService';
@@ -77,6 +83,7 @@ import {
   GridHybridSnapshotCanvas,
   GridMiniNavigator,
   ComputedCanvasEdgeItem,
+  TreeSkeletonData,
 } from './GridHybridCanvasLayer';
 import {
   SMART_LAYOUT_PRESETS,
@@ -120,6 +127,7 @@ export type GenGradientPaletteId =
 export type ConnectorLineStyle = 'pcb90' | 'pcb45' | 'straight' | 'curved' | 'none';
 export type LineRoutingTopology = 'direct' | 'sibling_chain_all' | 'sibling_chain_g3plus';
 export type LineThicknessMode = 'uniform' | 'tree_taper';
+export type CardFrameMode = 'auto' | 'rect' | 'leaf';
 export type EdgePortSide = 'auto' | 'top' | 'bottom' | 'left' | 'right';
 export type CaptionPosition =
   | 'bottom-bar'
@@ -171,6 +179,9 @@ export interface InteractiveNode {
   customBorderColor?: string;
   genLevel?: number;
   scaleMultiplier?: number;
+  cardShape?: 'rect' | 'leaf';
+  leafAngleDeg?: number;
+  leafTone?: 'dark' | 'light';
   modularSubLayout?: 'grid' | 'I' | 'L';
   modularHeadMemberId?: string;
   mergedMembers?: MergedCardMember[];
@@ -218,6 +229,7 @@ export interface SavedGridDesign {
   lineStyle?: ConnectorLineStyle;
   lineRoutingTopology?: LineRoutingTopology;
   lineThicknessMode?: LineThicknessMode;
+  cardFrameMode?: CardFrameMode;
   showLineArrows?: boolean;
   lineThickness?: number;
   childLineColor?: string;
@@ -761,7 +773,8 @@ function buildDisplayEdgesWithSiblingChain(
   topology: LineRoutingTopology,
   displayMode: CardDisplayMode,
   photoSize: PhotoFrameSize,
-  cardScale: number
+  cardScale: number,
+  isTreePreset = false
 ): DisplayCanvasEdge[] {
   if (topology === 'direct' || edges.length === 0) {
     return edges.map((edge, origIdx) => ({
@@ -811,6 +824,20 @@ function buildDisplayEdgesWithSiblingChain(
         result.push({ origIdx: g.origIdx, edge: g.edge, edgeKind: 'child' })
       );
       return;
+    }
+
+    // Mode Pohon Besar: G2 berantai ke atas, G3 langsung kanan/kiri, G4 berantai kanan/kiri, G5 langsung!
+    if (isTreePreset) {
+      const parentGen = parentNode.genLevel ?? 0;
+      const minChildGen = Math.min(
+        ...group.map((g) => g.child.genLevel ?? parentGen + 1)
+      );
+      if (minChildGen === 2 || minChildGen >= 4) {
+        group.forEach((g) =>
+          result.push({ origIdx: g.origIdx, edge: g.edge, edgeKind: 'child' })
+        );
+        return;
+      }
     }
 
     // Mode Hibrid: G1-G2 (anak dari G1, genLevel <= 1) tetap langsung ke ortu agar struktur inti super tegas
@@ -1827,6 +1854,7 @@ export const InteractiveGridCanvasView: React.FC<
     useState<LineRoutingTopology>('sibling_chain_all');
   const [lineThicknessMode, setLineThicknessMode] =
     useState<LineThicknessMode>('uniform');
+  const [cardFrameMode, setCardFrameMode] = useState<CardFrameMode>('auto');
   const [showLineArrows, setShowLineArrows] = useState<boolean>(true);
   const [lineThickness, setLineThickness] = useState<number>(2.5);
   const [childLineColor, setChildLineColor] = useState<string>('');
@@ -2560,6 +2588,7 @@ export const InteractiveGridCanvasView: React.FC<
       setLineStyle(target.lineStyle || 'pcb90');
       setLineRoutingTopology(target.lineRoutingTopology || 'sibling_chain_all');
       setLineThicknessMode(target.lineThicknessMode || 'uniform');
+      setCardFrameMode(target.cardFrameMode || 'auto');
       setShowLineArrows(target.showLineArrows ?? true);
       setLineThickness(target.lineThickness || 2.5);
       setChildLineColor(target.childLineColor ?? '');
@@ -2638,6 +2667,7 @@ export const InteractiveGridCanvasView: React.FC<
       lineStyle: 'pcb90',
       lineRoutingTopology: 'sibling_chain_all',
       lineThicknessMode: 'uniform',
+      cardFrameMode: 'auto',
       showLineArrows: true,
       lineThickness: 2.5,
       childLineColor: '',
@@ -2785,6 +2815,7 @@ export const InteractiveGridCanvasView: React.FC<
                 lineStyle,
                 lineRoutingTopology,
                 lineThicknessMode,
+                cardFrameMode,
                 showLineArrows,
                 lineThickness,
                 childLineColor,
@@ -2834,6 +2865,7 @@ export const InteractiveGridCanvasView: React.FC<
       lineStyle,
       lineRoutingTopology,
       lineThicknessMode,
+      cardFrameMode,
       showLineArrows,
       lineThickness,
       childLineColor,
@@ -2949,6 +2981,7 @@ export const InteractiveGridCanvasView: React.FC<
     lineStyle,
     lineRoutingTopology,
     lineThicknessMode,
+    cardFrameMode,
     showLineArrows,
     lineThickness,
     childLineColor,
@@ -3388,6 +3421,7 @@ export const InteractiveGridCanvasView: React.FC<
               lineStyle,
               lineRoutingTopology,
               lineThicknessMode,
+              cardFrameMode,
               showLineArrows,
               lineThickness,
               childLineColor,
@@ -3429,6 +3463,7 @@ export const InteractiveGridCanvasView: React.FC<
         lineStyle,
         lineRoutingTopology,
         lineThicknessMode,
+        cardFrameMode,
         showLineArrows,
         lineThickness,
         childLineColor,
@@ -3493,6 +3528,7 @@ export const InteractiveGridCanvasView: React.FC<
       lineStyle,
       lineRoutingTopology,
       lineThicknessMode,
+      cardFrameMode,
       showLineArrows,
       lineThickness,
       childLineColor,
@@ -3551,6 +3587,7 @@ export const InteractiveGridCanvasView: React.FC<
     setLineStyle(design.lineStyle || 'pcb90');
     setLineRoutingTopology(design.lineRoutingTopology || 'sibling_chain_all');
     setLineThicknessMode(design.lineThicknessMode || 'uniform');
+    setCardFrameMode(design.cardFrameMode || 'auto');
     setShowLineArrows(design.showLineArrows ?? true);
     setLineThickness(design.lineThickness || 2.5);
     setChildLineColor(design.childLineColor ?? '');
@@ -3848,6 +3885,8 @@ export const InteractiveGridCanvasView: React.FC<
       if (presetId === 'pohon_hayat_besar') {
         setLineStyle('curved');
         setLineThicknessMode('tree_taper');
+        setLineRoutingTopology('sibling_chain_all');
+        setCardFrameMode('auto');
         setGenGradientPalette('wood_leaf');
         setLinesOnTop(false);
         setShowLineArrows(true);
@@ -5805,10 +5844,14 @@ export const InteractiveGridCanvasView: React.FC<
       lineRoutingTopology,
       cardDisplayMode,
       photoFrameSize,
-      cardScale
+      cardScale,
+      activePresetId === 'pohon_hayat_besar'
     );
 
-    const TREE_GEN_WIDTHS = [20, 15, 10, 5, 1.2];
+    const taperScale = Math.max(0.45, Math.min(1.05, cardScale));
+    const TREE_GEN_WIDTHS = [50, 45, 40, 30, 20].map(
+      (w) => Math.round(w * taperScale * 10) / 10
+    );
 
     const sampleRoutePts = (
       dStr: string
@@ -5977,7 +6020,7 @@ export const InteractiveGridCanvasView: React.FC<
             Math.abs(pts.a.y - pts.b.y) > 1);
         const gradId = `edge-grad-${origIdx}`;
 
-        // Ketebalan garis bertingkat ala Batang Pohon (20 -> 15 -> 10 -> 5 -> 1px) vs seragam
+        // Ketebalan garis bertingkat ala Batang Pohon (50 -> 45 -> 40 -> 30 -> 20px) vs seragam
         const g1Idx = Math.max(0, Math.min(4, Math.floor(n1.genLevel ?? 0)));
         const g2Idx = Math.max(
           0,
@@ -5994,9 +6037,11 @@ export const InteractiveGridCanvasView: React.FC<
             startW = TREE_GEN_WIDTHS[g1Idx];
             endW = TREE_GEN_WIDTHS[g2Idx];
           } else {
+            // G2 berantai naik (45px) dan G4 berantai kanan/kiri (30px) tetap proporsional sebagai dahan/ranting
+            const sibRatio = g2Idx <= 1 ? 0.88 : 0.68;
             const sibW = Math.max(
-              1,
-              Math.min(4.2, TREE_GEN_WIDTHS[g2Idx] * 0.45)
+              2,
+              Math.round(TREE_GEN_WIDTHS[g2Idx] * sibRatio * 10) / 10
             );
             startW = sibW;
             endW = sibW;
@@ -6048,9 +6093,9 @@ export const InteractiveGridCanvasView: React.FC<
           const tipW = pointToEnd ? endW : startW;
           const arrowSize =
             lineThicknessMode === 'tree_taper'
-              ? Math.max(6, Math.min(18, Math.round((tipW * 0.95 + 4.5) * 10) / 10))
+              ? Math.max(7, Math.min(24, Math.round((tipW * 0.48 + 5) * 10) / 10))
               : Math.max(6.5, Math.min(12, Math.round((tipW * 1.6 + 3) * 10) / 10));
-          const arrowColor =
+          const baseArrowColor =
             edgeKind === 'sibling'
               ? resolvedSiblingColor
               : canUseGrad
@@ -6058,6 +6103,12 @@ export const InteractiveGridCanvasView: React.FC<
                 ? g2Style?.line || lineColor
                 : g1Style?.line || lineColor
               : lineColor;
+          const arrowColor =
+            lineThicknessMode === 'tree_taper' && tipW >= 16
+              ? edgeKind === 'sibling'
+                ? '#fde047'
+                : '#bef264'
+              : baseArrowColor;
           arrowMeta = {
             tipX: tipPt.x,
             tipY: tipPt.y,
@@ -6090,6 +6141,7 @@ export const InteractiveGridCanvasView: React.FC<
     edges,
     nodeMap,
     memberBirthRankMap,
+    activePresetId,
     lineStyle,
     lineRoutingTopology,
     lineThicknessMode,
@@ -6104,6 +6156,231 @@ export const InteractiveGridCanvasView: React.FC<
     siblingLineColor,
     theme,
     bgStyle,
+  ]);
+
+  // Kerangka Batang Kayu, Akar Bawah G1, & Dahan Memanjang Melewati G3 (khusus Mode Pohon Besar)
+  const treeSkeletonMemo = useMemo<TreeSkeletonData | null>(() => {
+    const isTreeMode =
+      activePresetId === 'pohon_hayat_besar' ||
+      lineThicknessMode === 'tree_taper';
+    if (!isTreeMode || nodes.length < 2) return null;
+
+    const g1Nodes = nodes.filter(
+      (n) => (n.genLevel ?? 0) === 0 && !n.id.includes('_sp_')
+    );
+    const g2Nodes = nodes
+      .filter((n) => (n.genLevel ?? 0) === 1 && !n.id.includes('_sp_'))
+      .sort((a, b) => b.y - a.y); // bawah -> atas
+
+    if (g1Nodes.length === 0) return null;
+    // Pastikan orientasi memang pohon bawah-ke-atas (G1 lebih bawah dari rata-rata G3+)
+    const upperNodes = nodes.filter((n) => (n.genLevel ?? 0) >= 2);
+    if (upperNodes.length > 0) {
+      const avgUpperY =
+        upperNodes.reduce((s, n) => s + n.y, 0) / upperNodes.length;
+      if (avgUpperY >= g1Nodes[0].y - 10) return null;
+    }
+
+    const boxCenter = (n: InteractiveNode) => {
+      const sz = getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale);
+      return { x: n.x + sz.w / 2, y: n.y + sz.h / 2, w: sz.w, h: sz.h };
+    };
+
+    const taperScale = Math.max(0.45, Math.min(1.05, cardScale));
+    const buildTaperPoly = (
+      pts: Array<{ x: number; y: number }>,
+      wStart: number,
+      wEnd: number
+    ): string => {
+      if (pts.length < 2) return '';
+      const lPts: string[] = [];
+      const rPts: string[] = [];
+      const last = pts.length - 1;
+      for (let i = 0; i <= last; i++) {
+        const t = i / Math.max(1, last);
+        const hw = (wStart + (wEnd - wStart) * t) / 2;
+        const p0 = pts[Math.max(0, i - 1)];
+        const p1 = pts[Math.min(last, i + 1)];
+        let tx = p1.x - p0.x;
+        let ty = p1.y - p0.y;
+        const len = Math.hypot(tx, ty) || 1;
+        tx /= len;
+        ty /= len;
+        const nx = -ty;
+        const ny = tx;
+        lPts.push(
+          `${Math.round((pts[i].x + nx * hw) * 10) / 10} ${
+            Math.round((pts[i].y + ny * hw) * 10) / 10
+          }`
+        );
+        rPts.unshift(
+          `${Math.round((pts[i].x - nx * hw) * 10) / 10} ${
+            Math.round((pts[i].y - ny * hw) * 10) / 10
+          }`
+        );
+      }
+      return `M ${lPts[0]} ${lPts
+        .slice(1)
+        .map((s) => `L ${s}`)
+        .join(' ')} ${rPts.map((s) => `L ${s}`).join(' ')} Z`;
+    };
+
+    const sampleQuad = (
+      p0: { x: number; y: number },
+      c: { x: number; y: number },
+      p1: { x: number; y: number },
+      steps = 10
+    ) => {
+      const out: Array<{ x: number; y: number }> = [];
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const mt = 1 - t;
+        out.push({
+          x: mt * mt * p0.x + 2 * mt * t * c.x + t * t * p1.x,
+          y: mt * mt * p0.y + 2 * mt * t * c.y + t * t * p1.y,
+        });
+      }
+      return out;
+    };
+
+    const rootPaths: TreeSkeletonData['rootPaths'] = [];
+    const trunkOuterPaths: TreeSkeletonData['trunkOuterPaths'] = [];
+    const trunkInnerPaths: TreeSkeletonData['trunkInnerPaths'] = [];
+    const boughPaths: TreeSkeletonData['boughPaths'] = [];
+
+    const mainRoot = g1Nodes[0];
+    const rc = boxCenter(mainRoot);
+    const rootBaseY = rc.y + rc.h * 0.25;
+    const rootSpanX = Math.max(140, Math.round(boardWidth * 0.14));
+    const rootSpanY = Math.max(46, Math.round(64 * taperScale));
+
+    // 5 akar melebar organik di bawah pangkal batang G1
+    const rootSpecs = [
+      { dx: -rootSpanX * 1.15, dy: rootSpanY * 0.92, cx: -rootSpanX * 0.42, cy: rootSpanY * 0.65, w0: 26 * taperScale },
+      { dx: -rootSpanX * 0.56, dy: rootSpanY * 1.02, cx: -rootSpanX * 0.22, cy: rootSpanY * 0.68, w0: 18 * taperScale },
+      { dx: 0, dy: rootSpanY * 1.08, cx: -6, cy: rootSpanY * 0.6, w0: 20 * taperScale },
+      { dx: rootSpanX * 0.56, dy: rootSpanY * 1.02, cx: rootSpanX * 0.22, cy: rootSpanY * 0.68, w0: 18 * taperScale },
+      { dx: rootSpanX * 1.15, dy: rootSpanY * 0.92, cx: rootSpanX * 0.42, cy: rootSpanY * 0.65, w0: 26 * taperScale },
+    ];
+    rootSpecs.forEach((rs) => {
+      const pts = sampleQuad(
+        { x: rc.x + (rs.dx === 0 ? 0 : rs.dx > 0 ? 8 : -8), y: rootBaseY - 8 },
+        { x: rc.x + rs.cx, y: rootBaseY + rs.cy },
+        { x: rc.x + rs.dx, y: rootBaseY + rs.dy },
+        10
+      );
+      const d = buildTaperPoly(pts, rs.w0, 2.5);
+      if (d) rootPaths.push({ d, color: '#451a03' });
+    });
+
+    // Batang Poros Tengah Dua-Warna (G1 -> seluruh G2 naik ke atas)
+    const spinePts: Array<{ x: number; y: number }> = [
+      { x: rc.x, y: rootBaseY + 6 },
+      { x: rc.x, y: rc.y },
+    ];
+    g2Nodes.forEach((g2) => {
+      const c = boxCenter(g2);
+      spinePts.push({ x: c.x, y: c.y });
+    });
+    if (spinePts.length >= 2) {
+      const trunkD = buildTaperPoly(
+        spinePts,
+        56 * taperScale,
+        42 * taperScale
+      );
+      const innerD = buildTaperPoly(
+        spinePts,
+        28 * taperScale,
+        18 * taperScale
+      );
+      if (trunkD) trunkOuterPaths.push({ d: trunkD, color: '#451a03' });
+      if (innerD) trunkInnerPaths.push({ d: innerD, color: '#b45309' });
+    }
+
+    // Dahan Kanan & Kiri (melewati tengah kartu G3 & terus memanjang ke ranting G4/G5!)
+    const childrenByNode = new Map<string, InteractiveNode[]>();
+    edges.forEach((e) => {
+      if (e.type !== 'child') return;
+      const ch = nodeMap.get(e.to);
+      if (!ch) return;
+      if (!childrenByNode.has(e.from)) childrenByNode.set(e.from, []);
+      childrenByNode.get(e.from)!.push(ch);
+    });
+
+    const g3Nodes = nodes.filter(
+      (n) => (n.genLevel ?? 0) === 2 && !n.id.includes('_sp_')
+    );
+    const parentEdgeOf = new Map<string, string>();
+    edges.forEach((e) => {
+      if (e.type === 'child') parentEdgeOf.set(e.to, e.from);
+    });
+
+    g3Nodes.forEach((g3) => {
+      const g3c = boxCenter(g3);
+      const pNode = parentEdgeOf.get(g3.id)
+        ? nodeMap.get(parentEdgeOf.get(g3.id)!)
+        : g2Nodes[g2Nodes.length - 1] || mainRoot;
+      const pc = pNode ? boxCenter(pNode) : rc;
+
+      // Cari titik terjauh di cabang G3 ini (G4/G5) agar dahan kayu terus memanjang melewati tengah kartu G3!
+      const descendants: InteractiveNode[] = [];
+      const q = [...(childrenByNode.get(g3.id) || [])];
+      const visited = new Set<string>();
+      while (q.length > 0) {
+        const cur = q.shift()!;
+        if (visited.has(cur.id)) continue;
+        visited.add(cur.id);
+        descendants.push(cur);
+        (childrenByNode.get(cur.id) || []).forEach((nx) => q.push(nx));
+      }
+
+      let tipX = g3c.x + (g3c.x - pc.x) * 0.85;
+      let tipY = g3c.y + (g3c.y - pc.y) * 0.72;
+      if (descendants.length > 0) {
+        let bestDist = -1;
+        descendants.forEach((dn) => {
+          const dc = boxCenter(dn);
+          const dist = Math.hypot(dc.x - pc.x, dc.y - pc.y);
+          if (dist > bestDist) {
+            bestDist = dist;
+            tipX = dc.x;
+            tipY = dc.y;
+          }
+        });
+      }
+
+      // Titik tengah lengkungan melewati pusat G3
+      const ctrl = {
+        x: g3c.x,
+        y: g3c.y + Math.min(18, Math.abs(g3c.y - pc.y) * 0.14),
+      };
+      const pts1 = sampleQuad({ x: pc.x, y: pc.y }, { x: (pc.x + g3c.x) / 2, y: pc.y - 6 }, { x: g3c.x, y: g3c.y }, 7);
+      const pts2 = sampleQuad({ x: g3c.x, y: g3c.y }, ctrl, { x: tipX, y: tipY }, 8);
+      const fullPts = [...pts1, ...pts2.slice(1)];
+
+      const outerD = buildTaperPoly(fullPts, 38 * taperScale, 4.5 * taperScale);
+      const innerD = buildTaperPoly(fullPts, 17 * taperScale, 1.8 * taperScale);
+      if (outerD) {
+        boughPaths.push({
+          d: outerD,
+          color: '#5c2408',
+          innerD: innerD || undefined,
+          innerColor: '#b45309',
+        });
+      }
+    });
+
+    return { rootPaths, trunkOuterPaths, trunkInnerPaths, boughPaths };
+  }, [
+    activePresetId,
+    lineThicknessMode,
+    nodes,
+    edges,
+    nodeMap,
+    cardDisplayMode,
+    photoFrameSize,
+    cardScale,
+    boardWidth,
   ]);
 
   const getBoardBackgroundStyle = (): React.CSSProperties => {
@@ -7007,14 +7284,14 @@ export const InteractiveGridCanvasView: React.FC<
                         <button
                           type="button"
                           onClick={() => setLineThicknessMode('tree_taper')}
-                          title="G1 batang 20px, G2 15px, G3 10px, G4 5px, G5 ranting 1px"
+                          title="G1 batang 50px, G2 45px, G3 40px, G4 30px, G5 ranting 20px"
                           className={`px-2 py-0.5 rounded-md border text-[10px] font-bold ${
                             lineThicknessMode === 'tree_taper'
                               ? 'bg-amber-500 text-slate-950 border-amber-300'
                               : 'border-slate-600 opacity-75'
                           }`}
                         >
-                          Batang Pohon (20➔1px)
+                          Batang Pohon (50➔20px)
                         </button>
                       </div>
 
@@ -8701,10 +8978,12 @@ export const InteractiveGridCanvasView: React.FC<
                 boardHeight={boardHeight}
                 nodes={nodes}
                 computedEdges={computedEdges}
+                treeSkeleton={treeSkeletonMemo}
                 selectedIds={selectedIds}
                 lineStyle={lineStyle}
                 lineThickness={lineThickness}
                 cardDisplayMode={cardDisplayMode}
+                cardFrameMode={cardFrameMode}
                 photoFrameSize={photoFrameSize}
                 photoShape={photoShape}
                 cardScale={cardScale}
@@ -8714,6 +8993,38 @@ export const InteractiveGridCanvasView: React.FC<
                 isDark={isDark}
                 bgStyle={bgStyle}
               />
+
+              {/* Lapisan Akar, Batang Kayu & Dahan Pohon Besar (di belakang semua kartu & garis) */}
+              {!useSnapshotOverview && treeSkeletonMemo && (
+                <svg
+                  width={boardWidth}
+                  height={boardHeight}
+                  className="absolute inset-0 pointer-events-none z-[2]"
+                >
+                  {treeSkeletonMemo.rootPaths.map((rp, rIdx) => (
+                    <path key={`tr-root-${rIdx}`} d={rp.d} fill={rp.color} />
+                  ))}
+                  {treeSkeletonMemo.trunkOuterPaths.map((tp, tIdx) => (
+                    <path key={`tr-out-${tIdx}`} d={tp.d} fill={tp.color} />
+                  ))}
+                  {treeSkeletonMemo.boughPaths.map((bp, bIdx) => (
+                    <g key={`tr-bough-${bIdx}`}>
+                      <path d={bp.d} fill={bp.color} />
+                      {bp.innerD && bp.innerColor && (
+                        <path d={bp.innerD} fill={bp.innerColor} opacity={0.85} />
+                      )}
+                    </g>
+                  ))}
+                  {treeSkeletonMemo.trunkInnerPaths.map((ti, tiIdx) => (
+                    <path
+                      key={`tr-in-${tiIdx}`}
+                      d={ti.d}
+                      fill={ti.color}
+                      opacity={0.9}
+                    />
+                  ))}
+                </svg>
+              )}
 
               {/* SVG Garis Konektor Real-Time (Memoized • Dinonaktifkan sementara saat Mode Ringan Snapshot) */}
               {!useSnapshotOverview && lineStyle !== 'none' && (() => {
@@ -9022,6 +9333,7 @@ export const InteractiveGridCanvasView: React.FC<
                       isHolding={holdingNodeId === node.id}
                       isUnlocked={isUnlocked}
                       cardDisplayMode={cardDisplayMode}
+                      cardFrameMode={cardFrameMode}
                       photoFrameSize={photoFrameSize}
                       photoShape={photoShape}
                       cardScale={cardScale}
@@ -10045,24 +10357,24 @@ export const InteractiveGridCanvasView: React.FC<
                 className="px-3 py-2 rounded-2xl bg-stone-900/92 hover:bg-stone-800 text-emerald-300 border border-emerald-500/40 backdrop-blur-md shadow-xl text-[11px] font-extrabold flex items-center gap-2 whitespace-nowrap"
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                <span>Pilihan Smart ({smartGalleryOptions.length})</span>
+                <span>Smart ({smartGalleryOptions.length})</span>
                 <span className="text-stone-400 font-normal">·</span>
                 <span className="text-[10px] font-mono tabular-nums text-stone-200">
                   {currentLayoutQuality.overlapCount === 0
-                    ? '0 Tumpuk'
-                    : `${currentLayoutQuality.overlapCount} Tumpuk`}
+                    ? '0✓'
+                    : `${currentLayoutQuality.overlapCount}!`}
                 </span>
               </button>
             ) : (
-              <div className="rounded-2xl bg-stone-900/92 border border-stone-700/90 text-slate-100 p-2.5 backdrop-blur-md shadow-2xl space-y-2">
+              <div className="rounded-2xl bg-stone-900/92 border border-stone-700/90 text-slate-100 p-2 backdrop-blur-md shadow-2xl space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0 flex items-center gap-2 flex-wrap">
-                    <span className="text-[11px] font-extrabold text-emerald-300 flex items-center gap-1 whitespace-nowrap">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-                      <span>Pilihan Tata Letak Smart</span>
+                  <div className="min-w-0 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                    <span className="text-[11px] font-extrabold text-emerald-300 whitespace-nowrap">
+                      Smart
                     </span>
-                    <span className="text-[10px] text-stone-400 font-mono tabular-nums whitespace-nowrap">
-                      {smartAnalysis.totalPeopleWithSpouses} org · {smartAnalysis.generationCount} gen ·{' '}
+                    <span className="text-[10px] text-stone-300 font-mono tabular-nums whitespace-nowrap">
+                      {smartAnalysis.totalPeopleWithSpouses} · {smartAnalysis.generationCount}G ·{' '}
                       <span
                         className={
                           currentLayoutQuality.overlapCount === 0
@@ -10071,29 +10383,228 @@ export const InteractiveGridCanvasView: React.FC<
                         }
                       >
                         {currentLayoutQuality.overlapCount === 0
-                          ? '0 Tumpuk'
-                          : `${currentLayoutQuality.overlapCount} Tumpuk`}
+                          ? '0✓'
+                          : `${currentLayoutQuality.overlapCount}!`}
                       </span>
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-1 shrink-0">
+                  {/* Baris Ikon & Simbol Kontrol Cepat Smart */}
+                  <div className="flex items-center gap-1 overflow-x-auto">
+                    {/* 1. Mode Isi Kartu (Nama / Foto+Nama / Lengkap) */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const order: CardDisplayMode[] = ['name_only', 'photo_name', 'full'];
+                        const next =
+                          order[(order.indexOf(cardDisplayMode) + 1) % order.length];
+                        applySmartLiveSetting({ cardMode: next });
+                        showNotification(
+                          next === 'name_only'
+                            ? 'Kartu: Nama Saja'
+                            : next === 'photo_name'
+                            ? 'Kartu: Foto + Nama'
+                            : 'Kartu: Lengkap'
+                        );
+                      }}
+                      title={`Isi Kartu: ${
+                        cardDisplayMode === 'name_only'
+                          ? 'Nama Saja'
+                          : cardDisplayMode === 'photo_name'
+                          ? 'Foto + Nama'
+                          : 'Lengkap'
+                      } (klik untuk ganti)`}
+                      className="px-2 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-stone-700 text-emerald-300 text-[10px] font-black flex items-center gap-1 shrink-0"
+                    >
+                      {cardDisplayMode === 'name_only' ? (
+                        <Type className="w-3.5 h-3.5" />
+                      ) : cardDisplayMode === 'photo_name' ? (
+                        <ImageIcon className="w-3.5 h-3.5" />
+                      ) : (
+                        <FileText className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {cardDisplayMode === 'name_only'
+                          ? 'Aa'
+                          : cardDisplayMode === 'photo_name'
+                          ? '🖼'
+                          : '🪪'}
+                      </span>
+                    </button>
+
+                    {/* 2. Rasio Pas Foto */}
+                    {cardDisplayMode !== 'name_only' && (
+                      <select
+                        value={photoFrameSize}
+                        onChange={(e) =>
+                          applySmartLiveSetting({
+                            photoSize: e.target.value as PhotoFrameSize,
+                          })
+                        }
+                        className="bg-stone-800 border border-stone-700 text-emerald-300 rounded-lg px-1.5 py-1 text-[10px] font-black outline-hidden cursor-pointer shrink-0"
+                        title="Rasio Pas Foto (tetap tegak di atas daun)"
+                      >
+                        <option value="kotak">1:1</option>
+                        <option value="bulat">◯</option>
+                        <option value="2x3">2×3</option>
+                        <option value="3x4">3×4</option>
+                        <option value="4x6">4×6</option>
+                      </select>
+                    )}
+
+                    {/* 3. Bingkai Kartu: Auto Special / Daun / Kotak */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const order: CardFrameMode[] = ['auto', 'leaf', 'rect'];
+                        const next =
+                          order[(order.indexOf(cardFrameMode) + 1) % order.length];
+                        setCardFrameMode(next);
+                        showNotification(
+                          next === 'auto'
+                            ? 'Bingkai: Auto Special (G4–G5 Daun)'
+                            : next === 'leaf'
+                            ? 'Bingkai: Semua Daun (Foto Tegak)'
+                            : 'Bingkai: Semua Kotak'
+                        );
+                      }}
+                      title={`Bingkai Kartu: ${
+                        cardFrameMode === 'auto'
+                          ? 'Auto Special (Batang Kotak + Kanopi Daun)'
+                          : cardFrameMode === 'leaf'
+                          ? 'Daun Segala Arah'
+                          : 'Kotak Standar'
+                      }`}
+                      className={`px-2 py-1 rounded-lg border text-[10px] font-black flex items-center gap-1 shrink-0 transition ${
+                        cardFrameMode === 'leaf'
+                          ? 'bg-emerald-500 text-slate-950 border-emerald-300'
+                          : cardFrameMode === 'auto'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                          : 'bg-stone-800 text-stone-300 border-stone-700'
+                      }`}
+                    >
+                      {cardFrameMode === 'rect' ? (
+                        <Square className="w-3.5 h-3.5" />
+                      ) : (
+                        <Leaf className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {cardFrameMode === 'auto'
+                          ? 'A'
+                          : cardFrameMode === 'leaf'
+                          ? '🌿'
+                          : '▢'}
+                      </span>
+                    </button>
+
+                    {/* 4. Topologi Garis: Rantai / Hibrid / Langsung */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const order: LineRoutingTopology[] = [
+                          'sibling_chain_all',
+                          'sibling_chain_g3plus',
+                          'direct',
+                        ];
+                        const next =
+                          order[(order.indexOf(lineRoutingTopology) + 1) % order.length];
+                        setLineRoutingTopology(next);
+                        showNotification(
+                          next === 'sibling_chain_all'
+                            ? 'Garis: Rantai G1–G5'
+                            : next === 'sibling_chain_g3plus'
+                            ? 'Garis: Hibrid G3+'
+                            : 'Garis: Langsung ke Ortu'
+                        );
+                      }}
+                      title={`Pola Garis: ${
+                        lineRoutingTopology === 'sibling_chain_all'
+                          ? 'Rantai Saudara G1–G5'
+                          : lineRoutingTopology === 'sibling_chain_g3plus'
+                          ? 'Hibrid G3+'
+                          : 'Langsung Ortu'
+                      } (klik untuk ganti)`}
+                      className={`px-2 py-1 rounded-lg border text-[10px] font-black flex items-center gap-1 shrink-0 transition ${
+                        lineRoutingTopology !== 'direct'
+                          ? 'bg-violet-500/25 text-violet-200 border-violet-400/50'
+                          : 'bg-stone-800 text-stone-300 border-stone-700'
+                      }`}
+                    >
+                      <GitFork className="w-3.5 h-3.5" />
+                      <span>
+                        {lineRoutingTopology === 'sibling_chain_all'
+                          ? '⛓'
+                          : lineRoutingTopology === 'sibling_chain_g3plus'
+                          ? '⑂'
+                          : '┼'}
+                      </span>
+                    </button>
+
+                    {/* 5. Batang Pohon 50->20px */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLineThicknessMode((m) => {
+                          const next = m === 'tree_taper' ? 'uniform' : 'tree_taper';
+                          showNotification(
+                            next === 'tree_taper'
+                              ? 'Batang Pohon: 50→45→40→30→20px'
+                              : 'Ketebalan Garis: Seragam'
+                          );
+                          return next;
+                        });
+                      }}
+                      title="Ketebalan Batang Pohon: G1 50px ➔ G2 45px ➔ G3 40px ➔ G4 30px ➔ G5 20px"
+                      className={`p-1.5 rounded-lg border shrink-0 transition ${
+                        lineThicknessMode === 'tree_taper'
+                          ? 'bg-amber-500 text-slate-950 border-amber-300'
+                          : 'bg-stone-800 text-stone-300 border-stone-700 hover:text-white'
+                      }`}
+                    >
+                      <Trees className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* 6. Panah Arah Silsilah */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setShowLineArrows((v) => {
+                          const next = !v;
+                          showNotification(
+                            next ? 'Panah Arah: Aktif' : 'Panah Arah: Mati'
+                          );
+                          return next;
+                        })
+                      }
+                      title={`Panah Arah (Ortu ➔ Anak & Adik ➔ Kakak): ${
+                        showLineArrows ? 'Aktif' : 'Mati'
+                      }`}
+                      className={`p-1.5 rounded-lg border shrink-0 transition ${
+                        showLineArrows
+                          ? 'bg-emerald-500 text-slate-950 border-emerald-300'
+                          : 'bg-stone-800 text-stone-300 border-stone-700 hover:text-white'
+                      }`}
+                    >
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                    </button>
+
                     {smartAnalysis.recommendedPaper !== paperSize && (
                       <button
                         type="button"
                         onClick={() =>
                           applySmartLiveSetting({ paper: smartAnalysis.recommendedPaper })
                         }
-                        className="px-2 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-[9.5px] font-black whitespace-nowrap"
+                        className="px-1.5 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-[9.5px] font-black whitespace-nowrap shrink-0"
                         title={`Ubah ke kertas ideal ${smartAnalysis.recommendedPaper.toUpperCase()}`}
                       >
-                        Pas {smartAnalysis.recommendedPaper.toUpperCase()}
+                        {smartAnalysis.recommendedPaper.toUpperCase()}
                       </button>
                     )}
+
                     <button
                       type="button"
                       onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-                      className="p-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-amber-300"
+                      className="p-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-amber-300 shrink-0"
                       title="Ganti Tema Gelap / Terang"
                     >
                       {isDark ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
@@ -10101,15 +10612,15 @@ export const InteractiveGridCanvasView: React.FC<
                     <button
                       type="button"
                       onClick={() => switchWorkspaceMode('edit')}
-                      className="px-2 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 text-[10px] font-bold whitespace-nowrap"
-                      title="Masuk ke Mode Edit Manual jika ingin menggeser manual"
+                      className="p-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 shrink-0"
+                      title="Masuk ke Mode Edit Manual"
                     >
-                      Edit Manual
+                      <SlidersHorizontal className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="button"
                       onClick={() => setIsSmartGalleryOpen(false)}
-                      className="p-1 rounded-lg text-stone-400 hover:text-white hover:bg-stone-800"
+                      className="p-1 rounded-lg text-stone-400 hover:text-white hover:bg-stone-800 shrink-0"
                       title="Perkecil Pilihan Smart"
                     >
                       <ChevronDown className="w-3.5 h-3.5" />
@@ -10117,124 +10628,25 @@ export const InteractiveGridCanvasView: React.FC<
                   </div>
                 </div>
 
-                {/* Pilihan Gaya Kartu Ringkas + Ukuran Foto + Mode Garis Anti-Silang */}
-                <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
-                  <div className="flex items-center bg-stone-800/90 rounded-lg p-0.5 gap-0.5">
-                    {(
-                      [
-                        { id: 'name_only' as const, label: 'Nama' },
-                        { id: 'photo_name' as const, label: 'Foto+Nama' },
-                        { id: 'full' as const, label: 'Lengkap' },
-                      ] as const
-                    ).map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => applySmartLiveSetting({ cardMode: m.id })}
-                        className={`px-2 py-0.5 rounded-md font-bold whitespace-nowrap transition ${
-                          cardDisplayMode === m.id
-                            ? 'bg-emerald-500 text-slate-950'
-                            : 'text-stone-300 hover:text-white'
-                        }`}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
-                  {cardDisplayMode !== 'name_only' && (
-                    <select
-                      value={photoFrameSize}
-                      onChange={(e) =>
-                        applySmartLiveSetting({
-                          photoSize: e.target.value as PhotoFrameSize,
-                        })
-                      }
-                      className="bg-stone-800 border border-stone-700 text-emerald-300 rounded-lg px-1.5 py-0.5 text-[10px] font-bold outline-hidden cursor-pointer"
-                      title="Rasio Pas Foto"
-                    >
-                      <option value="kotak">Foto 1:1</option>
-                      <option value="bulat">Bulat</option>
-                      <option value="2x3">2×3</option>
-                      <option value="3x4">3×4</option>
-                      <option value="4x6">4×6</option>
-                    </select>
-                  )}
-                  <div
-                    className="flex items-center bg-stone-800/90 rounded-lg p-0.5 gap-0.5"
-                    title="Pola Garis: Rantai Saudara mengurangi garis saling silang"
-                  >
-                    {(
-                      [
-                        {
-                          id: 'sibling_chain_all' as const,
-                          label: 'Rantai G1–G5',
-                          tip: 'Ortu ke 1 anak, adik sambung ke saudara terdekat',
-                        },
-                        {
-                          id: 'sibling_chain_g3plus' as const,
-                          label: 'Hibrid G3+',
-                          tip: 'G1–G2 langsung ortu, G3–G5 rantai saudara',
-                        },
-                        {
-                          id: 'direct' as const,
-                          label: 'Langsung',
-                          tip: 'Semua anak langsung ke kartu ortu',
-                        },
-                      ] as const
-                    ).map((tp) => (
-                      <button
-                        key={tp.id}
-                        type="button"
-                        onClick={() => {
-                          setLineRoutingTopology(tp.id);
-                          showNotification(`Mode garis: ${tp.label}`);
-                        }}
-                        title={tp.tip}
-                        className={`px-2 py-0.5 rounded-md font-bold whitespace-nowrap transition ${
-                          lineRoutingTopology === tp.id
-                            ? 'bg-violet-500 text-slate-950'
-                            : 'text-stone-300 hover:text-white'
-                        }`}
-                      >
-                        {tp.label}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setLineThicknessMode((m) =>
-                        m === 'tree_taper' ? 'uniform' : 'tree_taper'
-                      )
-                    }
-                    title="Tebal garis bertingkat batang pohon: G1 20px ➔ G5 1px"
-                    className={`px-2 py-0.5 rounded-lg font-bold whitespace-nowrap border transition ${
-                      lineThicknessMode === 'tree_taper'
-                        ? 'bg-amber-500 text-slate-950 border-amber-300'
-                        : 'bg-stone-800/90 text-stone-300 border-stone-700 hover:text-white'
-                    }`}
-                  >
-                    Batang 20→1px
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowLineArrows((v) => !v)}
-                    title="Tampilkan panah arah Ortu ➔ Anak & Adik ➔ Kakak"
-                    className={`px-2 py-0.5 rounded-lg font-bold whitespace-nowrap border transition ${
-                      showLineArrows
-                        ? 'bg-emerald-500 text-slate-950 border-emerald-300'
-                        : 'bg-stone-800/90 text-stone-300 border-stone-700 hover:text-white'
-                    }`}
-                  >
-                    Panah {showLineArrows ? 'On' : 'Off'}
-                  </button>
-                </div>
-
-                {/* Daftar Pilihan Tata Letak Smart (1 Klik Siap Cetak) */}
+                {/* Daftar Pilihan Tata Letak Smart (Ikon + Simbol Ringkas, 1 Klik Siap Cetak) */}
                 <div className="flex gap-1.5 overflow-x-auto pb-0.5">
                   {smartGalleryOptions.map((opt) => {
                     const isActive = activePresetId === opt.preset.id;
                     const isClean = opt.quality.overlapCount === 0 && opt.quality.outOfBoundsCount === 0;
+                    const presetSymbol =
+                      opt.preset.id === 'pohon_hayat_besar'
+                        ? '🌳'
+                        : opt.preset.id === 'modular_g3_I'
+                        ? '◫'
+                        : opt.preset.id === 'modular_g3_L'
+                        ? '◰'
+                        : opt.preset.id.startsWith('kotak_9')
+                        ? '▦'
+                        : opt.preset.id.startsWith('orbit')
+                        ? '◎'
+                        : opt.preset.id === 'hierarchy_grid_fill'
+                        ? '▤'
+                        : '⑂';
                     return (
                       <button
                         key={opt.preset.id}
@@ -10249,7 +10661,8 @@ export const InteractiveGridCanvasView: React.FC<
                             true
                           )
                         }
-                        className={`min-w-[132px] max-w-[154px] shrink-0 text-left px-2.5 py-2 rounded-xl border transition ${
+                        title={opt.preset.title}
+                        className={`min-w-[116px] max-w-[144px] shrink-0 text-left px-2 py-1.5 rounded-xl border transition ${
                           isActive
                             ? 'bg-emerald-500/20 border-emerald-400 text-white shadow-xs'
                             : opt.isTopPick
@@ -10257,12 +10670,13 @@ export const InteractiveGridCanvasView: React.FC<
                             : 'bg-stone-800/75 border-stone-700 text-stone-200 hover:border-emerald-400/60'
                         }`}
                       >
-                        <div className="text-[11px] font-extrabold truncate">
-                          {opt.preset.badge}
+                        <div className="text-[10.5px] font-extrabold truncate flex items-center gap-1">
+                          <span>{presetSymbol}</span>
+                          <span className="truncate">{opt.preset.badge}</span>
                         </div>
-                        <div className="text-[9.5px] font-mono tabular-nums text-stone-300 mt-0.5 truncate">
+                        <div className="text-[9px] font-mono tabular-nums text-stone-300 mt-0.5 truncate">
                           <span className={isClean ? 'text-emerald-300 font-bold' : 'text-amber-300 font-bold'}>
-                            {isClean ? '0 Tumpuk' : `${opt.quality.overlapCount} Tumpuk`}
+                            {isClean ? '0✓' : `${opt.quality.overlapCount}!`}
                           </span>
                           {' · '}
                           <span>{Math.round(opt.optimalScale * 100)}%</span>
