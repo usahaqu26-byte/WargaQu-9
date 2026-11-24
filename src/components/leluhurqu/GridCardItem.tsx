@@ -210,24 +210,109 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
     !isModularContainer &&
     (cardFrameMode === 'leaf' ||
       (cardFrameMode === 'auto' && node.cardShape === 'leaf'));
+  const useHexFrame =
+    !isModularContainer &&
+    !useLeafFrame &&
+    (cardFrameMode === 'hex' ||
+      (cardFrameMode === 'auto' && node.cardShape === 'hex'));
+  const usePetalFrame =
+    !isModularContainer &&
+    !useLeafFrame &&
+    !useHexFrame &&
+    (cardFrameMode === 'petal' ||
+      (cardFrameMode === 'auto' && node.cardShape === 'petal'));
+  const useSpecialFrame = useLeafFrame || useHexFrame || usePetalFrame;
   const leafAngleDeg = node.leafAngleDeg ?? 0;
-  const isLightLeaf =
-    node.leafTone === 'light' ||
-    (node.leafTone !== 'dark' && (node.genLevel ?? 0) >= 4);
-  const leafFillPrimary = isLightLeaf ? '#84cc16' : '#15803d';
-  const leafFillShade = isLightLeaf ? '#65a30d' : '#166534';
+  const resolvedLeafTone: 'dark' | 'medium' | 'light' =
+    node.leafTone === 'dark' || node.leafTone === 'medium' || node.leafTone === 'light'
+      ? node.leafTone
+      : (node.genLevel ?? 0) <= 2
+      ? 'dark'
+      : (node.genLevel ?? 0) === 3
+      ? 'medium'
+      : 'light';
+  const leafFillPrimary =
+    resolvedLeafTone === 'dark'
+      ? '#15803d'
+      : resolvedLeafTone === 'medium'
+      ? '#22c55e'
+      : '#84cc16';
+  const leafFillShade =
+    resolvedLeafTone === 'dark'
+      ? '#14532d'
+      : resolvedLeafTone === 'medium'
+      ? '#15803d'
+      : '#65a30d';
   const leafStrokeCol = isUnlocked
     ? '#34d399'
     : isSelected
     ? '#f59e0b'
     : isConnectSource
     ? '#38bdf8'
-    : isLightLeaf
-    ? '#d9f99d'
-    : '#4ade80';
-  const leafVeinCol = isLightLeaf ? '#ecfccb' : '#86efac';
+    : resolvedLeafTone === 'dark'
+    ? '#4ade80'
+    : resolvedLeafTone === 'medium'
+    ? '#86efac'
+    : '#d9f99d';
+  const leafVeinCol =
+    resolvedLeafTone === 'dark'
+      ? '#86efac'
+      : resolvedLeafTone === 'medium'
+      ? '#bbf7d0'
+      : '#ecfccb';
 
-  const cardCustomStyle: React.CSSProperties = useLeafFrame
+  const hexStrokeCol = isUnlocked
+    ? '#34d399'
+    : isSelected
+    ? '#f59e0b'
+    : isConnectSource
+    ? '#38bdf8'
+    : effectiveBorder || (isDark ? '#38bdf8' : '#0284c7');
+  const hexFillCol =
+    effectiveBg || (isDark ? '#0f172a' : '#f8fafc');
+  const hexIsCore = (node.genLevel ?? 0) === 0;
+
+  const petalGen = node.genLevel ?? 0;
+  const petalIsStamen = petalGen === 0;
+  const petalFillPrimary =
+    effectiveBg ||
+    (petalGen === 0
+      ? '#78350f'
+      : petalGen === 1
+      ? '#9d174d'
+      : petalGen === 2
+      ? '#db2777'
+      : petalGen === 3
+      ? '#f472b6'
+      : '#fbcfe8');
+  const petalFillShade =
+    petalGen === 0
+      ? '#451a03'
+      : petalGen === 1
+      ? '#831843'
+      : petalGen === 2
+      ? '#be185d'
+      : petalGen === 3
+      ? '#ec4899'
+      : '#f9a8d4';
+  const petalStrokeCol = isUnlocked
+    ? '#34d399'
+    : isSelected
+    ? '#f59e0b'
+    : isConnectSource
+    ? '#38bdf8'
+    : effectiveBorder ||
+      (petalGen === 0
+        ? '#fbbf24'
+        : petalGen === 1
+        ? '#f9a8d4'
+        : petalGen <= 3
+        ? '#fbcfe8'
+        : '#db2777');
+  const petalRibCol =
+    petalGen === 0 ? '#fde68a' : petalGen <= 2 ? '#fce7f3' : '#be185d';
+
+  const cardCustomStyle: React.CSSProperties = useSpecialFrame
     ? {
         left: `${node.x}px`,
         top: `${node.y}px`,
@@ -255,7 +340,7 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
       onClick={(e) => e.stopPropagation()}
       style={cardCustomStyle}
       className={`group absolute flex flex-col items-center justify-center text-center select-none ${
-        useLeafFrame
+        useSpecialFrame
           ? 'overflow-visible bg-transparent border-0 p-[2px]'
           : `rounded-xl border-2 ${
               lodLite ? '' : 'shadow-lg transition-shadow'
@@ -273,7 +358,7 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
             : 'cursor-pointer'
           : 'cursor-pointer'
       } ${
-        useLeafFrame
+        useSpecialFrame
           ? isUnlocked || isSelected || isConnectSource
             ? 'z-40'
             : 'z-10 hover:brightness-105'
@@ -291,10 +376,18 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
       } ${
         useLeafFrame
           ? 'text-white'
+          : usePetalFrame
+          ? isCardLight
+            ? 'text-slate-900'
+            : 'text-white'
+          : useHexFrame
+          ? isCardLight
+            ? 'text-slate-900'
+            : 'text-white'
           : isCardLight
           ? 'text-slate-900'
           : 'text-slate-100'
-      } ${node.wafat && !useLeafFrame ? 'border-dashed opacity-90' : ''}`}
+      } ${node.wafat && !useSpecialFrame ? 'border-dashed opacity-90' : ''}`}
       title={
         safeHoldMove && layoutMode === 'manual' && !isUnlocked
           ? `${node.name} • Tahan 2 detik atau pakai tombol Pindah di panel bawah`
@@ -345,6 +438,122 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
               opacity={0.72}
             />
           </svg>
+        </div>
+      )}
+
+      {/* Bingkai Atom Segi Enam Molekul (Hexagon Atom + Cincin Orbital Halus) */}
+      {useHexFrame && (
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute -inset-[5%] z-0 flex items-center justify-center ${
+            node.wafat ? 'opacity-85' : ''
+          }`}
+        >
+          <svg
+            viewBox="0 0 120 132"
+            preserveAspectRatio="none"
+            className="w-full h-full drop-shadow-md overflow-visible"
+          >
+            <polygon
+              points="60,3 114,34 114,98 60,129 6,98 6,34"
+              fill={hexFillCol}
+              stroke={hexStrokeCol}
+              strokeWidth={
+                isSelected || isUnlocked ? 4.2 : hexIsCore ? 3.4 : 2.2
+              }
+              strokeLinejoin="round"
+              strokeDasharray={node.wafat ? '6 4' : undefined}
+            />
+            <polygon
+              points="60,10 107,37 107,95 60,122 13,95 13,37"
+              fill="none"
+              stroke={hexStrokeCol}
+              strokeWidth={hexIsCore ? 1.5 : 0.9}
+              strokeDasharray="3 4"
+              opacity={hexIsCore ? 0.65 : 0.35}
+            />
+          </svg>
+        </div>
+      )}
+
+      {/* Bingkai Teratai Mekar: G1 Putik Emas Mahkota / G2+ Kelopak Teratai Mekar Memancar (Foto & Badge tetap 0°) */}
+      {usePetalFrame && (
+        <div
+          aria-hidden="true"
+          style={
+            petalIsStamen
+              ? undefined
+              : {
+                  transform: `rotate(${leafAngleDeg}deg)`,
+                }
+          }
+          className={`pointer-events-none absolute ${
+            petalIsStamen ? '-inset-[14%]' : '-inset-[17%]'
+          } z-0 flex items-center justify-center ${
+            node.wafat ? 'opacity-85' : ''
+          }`}
+        >
+          {petalIsStamen ? (
+            <svg
+              viewBox="0 0 140 140"
+              preserveAspectRatio="none"
+              className="w-full h-full drop-shadow-lg overflow-visible"
+            >
+              {/* Mahkota Putik Emas Inti Teratai (12 ujung kelopak mini mengelilingi G1) */}
+              <path
+                d="M 70 4 C 77 16, 86 14, 96 10 C 97 22, 106 25, 117 26 C 112 37, 118 45, 130 50 C 120 58, 121 68, 134 75 C 121 82, 120 92, 130 100 C 118 105, 112 113, 117 124 C 106 125, 97 128, 96 136 C 86 130, 77 129, 70 138 C 63 129, 54 130, 44 136 C 43 128, 34 125, 23 124 C 28 113, 22 105, 10 100 C 20 92, 19 82, 6 75 C 19 68, 20 58, 10 50 C 22 45, 28 37, 23 26 C 34 25, 43 22, 44 10 C 54 14, 63 16, 70 4 Z"
+                fill={petalFillPrimary}
+                stroke={petalStrokeCol}
+                strokeWidth={isSelected || isUnlocked ? 4 : 2.6}
+                strokeLinejoin="round"
+                strokeDasharray={node.wafat ? '6 4' : undefined}
+              />
+              <circle
+                cx="70"
+                cy="70"
+                r="52"
+                fill={petalFillShade}
+                stroke={petalRibCol}
+                strokeWidth={1.6}
+                strokeDasharray="4 4"
+                opacity={0.9}
+              />
+            </svg>
+          ) : (
+            <svg
+              viewBox="0 0 120 156"
+              preserveAspectRatio="none"
+              className="w-full h-full drop-shadow-md overflow-visible"
+            >
+              {/* Belahan kiri kelopak teratai (pangkal melengkung lebar, ujung atas runcing mekar) */}
+              <path
+                d="M 60 5 C 14 44, 6 102, 34 140 C 44 150, 54 152, 60 151 Z"
+                fill={petalFillPrimary}
+              />
+              {/* Belahan kanan kelopak untuk dimensi cahaya */}
+              <path
+                d="M 60 5 C 106 44, 114 102, 86 140 C 76 150, 66 152, 60 151 Z"
+                fill={petalFillShade}
+              />
+              {/* Garis tepi luar kelopak teratai */}
+              <path
+                d="M 60 5 C 106 44, 114 102, 86 140 C 76 150, 66 152, 60 151 C 54 152, 44 150, 34 140 C 6 102, 14 44, 60 5 Z"
+                fill="none"
+                stroke={petalStrokeCol}
+                strokeWidth={isSelected || isUnlocked ? 4.2 : 2.2}
+                strokeDasharray={node.wafat ? '6 4' : undefined}
+              />
+              {/* Guratan urat kelopak teratai halus */}
+              <path
+                d="M 60 148 L 60 18 M 60 128 Q 34 94 42 46 M 60 128 Q 86 94 78 46"
+                fill="none"
+                stroke={petalRibCol}
+                strokeWidth={1.5}
+                strokeLinecap="round"
+                opacity={0.58}
+              />
+            </svg>
+          )}
         </div>
       )}
       {/* Indikator Progress Hold 2 Detik (CSS/DOM animation, 0 React re-render) */}
@@ -749,6 +958,14 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
                   ? isDark
                     ? 'px-1.5 py-0.5 rounded-md bg-stone-950/90 border border-emerald-400/70 text-white shadow-md'
                     : 'px-1.5 py-0.5 rounded-md bg-white/95 border border-emerald-700/60 text-slate-950 shadow-md'
+                  : usePetalFrame
+                  ? isDark
+                    ? 'px-1.5 py-[2px] rounded-full bg-rose-950/92 border border-pink-300/80 text-white shadow-md'
+                    : 'px-1.5 py-[2px] rounded-full bg-white/96 border border-pink-600/70 text-slate-950 shadow-md'
+                  : useHexFrame
+                  ? isDark
+                    ? 'px-1.5 py-[2px] rounded-full bg-slate-950/92 border border-sky-400/75 text-white shadow-md'
+                    : 'px-1.5 py-[2px] rounded-full bg-white/95 border border-sky-700/65 text-slate-950 shadow-md'
                   : ''
               }`}
             >
@@ -770,13 +987,19 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
                   node.name,
                   pDim.w,
                   pDim.h,
-                  useLeafFrame ? leafStrokeCol : undefined,
-                  useLeafFrame ? 'shadow-md' : ''
+                  useLeafFrame
+                    ? leafStrokeCol
+                    : usePetalFrame
+                    ? petalStrokeCol
+                    : useHexFrame
+                    ? hexStrokeCol
+                    : undefined,
+                  useSpecialFrame ? 'shadow-md' : ''
                 )}
               </div>
               <div
                 style={{
-                  height: `${uniformUnit.badgeH}px`,
+                  height: `${useHexFrame || usePetalFrame ? Math.max(13, Math.round(uniformUnit.badgeH * 0.85)) : uniformUnit.badgeH}px`,
                   fontSize: `${Math.max(7, Math.round(9.5 * effScale))}px`,
                 }}
                 className={`relative z-20 w-full px-1 flex items-center justify-center font-extrabold leading-none truncate ${
@@ -784,6 +1007,14 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
                     ? isDark
                       ? 'mt-0.5 rounded-md bg-stone-950/92 border border-emerald-400/75 text-white shadow-md'
                       : 'mt-0.5 rounded-md bg-white/95 border border-emerald-700/65 text-slate-950 shadow-md'
+                    : usePetalFrame
+                    ? isDark
+                      ? 'mt-0.5 rounded-full bg-rose-950/92 border border-pink-300/80 text-white shadow-sm'
+                      : 'mt-0.5 rounded-full bg-white/96 border border-pink-600/70 text-slate-950 shadow-sm'
+                    : useHexFrame
+                    ? isDark
+                      ? 'mt-0.5 rounded-full bg-slate-950/92 border border-sky-400/80 text-white shadow-sm'
+                      : 'mt-0.5 rounded-full bg-white/96 border border-sky-700/70 text-slate-950 shadow-sm'
                     : isCardLight
                     ? 'rounded bg-black/[0.07] text-slate-900'
                     : 'rounded bg-black/30 text-white'
@@ -803,16 +1034,30 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
                   node.name,
                   pDim.w,
                   pDim.h,
-                  useLeafFrame ? leafStrokeCol : undefined,
-                  useLeafFrame ? 'shadow-md' : ''
+                  useLeafFrame
+                    ? leafStrokeCol
+                    : usePetalFrame
+                    ? petalStrokeCol
+                    : useHexFrame
+                    ? hexStrokeCol
+                    : undefined,
+                  useSpecialFrame ? 'shadow-md' : ''
                 )}
               </div>
               <div
-                className={`relative z-20 w-full rounded-md px-1.5 py-0.5 flex flex-col items-center justify-center text-center leading-tight ${
+                className={`relative z-20 w-full rounded-md px-1.5 py-[2px] flex flex-col items-center justify-center text-center leading-tight ${
                   useLeafFrame
                     ? isDark
                       ? 'bg-stone-950/92 border border-emerald-400/75 text-white shadow-md'
                       : 'bg-white/95 border border-emerald-700/65 text-slate-950 shadow-md'
+                    : usePetalFrame
+                    ? isDark
+                      ? 'bg-rose-950/92 border border-pink-300/80 text-white shadow-sm'
+                      : 'bg-white/96 border border-pink-600/70 text-slate-950 shadow-sm'
+                    : useHexFrame
+                    ? isDark
+                      ? 'bg-slate-950/92 border border-sky-400/80 text-white shadow-sm'
+                      : 'bg-white/96 border border-sky-700/70 text-slate-950 shadow-sm'
                     : isCardLight
                     ? 'bg-black/[0.07] text-slate-900'
                     : 'bg-black/30 text-white'
@@ -841,6 +1086,14 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
                         ? isDark
                           ? 'text-lime-200'
                           : 'text-emerald-800'
+                        : usePetalFrame
+                        ? isDark
+                          ? 'text-pink-200'
+                          : 'text-pink-800'
+                        : useHexFrame
+                        ? isDark
+                          ? 'text-sky-200'
+                          : 'text-sky-800'
                         : isCardLight
                         ? 'text-slate-700'
                         : 'text-slate-200'

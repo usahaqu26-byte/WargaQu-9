@@ -123,11 +123,12 @@ export type GenGradientPaletteId =
   | 'ocean_blue'
   | 'amber_earth'
   | 'violet_dusk'
-  | 'wood_leaf';
+  | 'wood_leaf'
+  | 'lotus_blossom';
 export type ConnectorLineStyle = 'pcb90' | 'pcb45' | 'straight' | 'curved' | 'none';
 export type LineRoutingTopology = 'direct' | 'sibling_chain_all' | 'sibling_chain_g3plus';
 export type LineThicknessMode = 'uniform' | 'tree_taper';
-export type CardFrameMode = 'auto' | 'rect' | 'leaf';
+export type CardFrameMode = 'auto' | 'rect' | 'leaf' | 'hex' | 'petal';
 export type EdgePortSide = 'auto' | 'top' | 'bottom' | 'left' | 'right';
 export type CaptionPosition =
   | 'bottom-bar'
@@ -179,9 +180,14 @@ export interface InteractiveNode {
   customBorderColor?: string;
   genLevel?: number;
   scaleMultiplier?: number;
-  cardShape?: 'rect' | 'leaf';
+  cardShape?: 'rect' | 'leaf' | 'hex' | 'petal';
   leafAngleDeg?: number;
-  leafTone?: 'dark' | 'light';
+  leafTone?: 'dark' | 'medium' | 'light';
+  treeOriginX?: number;
+  treeOriginY?: number;
+  treeTipX?: number;
+  treeTipY?: number;
+  treeWing?: -1 | 1;
   modularSubLayout?: 'grid' | 'I' | 'L';
   modularHeadMemberId?: string;
   mergedMembers?: MergedCardMember[];
@@ -347,6 +353,17 @@ const GEN_GRADIENT_PALETTES: Record<
       { bg: '#166534', border: '#22c55e', line: '#22c55e' },
       { bg: '#15803d', border: '#4ade80', line: '#4ade80' },
       { bg: '#86efac', border: '#16a34a', line: '#86efac' },
+    ],
+  },
+  lotus_blossom: {
+    label: 'Putik Emas (G1) ➔ Kelopak Teratai (G5+)',
+    stops: [
+      { bg: '#451a03', border: '#fbbf24', line: '#f59e0b' },
+      { bg: '#831843', border: '#f472b6', line: '#ec4899' },
+      { bg: '#be185d', border: '#f9a8d4', line: '#f472b6' },
+      { bg: '#f472b6', border: '#9d174d', line: '#f9a8d4' },
+      { bg: '#fbcfe8', border: '#db2777', line: '#fbcfe8' },
+      { bg: '#fdf2f8', border: '#ec4899', line: '#f9a8d4' },
     ],
   },
 };
@@ -774,7 +791,8 @@ function buildDisplayEdgesWithSiblingChain(
   displayMode: CardDisplayMode,
   photoSize: PhotoFrameSize,
   cardScale: number,
-  isTreePreset = false
+  isTreePreset = false,
+  isMoleculePreset = false
 ): DisplayCanvasEdge[] {
   if (topology === 'direct' || edges.length === 0) {
     return edges.map((edge, origIdx) => ({
@@ -833,6 +851,20 @@ function buildDisplayEdgesWithSiblingChain(
         ...group.map((g) => g.child.genLevel ?? parentGen + 1)
       );
       if (minChildGen === 2 || minChildGen >= 4) {
+        group.forEach((g) =>
+          result.push({ origIdx: g.origIdx, edge: g.edge, edgeKind: 'child' })
+        );
+        return;
+      }
+    }
+
+    // Mode Molekul Organik: G2-G4 pakai rantai beradik, sedangkan G5+ langsung ke ortu (menempel)!
+    if (isMoleculePreset) {
+      const parentGen = parentNode.genLevel ?? 0;
+      const minChildGen = Math.min(
+        ...group.map((g) => g.child.genLevel ?? parentGen + 1)
+      );
+      if (minChildGen >= 4) {
         group.forEach((g) =>
           result.push({ origIdx: g.origIdx, edge: g.edge, edgeKind: 'child' })
         );
@@ -3890,6 +3922,24 @@ export const InteractiveGridCanvasView: React.FC<
         setGenGradientPalette('wood_leaf');
         setLinesOnTop(false);
         setShowLineArrows(true);
+      } else if (presetId === 'teratai_mekar') {
+        setLineStyle('curved');
+        setLineThicknessMode('uniform');
+        setLineRoutingTopology('direct');
+        setCardFrameMode('auto');
+        setGenGradientPalette('lotus_blossom');
+        setLinesOnTop(false);
+        setShowLineArrows(true);
+        setShowEndpointDots(true);
+      } else if (presetId === 'molekul_organik') {
+        setLineStyle('straight');
+        setLineThicknessMode('uniform');
+        setLineRoutingTopology('sibling_chain_all');
+        setCardFrameMode('auto');
+        setGenGradientPalette('ocean_blue');
+        setLinesOnTop(false);
+        setShowLineArrows(true);
+        setShowEndpointDots(true);
       } else {
         setLineThicknessMode(preset.recommendedLineThicknessMode || 'uniform');
       }
@@ -5832,12 +5882,14 @@ export const InteractiveGridCanvasView: React.FC<
 
   // Memoized Rute Garis Silsilah (mendukung Rantai Saudara Terdekat, Batang Pohon 20->1px, & Panah Arah)
   const computedEdges = useMemo<ComputedCanvasEdgeItem[]>(() => {
-    if (lineStyle === 'none') return [];
+    // Dipisah Tegas: Mode Pohon Besar menggunakan Kerangka Kayu 2-Lapis (Batang->Dahan->Ranting) tanpa garis dobel
+    if (lineStyle === 'none' || activePresetId === 'pohon_hayat_besar') return [];
     const obstacleBoxes: NodeObstacleBox[] = nodes.map((n) => {
       const sz = getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale);
       return { id: n.id, x: n.x, y: n.y, w: sz.w, h: sz.h };
     });
 
+    const isMoleculePreset = activePresetId === 'molekul_organik';
     const displayEdges = buildDisplayEdgesWithSiblingChain(
       nodes,
       edges,
@@ -5845,7 +5897,8 @@ export const InteractiveGridCanvasView: React.FC<
       cardDisplayMode,
       photoFrameSize,
       cardScale,
-      activePresetId === 'pohon_hayat_besar'
+      false,
+      isMoleculePreset
     );
 
     const taperScale = Math.max(0.45, Math.min(1.05, cardScale));
@@ -5971,7 +6024,7 @@ export const InteractiveGridCanvasView: React.FC<
         const n2 = nodeMap.get(edge.to);
         if (!n1 || !n2) return null;
 
-        const pts = getSmartPorts(
+        let pts = getSmartPorts(
           n1,
           n2,
           edgeKind,
@@ -5982,6 +6035,55 @@ export const InteractiveGridCanvasView: React.FC<
           edge.toPort,
           edgeKind === 'sibling' ? obstacleBoxes : undefined
         );
+
+        // Mode Molekul: ikatan lurus langsung antar tepi segi-enam/atom mengikuti sudut garis pusat-ke-pusat!
+        if (
+          isMoleculePreset &&
+          edgeKind !== 'couple' &&
+          (!edge.fromPort || edge.fromPort === 'auto') &&
+          (!edge.toPort || edge.toPort === 'auto')
+        ) {
+          const s1 = getNodeSize(n1, cardDisplayMode, photoFrameSize, cardScale);
+          const s2 = getNodeSize(n2, cardDisplayMode, photoFrameSize, cardScale);
+          const c1x = n1.x + s1.w / 2;
+          const c1y = n1.y + s1.h / 2;
+          const c2x = n2.x + s2.w / 2;
+          const c2y = n2.y + s2.h / 2;
+          const vx = c2x - c1x;
+          const vy = c2y - c1y;
+          const len = Math.hypot(vx, vy);
+          if (len > 4) {
+            const clipBoxEdge = (
+              cx: number,
+              cy: number,
+              hw: number,
+              hh: number,
+              dx: number,
+              dy: number
+            ) => {
+              const tx = Math.abs(dx) > 1e-4 ? hw / Math.abs(dx) : Infinity;
+              const ty = Math.abs(dy) > 1e-4 ? hh / Math.abs(dy) : Infinity;
+              const t = Math.min(tx, ty);
+              return {
+                x: Math.round((cx + dx * t) * 10) / 10,
+                y: Math.round((cy + dy * t) * 10) / 10,
+              };
+            };
+            const ux = vx / len;
+            const uy = vy / len;
+            const aPt = clipBoxEdge(c1x, c1y, s1.w * 0.5 + 1, s1.h * 0.5 + 1, ux, uy);
+            const bPt = clipBoxEdge(c2x, c2y, s2.w * 0.5 + 1, s2.h * 0.5 + 1, -ux, -uy);
+            const absX = Math.abs(vx);
+            const absY = Math.abs(vy);
+            pts = {
+              a: aPt,
+              b: bPt,
+              dir1: absX >= absY ? (vx >= 0 ? 'right' : 'left') : vy >= 0 ? 'bottom' : 'top',
+              dir2: absX >= absY ? (vx >= 0 ? 'left' : 'right') : vy >= 0 ? 'top' : 'bottom',
+            };
+          }
+        }
+
         const route = buildConnectorRoute(
           pts,
           lineStyle,
@@ -6020,17 +6122,27 @@ export const InteractiveGridCanvasView: React.FC<
             Math.abs(pts.a.y - pts.b.y) > 1);
         const gradId = `edge-grad-${origIdx}`;
 
-        // Ketebalan garis bertingkat ala Batang Pohon (50 -> 45 -> 40 -> 30 -> 20px) vs seragam
+        // Ketebalan garis bertingkat ala Batang Pohon (50 -> 45 -> 40 -> 30 -> 20px) vs seragam / Molekul
         const g1Idx = Math.max(0, Math.min(4, Math.floor(n1.genLevel ?? 0)));
         const g2Idx = Math.max(
           0,
           Math.min(4, Math.floor(n2.genLevel ?? g1Idx + 1))
         );
+        const MOL_BOND_WIDTHS = [3.8, 3.1, 2.5, 2.0, 1.6];
         let startW =
-          edgeKind === 'sibling'
+          isMoleculePreset && lineThicknessMode === 'uniform'
+            ? edgeKind === 'couple'
+              ? 2.8
+              : edgeKind === 'sibling'
+              ? Math.max(1.5, MOL_BOND_WIDTHS[g2Idx] * 0.88)
+              : MOL_BOND_WIDTHS[g1Idx]
+            : edgeKind === 'sibling'
             ? Math.max(1.3, lineThickness * 0.85)
             : lineThickness;
-        let endW = startW;
+        let endW =
+          isMoleculePreset && lineThicknessMode === 'uniform' && edgeKind === 'child'
+            ? MOL_BOND_WIDTHS[g2Idx]
+            : startW;
 
         if (lineThicknessMode === 'tree_taper' && edgeKind !== 'couple') {
           if (edgeKind === 'child') {
@@ -6158,7 +6270,8 @@ export const InteractiveGridCanvasView: React.FC<
     bgStyle,
   ]);
 
-  // Kerangka Batang Kayu, Akar Bawah G1, & Dahan Memanjang Melewati G3 (khusus Mode Pohon Besar)
+  // Kerangka Pohon Natal Bertingkat (Dipisah Tegas):
+  // Batang 75% tinggi (100->50px) + Dahan Zigzag 3-4 lapis (70->40px) + Ranting (45->20px) + Bayangan + Daun Aksen
   const treeSkeletonMemo = useMemo<TreeSkeletonData | null>(() => {
     const isTreeMode =
       activePresetId === 'pohon_hayat_besar' ||
@@ -6186,7 +6299,11 @@ export const InteractiveGridCanvasView: React.FC<
       return { x: n.x + sz.w / 2, y: n.y + sz.h / 2, w: sz.w, h: sz.h };
     };
 
-    const taperScale = Math.max(0.45, Math.min(1.05, cardScale));
+    const woodScale = Math.max(
+      0.55,
+      Math.min(1.0, Math.min(boardWidth / 1450, boardHeight / 980))
+    );
+
     const buildTaperPoly = (
       pts: Array<{ x: number; y: number }>,
       wStart: number,
@@ -6247,133 +6364,287 @@ export const InteractiveGridCanvasView: React.FC<
     const trunkOuterPaths: TreeSkeletonData['trunkOuterPaths'] = [];
     const trunkInnerPaths: TreeSkeletonData['trunkInnerPaths'] = [];
     const boughPaths: TreeSkeletonData['boughPaths'] = [];
+    const twigPaths: TreeSkeletonData['twigPaths'] = [];
+    const accentLeaves: TreeSkeletonData['accentLeaves'] = [];
+    const arrowChevrons: TreeSkeletonData['arrowChevrons'] = [];
 
     const mainRoot = g1Nodes[0];
     const rc = boxCenter(mainRoot);
-    const rootBaseY = rc.y + rc.h * 0.25;
-    const rootSpanX = Math.max(140, Math.round(boardWidth * 0.14));
-    const rootSpanY = Math.max(46, Math.round(64 * taperScale));
+    const trunkX = mainRoot.treeOriginX ?? rc.x;
+    const trunkBaseY =
+      mainRoot.treeOriginY ??
+      Math.min(boardHeight - 40, Math.round(rc.y + rc.h * 0.42));
+    const trunkTopY =
+      mainRoot.treeTipY ??
+      Math.max(44, trunkBaseY - Math.max(220, Math.round(boardHeight * 0.75)));
 
-    // 5 akar melebar organik di bawah pangkal batang G1
+    // 1. 5 Akar Kokoh di bawah pangkal batang
+    const rootSpanX = Math.max(150, Math.round(boardWidth * 0.145));
+    const rootSpanY = Math.max(
+      28,
+      Math.min(boardHeight - trunkBaseY - 10, Math.round(54 * woodScale))
+    );
     const rootSpecs = [
-      { dx: -rootSpanX * 1.15, dy: rootSpanY * 0.92, cx: -rootSpanX * 0.42, cy: rootSpanY * 0.65, w0: 26 * taperScale },
-      { dx: -rootSpanX * 0.56, dy: rootSpanY * 1.02, cx: -rootSpanX * 0.22, cy: rootSpanY * 0.68, w0: 18 * taperScale },
-      { dx: 0, dy: rootSpanY * 1.08, cx: -6, cy: rootSpanY * 0.6, w0: 20 * taperScale },
-      { dx: rootSpanX * 0.56, dy: rootSpanY * 1.02, cx: rootSpanX * 0.22, cy: rootSpanY * 0.68, w0: 18 * taperScale },
-      { dx: rootSpanX * 1.15, dy: rootSpanY * 0.92, cx: rootSpanX * 0.42, cy: rootSpanY * 0.65, w0: 26 * taperScale },
+      { dx: -rootSpanX * 1.12, dy: rootSpanY * 0.9, cx: -rootSpanX * 0.42, cy: rootSpanY * 0.62, w0: 34 * woodScale },
+      { dx: -rootSpanX * 0.54, dy: rootSpanY * 1.0, cx: -rootSpanX * 0.22, cy: rootSpanY * 0.66, w0: 24 * woodScale },
+      { dx: 0, dy: rootSpanY * 1.04, cx: -6, cy: rootSpanY * 0.58, w0: 26 * woodScale },
+      { dx: rootSpanX * 0.54, dy: rootSpanY * 1.0, cx: rootSpanX * 0.22, cy: rootSpanY * 0.66, w0: 24 * woodScale },
+      { dx: rootSpanX * 1.12, dy: rootSpanY * 0.9, cx: rootSpanX * 0.42, cy: rootSpanY * 0.62, w0: 34 * woodScale },
     ];
     rootSpecs.forEach((rs) => {
       const pts = sampleQuad(
-        { x: rc.x + (rs.dx === 0 ? 0 : rs.dx > 0 ? 8 : -8), y: rootBaseY - 8 },
-        { x: rc.x + rs.cx, y: rootBaseY + rs.cy },
-        { x: rc.x + rs.dx, y: rootBaseY + rs.dy },
+        { x: trunkX + (rs.dx === 0 ? 0 : rs.dx > 0 ? 12 : -12), y: trunkBaseY - 8 },
+        { x: trunkX + rs.cx, y: trunkBaseY + rs.cy },
+        { x: trunkX + rs.dx, y: Math.min(boardHeight - 10, trunkBaseY + rs.dy) },
         10
       );
-      const d = buildTaperPoly(pts, rs.w0, 2.5);
-      if (d) rootPaths.push({ d, color: '#451a03' });
+      const d = buildTaperPoly(pts, rs.w0, 4 * woodScale);
+      if (d) {
+        rootPaths.push({ d, color: '#451a03', strokeColor: '#290f02' });
+      }
     });
 
-    // Batang Poros Tengah Dua-Warna (G1 -> seluruh G2 naik ke atas)
-    const spinePts: Array<{ x: number; y: number }> = [
-      { x: rc.x, y: rootBaseY + 6 },
-      { x: rc.x, y: rc.y },
+    // 2. Batang Utama Lurus (75% tinggi kertas, 100px bawah -> 50px ujung atas)
+    const trunkPts = [
+      { x: trunkX, y: trunkBaseY + 4 },
+      { x: trunkX, y: trunkTopY },
     ];
-    g2Nodes.forEach((g2) => {
-      const c = boxCenter(g2);
-      spinePts.push({ x: c.x, y: c.y });
-    });
-    if (spinePts.length >= 2) {
-      const trunkD = buildTaperPoly(
-        spinePts,
-        56 * taperScale,
-        42 * taperScale
-      );
-      const innerD = buildTaperPoly(
-        spinePts,
-        28 * taperScale,
-        18 * taperScale
-      );
-      if (trunkD) trunkOuterPaths.push({ d: trunkD, color: '#451a03' });
-      if (innerD) trunkInnerPaths.push({ d: innerD, color: '#b45309' });
+    const trunkD = buildTaperPoly(
+      trunkPts,
+      100 * woodScale,
+      50 * woodScale
+    );
+    const trunkInnerD = buildTaperPoly(
+      trunkPts,
+      52 * woodScale,
+      22 * woodScale
+    );
+    if (trunkD) {
+      trunkOuterPaths.push({
+        d: trunkD,
+        color: '#5c2408',
+        strokeColor: '#290f02',
+      });
+    }
+    if (trunkInnerD) {
+      trunkInnerPaths.push({ d: trunkInnerD, color: '#b45309' });
     }
 
-    // Dahan Kanan & Kiri (melewati tengah kartu G3 & terus memanjang ke ranting G4/G5!)
-    const childrenByNode = new Map<string, InteractiveNode[]>();
-    edges.forEach((e) => {
-      if (e.type !== 'child') return;
-      const ch = nodeMap.get(e.to);
-      if (!ch) return;
-      if (!childrenByNode.has(e.from)) childrenByNode.set(e.from, []);
-      childrenByNode.get(e.from)!.push(ch);
-    });
+    // Panah arah halus di batang (G1 -> G2 -> Puncak) bila aktif
+    if (showLineArrows) {
+      const spineCenters = [rc, ...g2Nodes.map((g2) => boxCenter(g2))];
+      for (let i = 0; i < spineCenters.length - 1; i++) {
+        const yMid = (spineCenters[i].y + spineCenters[i + 1].y) / 2;
+        arrowChevrons.push({
+          x: trunkX,
+          y: yMid,
+          angleDeg: -90,
+          size: Math.max(7, 10 * woodScale),
+          color: '#fde047',
+        });
+      }
+      arrowChevrons.push({
+        x: trunkX,
+        y: trunkTopY + Math.max(18, 28 * woodScale),
+        angleDeg: -90,
+        size: Math.max(7, 10 * woodScale),
+        color: '#fde047',
+      });
+    }
 
-    const g3Nodes = nodes.filter(
-      (n) => (n.genLevel ?? 0) === 2 && !n.id.includes('_sp_')
+    // Pucuk daun mahkota di ujung atas batang
+    accentLeaves.push(
+      {
+        cx: trunkX,
+        cy: trunkTopY - 16 * woodScale,
+        w: 24 * woodScale,
+        h: 38 * woodScale,
+        angleDeg: 0,
+        fill: '#15803d',
+        stroke: '#4ade80',
+      },
+      {
+        cx: trunkX - 18 * woodScale,
+        cy: trunkTopY - 6 * woodScale,
+        w: 18 * woodScale,
+        h: 30 * woodScale,
+        angleDeg: -38,
+        fill: '#16a34a',
+        stroke: '#86efac',
+      },
+      {
+        cx: trunkX + 18 * woodScale,
+        cy: trunkTopY - 6 * woodScale,
+        w: 18 * woodScale,
+        h: 30 * woodScale,
+        angleDeg: 38,
+        fill: '#16a34a',
+        stroke: '#86efac',
+      }
     );
+
+    // 3. Dahan Zigzag Naik (3-4 Lapis Piramida, 70px -> 40px, lurus kaku & tertutup garis)
     const parentEdgeOf = new Map<string, string>();
     edges.forEach((e) => {
       if (e.type === 'child') parentEdgeOf.set(e.to, e.from);
     });
 
-    g3Nodes.forEach((g3) => {
+    const g3Nodes = nodes.filter(
+      (n) => (n.genLevel ?? 0) === 2 && !n.id.includes('_sp_')
+    );
+    const trunkSpanY = Math.max(120, trunkBaseY - trunkTopY);
+
+    g3Nodes.forEach((g3, g3Idx) => {
       const g3c = boxCenter(g3);
-      const pNode = parentEdgeOf.get(g3.id)
-        ? nodeMap.get(parentEdgeOf.get(g3.id)!)
-        : g2Nodes[g2Nodes.length - 1] || mainRoot;
-      const pc = pNode ? boxCenter(pNode) : rc;
+      const wing: -1 | 1 =
+        g3.treeWing ?? (g3c.x >= trunkX ? 1 : -1);
+      const originX = g3.treeOriginX ?? trunkX;
+      const originY =
+        g3.treeOriginY ??
+        Math.max(
+          trunkTopY + 30,
+          Math.min(trunkBaseY - 40, g3c.y + 38)
+        );
+      const tipX =
+        g3.treeTipX ??
+        Math.round(originX + (g3c.x - originX) * 2.0);
+      const tipY =
+        g3.treeTipY ??
+        Math.round(originY + (g3c.y - originY) * 2.0);
 
-      // Cari titik terjauh di cabang G3 ini (G4/G5) agar dahan kayu terus memanjang melewati tengah kartu G3!
-      const descendants: InteractiveNode[] = [];
-      const q = [...(childrenByNode.get(g3.id) || [])];
-      const visited = new Set<string>();
-      while (q.length > 0) {
-        const cur = q.shift()!;
-        if (visited.has(cur.id)) continue;
-        visited.add(cur.id);
-        descendants.push(cur);
-        (childrenByNode.get(cur.id) || []).forEach((nx) => q.push(nx));
-      }
+      const tierFrac = Math.max(
+        0,
+        Math.min(1, (trunkBaseY - originY) / trunkSpanY)
+      );
+      const wStart = (70 - tierFrac * 10) * woodScale;
+      const wEnd = (40 - tierFrac * 6) * woodScale;
 
-      let tipX = g3c.x + (g3c.x - pc.x) * 0.85;
-      let tipY = g3c.y + (g3c.y - pc.y) * 0.72;
-      if (descendants.length > 0) {
-        let bestDist = -1;
-        descendants.forEach((dn) => {
-          const dc = boxCenter(dn);
-          const dist = Math.hypot(dc.x - pc.x, dc.y - pc.y);
-          if (dist > bestDist) {
-            bestDist = dist;
-            tipX = dc.x;
-            tipY = dc.y;
-          }
-        });
-      }
+      const boughPts = [
+        { x: originX, y: originY },
+        { x: tipX, y: tipY },
+      ];
+      const outerD = buildTaperPoly(boughPts, wStart, wEnd);
+      const innerD = buildTaperPoly(
+        boughPts,
+        32 * woodScale,
+        16 * woodScale
+      );
 
-      // Titik tengah lengkungan melewati pusat G3
-      const ctrl = {
-        x: g3c.x,
-        y: g3c.y + Math.min(18, Math.abs(g3c.y - pc.y) * 0.14),
-      };
-      const pts1 = sampleQuad({ x: pc.x, y: pc.y }, { x: (pc.x + g3c.x) / 2, y: pc.y - 6 }, { x: g3c.x, y: g3c.y }, 7);
-      const pts2 = sampleQuad({ x: g3c.x, y: g3c.y }, ctrl, { x: tipX, y: tipY }, 8);
-      const fullPts = [...pts1, ...pts2.slice(1)];
-
-      const outerD = buildTaperPoly(fullPts, 38 * taperScale, 4.5 * taperScale);
-      const innerD = buildTaperPoly(fullPts, 17 * taperScale, 1.8 * taperScale);
       if (outerD) {
         boughPaths.push({
           d: outerD,
           color: '#5c2408',
+          strokeColor: '#290f02',
           innerD: innerD || undefined,
           innerColor: '#b45309',
         });
       }
+
+      const bAngleDeg =
+        (Math.atan2(tipY - originY, tipX - originX) * 180) / Math.PI;
+      if (showLineArrows) {
+        arrowChevrons.push({
+          x: originX + (tipX - originX) * 0.78,
+          y: originY + (tipY - originY) * 0.78,
+          angleDeg: bAngleDeg,
+          size: Math.max(6.5, 9 * woodScale),
+          color: '#bef264',
+        });
+      }
+
+      // Daun aksen hijau tua di ujung dahan agar puncak dahan tetap rimbun
+      accentLeaves.push({
+        cx: tipX + wing * 12 * woodScale,
+        cy: tipY - 8 * woodScale,
+        w: 20 * woodScale,
+        h: 32 * woodScale,
+        angleDeg: wing * (52 + (g3Idx % 2) * 10),
+        fill: '#15803d',
+        stroke: '#4ade80',
+      });
     });
 
-    return { rootPaths, trunkOuterPaths, trunkInnerPaths, boughPaths };
+    // 4. Ranting Lurus/Tajam (45px -> 20px, tertutup garis + daun aksen hijau muda)
+    const g4Nodes = nodes.filter(
+      (n) => (n.genLevel ?? 0) === 3 && !n.id.includes('_sp_')
+    );
+    g4Nodes.forEach((g4, g4Idx) => {
+      const g4c = boxCenter(g4);
+      const pNode = parentEdgeOf.get(g4.id)
+        ? nodeMap.get(parentEdgeOf.get(g4.id)!)
+        : undefined;
+      const pc = pNode ? boxCenter(pNode) : rc;
+
+      const originX = g4.treeOriginX ?? pc.x;
+      const originY = g4.treeOriginY ?? pc.y;
+      const tipX =
+        g4.treeTipX ??
+        Math.round(originX + (g4c.x - originX) * 1.85);
+      const tipY =
+        g4.treeTipY ??
+        Math.round(originY + (g4c.y - originY) * 1.85);
+
+      const twigPts = [
+        { x: originX, y: originY },
+        { x: tipX, y: tipY },
+      ];
+      const outerD = buildTaperPoly(
+        twigPts,
+        45 * woodScale,
+        20 * woodScale
+      );
+      const innerD = buildTaperPoly(
+        twigPts,
+        18 * woodScale,
+        7 * woodScale
+      );
+      if (outerD) {
+        twigPaths.push({
+          d: outerD,
+          color: '#6b3410',
+          strokeColor: '#290f02',
+          innerD: innerD || undefined,
+          innerColor: '#d97706',
+        });
+      }
+
+      const tAngleRad = Math.atan2(tipY - originY, tipX - originX);
+      const tAngleDeg = (tAngleRad * 180) / Math.PI;
+      if (showLineArrows) {
+        arrowChevrons.push({
+          x: originX + (tipX - originX) * 0.78,
+          y: originY + (tipY - originY) * 0.78,
+          angleDeg: tAngleDeg,
+          size: Math.max(5.5, 7.5 * woodScale),
+          color: '#bef264',
+        });
+      }
+
+      const wing: -1 | 1 = g4.treeWing ?? (tipX >= trunkX ? 1 : -1);
+      accentLeaves.push({
+        cx: tipX + Math.cos(tAngleRad) * 10 * woodScale,
+        cy: tipY + Math.sin(tAngleRad) * 10 * woodScale,
+        w: 16 * woodScale,
+        h: 26 * woodScale,
+        angleDeg: wing * (36 + (g4Idx % 3) * 18),
+        fill: g4Idx % 2 === 0 ? '#22c55e' : '#84cc16',
+        stroke: '#bef264',
+      });
+    });
+
+    return {
+      rootPaths,
+      trunkOuterPaths,
+      trunkInnerPaths,
+      boughPaths,
+      twigPaths,
+      accentLeaves,
+      arrowChevrons,
+    };
   }, [
     activePresetId,
     lineThicknessMode,
+    showLineArrows,
     nodes,
     edges,
     nodeMap,
@@ -6381,6 +6652,7 @@ export const InteractiveGridCanvasView: React.FC<
     photoFrameSize,
     cardScale,
     boardWidth,
+    boardHeight,
   ]);
 
   const getBoardBackgroundStyle = (): React.CSSProperties => {
@@ -6985,6 +7257,7 @@ export const InteractiveGridCanvasView: React.FC<
                       }`}
                     >
                       <option value="none">Polos / Ikuti Tema Kanvas</option>
+                      <option value="lotus_blossom">Putik Emas (G1) ➔ Kelopak Teratai (G5+)</option>
                       <option value="wood_leaf">Coklat Kayu (G1) ➔ Hijau Daun (G5+)</option>
                       <option value="royal_emerald">Zamrud Tua (G1) ➔ Mint Cerah (G5+)</option>
                       <option value="ocean_blue">Biru Samudra (G1) ➔ Langit Cerah (G5+)</option>
@@ -7284,14 +7557,14 @@ export const InteractiveGridCanvasView: React.FC<
                         <button
                           type="button"
                           onClick={() => setLineThicknessMode('tree_taper')}
-                          title="G1 batang 50px, G2 45px, G3 40px, G4 30px, G5 ranting 20px"
+                          title="Batang Pohon Bertingkat: Batang 100→50px • Dahan 70→40px • Ranting 45→20px"
                           className={`px-2 py-0.5 rounded-md border text-[10px] font-bold ${
                             lineThicknessMode === 'tree_taper'
                               ? 'bg-amber-500 text-slate-950 border-amber-300'
                               : 'border-slate-600 opacity-75'
                           }`}
                         >
-                          Batang Pohon (50➔20px)
+                          Batang Pohon (100➔20px)
                         </button>
                       </div>
 
@@ -8104,6 +8377,10 @@ export const InteractiveGridCanvasView: React.FC<
                           ? CircleDot
                           : preset.id === 'orbit_elips_gabung'
                           ? Disc
+                          : preset.id === 'teratai_mekar'
+                          ? Sparkles
+                          : preset.id === 'molekul_organik'
+                          ? GitFork
                           : preset.id === 'modular_g3_I' || preset.id === 'modular_g3_L'
                           ? Layers
                           : preset.id === 'hierarchy_grid_fill'
@@ -8854,43 +9131,74 @@ export const InteractiveGridCanvasView: React.FC<
                     const cy = 72 + Math.max(240, boardHeight - 160) / 2;
                     const maxRx = Math.max(180, boardWidth / 2 - 75);
                     const maxRy = Math.max(140, (boardHeight - 160) / 2 - 42);
-                    const rings = [
-                      { num: 1, factor: 0.22, label: 'ORBIT 1 · G1–G2', accent: '#f59e0b' },
-                      { num: 2, factor: 0.44, label: 'ORBIT 2 · G3', accent: '#38bdf8' },
-                      { num: 3, factor: 0.63, label: 'ORBIT 3 · G4', accent: '#34d399' },
-                      { num: 4, factor: 0.81, label: 'ORBIT 4 · G4', accent: '#a78bfa' },
-                      { num: 5, factor: 0.98, label: 'ORBIT 5 · G5+', accent: '#fb7185' },
-                    ];
-                    return rings.map((rg) => {
-                      const rx = Math.round(maxRx * rg.factor);
-                      const ry = Math.round(maxRy * rg.factor);
-                      return (
-                        <g key={`orbit-ring-${rg.num}`}>
-                          <ellipse
-                            cx={cx}
-                            cy={cy}
-                            rx={rx}
-                            ry={ry}
-                            fill="none"
-                            stroke={rg.accent}
-                            strokeWidth={rg.num === 1 ? 1.8 : 1.2}
-                            strokeOpacity={isDark || bgStyle !== '' ? 0.34 : 0.42}
-                            strokeDasharray="6 5"
-                          />
-                          <text
-                            x={cx}
-                            y={Math.max(66, cy - ry + 13)}
-                            textAnchor="middle"
-                            fontSize="9.5"
-                            fontWeight="800"
-                            fill={rg.accent}
-                            fillOpacity={isDark || bgStyle !== '' ? 0.8 : 0.9}
-                          >
-                            {rg.label}
-                          </text>
-                        </g>
-                      );
-                    });
+                    const isLotus = activePresetId === 'teratai_mekar';
+                    const rings = isLotus
+                      ? [
+                          { num: 1, factor: 0.25, label: 'PUTIK EMAS · G1–G2', accent: '#fbbf24' },
+                          { num: 2, factor: 0.48, label: 'KELOPAK I · G3', accent: '#f472b6' },
+                          { num: 3, factor: 0.72, label: 'KELOPAK II · G4', accent: '#f9a8d4' },
+                          { num: 4, factor: 0.94, label: 'UJUNG KELOPAK · G5+', accent: '#fbcfe8' },
+                        ]
+                      : [
+                          { num: 1, factor: 0.22, label: 'ORBIT 1 · G1–G2', accent: '#f59e0b' },
+                          { num: 2, factor: 0.44, label: 'ORBIT 2 · G3', accent: '#38bdf8' },
+                          { num: 3, factor: 0.63, label: 'ORBIT 3 · G4', accent: '#34d399' },
+                          { num: 4, factor: 0.81, label: 'ORBIT 4 · G4', accent: '#a78bfa' },
+                          { num: 5, factor: 0.98, label: 'ORBIT 5 · G5+', accent: '#fb7185' },
+                        ];
+                    return (
+                      <>
+                        {isLotus &&
+                          Array.from({ length: 12 }).map((_, rayIdx) => {
+                            const ang = (rayIdx * Math.PI * 2) / 12;
+                            const x2 = cx + Math.cos(ang) * maxRx * 0.98;
+                            const y2 = cy + Math.sin(ang) * maxRy * 0.98;
+                            return (
+                              <line
+                                key={`lotus-ray-${rayIdx}`}
+                                x1={cx}
+                                y1={cy}
+                                x2={x2}
+                                y2={y2}
+                                stroke="#f472b6"
+                                strokeWidth={1}
+                                strokeOpacity={isDark || bgStyle !== '' ? 0.16 : 0.24}
+                                strokeDasharray="3 6"
+                              />
+                            );
+                          })}
+                        {rings.map((rg) => {
+                          const rx = Math.round(maxRx * rg.factor);
+                          const ry = Math.round(maxRy * rg.factor);
+                          return (
+                            <g key={`orbit-ring-${rg.num}`}>
+                              <ellipse
+                                cx={cx}
+                                cy={cy}
+                                rx={rx}
+                                ry={ry}
+                                fill="none"
+                                stroke={rg.accent}
+                                strokeWidth={rg.num === 1 ? 1.8 : 1.2}
+                                strokeOpacity={isDark || bgStyle !== '' ? 0.34 : 0.42}
+                                strokeDasharray="6 5"
+                              />
+                              <text
+                                x={cx}
+                                y={Math.max(66, cy - ry + 13)}
+                                textAnchor="middle"
+                                fontSize="9.5"
+                                fontWeight="800"
+                                fill={rg.accent}
+                                fillOpacity={isDark || bgStyle !== '' ? 0.8 : 0.9}
+                              >
+                                {rg.label}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </>
+                    );
                   })()}
                 </svg>
               )}
@@ -8994,34 +9302,112 @@ export const InteractiveGridCanvasView: React.FC<
                 bgStyle={bgStyle}
               />
 
-              {/* Lapisan Akar, Batang Kayu & Dahan Pohon Besar (di belakang semua kartu & garis) */}
+              {/* Lapisan Akar, Batang, Dahan & Ranting Pohon Besar (2 Lapis terpisah tegas + Bayangan) */}
               {!useSnapshotOverview && treeSkeletonMemo && (
                 <svg
                   width={boardWidth}
                   height={boardHeight}
                   className="absolute inset-0 pointer-events-none z-[2]"
                 >
-                  {treeSkeletonMemo.rootPaths.map((rp, rIdx) => (
-                    <path key={`tr-root-${rIdx}`} d={rp.d} fill={rp.color} />
-                  ))}
-                  {treeSkeletonMemo.trunkOuterPaths.map((tp, tIdx) => (
-                    <path key={`tr-out-${tIdx}`} d={tp.d} fill={tp.color} />
-                  ))}
-                  {treeSkeletonMemo.boughPaths.map((bp, bIdx) => (
-                    <g key={`tr-bough-${bIdx}`}>
-                      <path d={bp.d} fill={bp.color} />
-                      {bp.innerD && bp.innerColor && (
-                        <path d={bp.innerD} fill={bp.innerColor} opacity={0.85} />
-                      )}
+                  <defs>
+                    <filter
+                      id="tree-wood-shadow"
+                      x="-15%"
+                      y="-15%"
+                      width="130%"
+                      height="130%"
+                    >
+                      <feDropShadow
+                        dx="0"
+                        dy="5"
+                        stdDeviation="5"
+                        floodColor="#000000"
+                        floodOpacity="0.34"
+                      />
+                    </filter>
+                  </defs>
+                  <g filter="url(#tree-wood-shadow)">
+                    {treeSkeletonMemo.rootPaths.map((rp, rIdx) => (
+                      <path
+                        key={`tr-root-${rIdx}`}
+                        d={rp.d}
+                        fill={rp.color}
+                        stroke={rp.strokeColor || '#290f02'}
+                        strokeWidth={1.6}
+                        strokeLinejoin="round"
+                      />
+                    ))}
+                    {treeSkeletonMemo.trunkOuterPaths.map((tp, tIdx) => (
+                      <path
+                        key={`tr-out-${tIdx}`}
+                        d={tp.d}
+                        fill={tp.color}
+                        stroke={tp.strokeColor || '#290f02'}
+                        strokeWidth={2}
+                        strokeLinejoin="round"
+                      />
+                    ))}
+                    {treeSkeletonMemo.boughPaths.map((bp, bIdx) => (
+                      <g key={`tr-bough-${bIdx}`}>
+                        <path
+                          d={bp.d}
+                          fill={bp.color}
+                          stroke={bp.strokeColor || '#290f02'}
+                          strokeWidth={2}
+                          strokeLinejoin="round"
+                        />
+                        {bp.innerD && bp.innerColor && (
+                          <path d={bp.innerD} fill={bp.innerColor} opacity={0.88} />
+                        )}
+                      </g>
+                    ))}
+                    {treeSkeletonMemo.twigPaths.map((tp, twIdx) => (
+                      <g key={`tr-twig-${twIdx}`}>
+                        <path
+                          d={tp.d}
+                          fill={tp.color}
+                          stroke={tp.strokeColor || '#290f02'}
+                          strokeWidth={1.6}
+                          strokeLinejoin="round"
+                        />
+                        {tp.innerD && tp.innerColor && (
+                          <path d={tp.innerD} fill={tp.innerColor} opacity={0.85} />
+                        )}
+                      </g>
+                    ))}
+                    {treeSkeletonMemo.trunkInnerPaths.map((ti, tiIdx) => (
+                      <path
+                        key={`tr-in-${tiIdx}`}
+                        d={ti.d}
+                        fill={ti.color}
+                        opacity={0.9}
+                      />
+                    ))}
+                    {treeSkeletonMemo.accentLeaves.map((lf, lIdx) => (
+                      <g
+                        key={`tr-leaf-${lIdx}`}
+                        transform={`translate(${lf.cx}, ${lf.cy}) rotate(${lf.angleDeg})`}
+                      >
+                        <path
+                          d={`M 0 ${-lf.h * 0.5} C ${lf.w * 0.5} ${-lf.h * 0.2}, ${lf.w * 0.5} ${lf.h * 0.25}, 0 ${lf.h * 0.5} C ${-lf.w * 0.5} ${lf.h * 0.25}, ${-lf.w * 0.5} ${-lf.h * 0.2}, 0 ${-lf.h * 0.5} Z`}
+                          fill={lf.fill}
+                          stroke={lf.stroke}
+                          strokeWidth={1.2}
+                        />
+                      </g>
+                    ))}
+                  </g>
+                  {treeSkeletonMemo.arrowChevrons.map((ac, aIdx) => (
+                    <g
+                      key={`tr-arr-${aIdx}`}
+                      transform={`translate(${ac.x}, ${ac.y}) rotate(${ac.angleDeg})`}
+                    >
+                      <polygon
+                        points={`${ac.size * 0.65},0 ${-ac.size * 0.55},${-ac.size * 0.48} ${-ac.size * 0.25},0 ${-ac.size * 0.55},${ac.size * 0.48}`}
+                        fill={ac.color}
+                        opacity={0.92}
+                      />
                     </g>
-                  ))}
-                  {treeSkeletonMemo.trunkInnerPaths.map((ti, tiIdx) => (
-                    <path
-                      key={`tr-in-${tiIdx}`}
-                      d={ti.d}
-                      fill={ti.color}
-                      opacity={0.9}
-                    />
                   ))}
                 </svg>
               )}
@@ -10452,32 +10838,44 @@ export const InteractiveGridCanvasView: React.FC<
                       </select>
                     )}
 
-                    {/* 3. Bingkai Kartu: Auto Special / Daun / Kotak */}
+                    {/* 3. Bingkai Kartu: Auto Special / Kelopak Teratai / Daun / Segi Enam / Kotak */}
                     <button
                       type="button"
                       onClick={() => {
-                        const order: CardFrameMode[] = ['auto', 'leaf', 'rect'];
+                        const order: CardFrameMode[] = ['auto', 'petal', 'leaf', 'hex', 'rect'];
                         const next =
                           order[(order.indexOf(cardFrameMode) + 1) % order.length];
                         setCardFrameMode(next);
                         showNotification(
                           next === 'auto'
-                            ? 'Bingkai: Auto Special (G4–G5 Daun)'
+                            ? 'Bingkai: Auto Special (Ikut Tata Letak)'
+                            : next === 'petal'
+                            ? 'Bingkai: Semua Kelopak Teratai (Foto Tegak)'
                             : next === 'leaf'
                             ? 'Bingkai: Semua Daun (Foto Tegak)'
+                            : next === 'hex'
+                            ? 'Bingkai: Semua Segi Enam Molekul'
                             : 'Bingkai: Semua Kotak'
                         );
                       }}
                       title={`Bingkai Kartu: ${
                         cardFrameMode === 'auto'
-                          ? 'Auto Special (Batang Kotak + Kanopi Daun)'
+                          ? 'Auto Special (Kelopak Teratai / Daun / Segi Enam)'
+                          : cardFrameMode === 'petal'
+                          ? 'Kelopak Teratai Mekar'
                           : cardFrameMode === 'leaf'
                           ? 'Daun Segala Arah'
+                          : cardFrameMode === 'hex'
+                          ? 'Segi Enam Atom Molekul'
                           : 'Kotak Standar'
                       }`}
                       className={`px-2 py-1 rounded-lg border text-[10px] font-black flex items-center gap-1 shrink-0 transition ${
-                        cardFrameMode === 'leaf'
+                        cardFrameMode === 'petal'
+                          ? 'bg-pink-500 text-white border-pink-300'
+                          : cardFrameMode === 'leaf'
                           ? 'bg-emerald-500 text-slate-950 border-emerald-300'
+                          : cardFrameMode === 'hex'
+                          ? 'bg-sky-500 text-slate-950 border-sky-300'
                           : cardFrameMode === 'auto'
                           ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
                           : 'bg-stone-800 text-stone-300 border-stone-700'
@@ -10485,14 +10883,22 @@ export const InteractiveGridCanvasView: React.FC<
                     >
                       {cardFrameMode === 'rect' ? (
                         <Square className="w-3.5 h-3.5" />
+                      ) : cardFrameMode === 'hex' ? (
+                        <CircleDot className="w-3.5 h-3.5" />
+                      ) : cardFrameMode === 'petal' ? (
+                        <Sparkles className="w-3.5 h-3.5" />
                       ) : (
                         <Leaf className="w-3.5 h-3.5" />
                       )}
                       <span>
                         {cardFrameMode === 'auto'
                           ? 'A'
+                          : cardFrameMode === 'petal'
+                          ? '🪷'
                           : cardFrameMode === 'leaf'
                           ? '🌿'
+                          : cardFrameMode === 'hex'
+                          ? '⬡'
                           : '▢'}
                       </span>
                     </button>
@@ -10540,7 +10946,7 @@ export const InteractiveGridCanvasView: React.FC<
                       </span>
                     </button>
 
-                    {/* 5. Batang Pohon 50->20px */}
+                    {/* 5. Batang Pohon 100->20px */}
                     <button
                       type="button"
                       onClick={() => {
@@ -10548,13 +10954,13 @@ export const InteractiveGridCanvasView: React.FC<
                           const next = m === 'tree_taper' ? 'uniform' : 'tree_taper';
                           showNotification(
                             next === 'tree_taper'
-                              ? 'Batang Pohon: 50→45→40→30→20px'
+                              ? 'Batang Pohon: Batang 100→50 • Dahan 70→40 • Ranting 45→20px'
                               : 'Ketebalan Garis: Seragam'
                           );
                           return next;
                         });
                       }}
-                      title="Ketebalan Batang Pohon: G1 50px ➔ G2 45px ➔ G3 40px ➔ G4 30px ➔ G5 20px"
+                      title="Ketebalan Batang Pohon: Batang 100→50px • Dahan 70→40px • Ranting 45→20px"
                       className={`p-1.5 rounded-lg border shrink-0 transition ${
                         lineThicknessMode === 'tree_taper'
                           ? 'bg-amber-500 text-slate-950 border-amber-300'
@@ -10636,6 +11042,10 @@ export const InteractiveGridCanvasView: React.FC<
                     const presetSymbol =
                       opt.preset.id === 'pohon_hayat_besar'
                         ? '🌳'
+                        : opt.preset.id === 'teratai_mekar'
+                        ? '🪷'
+                        : opt.preset.id === 'molekul_organik'
+                        ? '⬡'
                         : opt.preset.id === 'modular_g3_I'
                         ? '◫'
                         : opt.preset.id === 'modular_g3_L'

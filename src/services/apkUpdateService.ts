@@ -35,6 +35,8 @@ export interface ApkUpdateStatus {
   installedVersionCode: number;
   latestVersion: string;
   latestVersionCode: number;
+  releaseTag?: string;
+  publishedAt?: string;
   hasUpdate: boolean;
   source: 'github' | 'server' | 'bundle';
   repoSlug: string;
@@ -49,6 +51,27 @@ const UPDATE_DISMISSED_VER_KEY = 'wargaqu_apk_update_dismissed_ver_v1';
 
 let lastUpdateStatus: ApkUpdateStatus | null = null;
 let lastCheckedMs = 0;
+
+function parseGitHubReleaseBuildCode(
+  tagName: string,
+  body: string,
+  title: string,
+  fallbackCode: number
+): number {
+  const match =
+    body.match(/Build\s*[:#]?\s*#?(\d+)/i) ||
+    title.match(/Build\s*[:#]?\s*#?(\d+)/i);
+  if (match?.[1]) {
+    const n = Number(match[1]);
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  }
+  const tagBuildMatch = tagName.match(/-b(\d+)$/i);
+  if (tagBuildMatch?.[1]) {
+    const n = Number(tagBuildMatch[1]);
+    if (Number.isFinite(n) && n > 0) return fallbackCode + Math.floor(n);
+  }
+  return fallbackCode;
+}
 
 function emitUpdateStatus(status: ApkUpdateStatus) {
   if (typeof window !== 'undefined') {
@@ -122,6 +145,8 @@ export const ApkUpdateService = {
 
     let latestVersion = APP_VERSION;
     let latestVersionCode = APP_VERSION_CODE;
+    let releaseTag = `v${APP_VERSION}`;
+    let publishedAt = '';
     let apkDownloadUrl = '';
     let releasePageUrl = '';
     let releaseNotes = '';
@@ -129,8 +154,15 @@ export const ApkUpdateService = {
 
     // 1. Check WargaQu server /api/app-version (works across APK, PWA, and custom relay)
     try {
-      const qs = repoSlug ? `?repo=${encodeURIComponent(repoSlug)}` : '';
+      const params = new URLSearchParams();
+      if (repoSlug) params.set('repo', repoSlug);
+      if (force) {
+        params.set('force', '1');
+        params.set('_ts', String(now));
+      }
+      const qs = params.toString() ? `?${params.toString()}` : '';
       const res = await fetch(buildApiUrl(`/api/app-version${qs}`), {
+        cache: 'no-store',
         headers: { Accept: 'application/json' },
       });
       if (res.ok) {
@@ -139,6 +171,8 @@ export const ApkUpdateService = {
           const data = (await res.json()) as {
             version?: string;
             versionCode?: number;
+            releaseTag?: string;
+            publishedAt?: string;
             githubRepo?: string;
             apkDownloadUrl?: string;
             releasePageUrl?: string;
@@ -150,6 +184,8 @@ export const ApkUpdateService = {
           if (data.version && compareSemver(data.version, latestVersion) >= 0) {
             latestVersion = data.version;
             latestVersionCode = Math.max(latestVersionCode, Number(data.versionCode || 0));
+            if (data.releaseTag) releaseTag = data.releaseTag;
+            if (data.publishedAt) publishedAt = data.publishedAt;
             source = 'server';
           }
           if (data.apkDownloadUrl) apkDownloadUrl = data.apkDownloadUrl;
@@ -167,25 +203,38 @@ export const ApkUpdateService = {
     if (repoSlug) {
       try {
         const ghRes = await fetch(`https://api.github.com/repos/${repoSlug}/releases/latest`, {
+          cache: 'no-store',
           headers: { Accept: 'application/vnd.github+json' },
         });
         if (ghRes.ok) {
           const gh = (await ghRes.json()) as {
             tag_name?: string;
+            name?: string;
+            published_at?: string;
             html_url?: string;
             body?: string;
             assets?: Array<{ name?: string; browser_download_url?: string }>;
           };
-          const ghVer = (gh.tag_name || '').replace(/^v/i, '').trim();
+          const rawTag = (gh.tag_name || '').trim();
+          const ghVer = rawTag.replace(/^v/i, '').split(/[-+]/)[0].trim();
+          const parsedBuildCode = parseGitHubReleaseBuildCode(
+            rawTag,
+            String(gh.body || ''),
+            String(gh.name || ''),
+            APP_VERSION_CODE
+          );
           const apkAsset =
             gh.assets?.find(a => (a.name || '').toLowerCase() === 'wargaqu-latest.apk') ||
             gh.assets?.find(a => (a.name || '').toLowerCase().endsWith('.apk'));
 
           if (ghVer && compareSemver(ghVer, latestVersion) >= 0) {
             latestVersion = ghVer;
-            if (compareSemver(ghVer, APP_VERSION) > 0) {
-              latestVersionCode = Math.max(latestVersionCode, installed.versionCode + 1);
+            latestVersionCode = Math.max(latestVersionCode, parsedBuildCode);
+            if (compareSemver(ghVer, installed.versionName) > 0 && latestVersionCode <= installed.versionCode) {
+              latestVersionCode = installed.versionCode + 1;
             }
+            if (rawTag) releaseTag = rawTag;
+            if (gh.published_at) publishedAt = gh.published_at;
             source = 'github';
           }
           if (apkAsset?.browser_download_url) {
@@ -223,6 +272,8 @@ export const ApkUpdateService = {
       installedVersionCode: installed.versionCode,
       latestVersion,
       latestVersionCode,
+      releaseTag,
+      publishedAt,
       hasUpdate,
       source,
       repoSlug,
@@ -230,7 +281,7 @@ export const ApkUpdateService = {
       releasePageUrl,
       releaseNotes:
         releaseNotes ||
-        `Pembaruan WargaQu v${latestVersion}: sinkronisasi sesi APK-PWA & sistem pasang timpa langsung.`,
+        `Pembaruan WargaQu v${latestVersion} (Build ${latestVersionCode}): sinkronisasi sesi APK-PWA & sistem pasang timpa langsung.`,
       canAutoInstall: installed.canAutoInstall,
     };
 

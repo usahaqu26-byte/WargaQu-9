@@ -102,6 +102,17 @@ export const GEN_GRADIENT_PALETTES: Record<
       { bg: '#86efac', border: '#16a34a', line: '#86efac' },
     ],
   },
+  lotus_blossom: {
+    label: 'Putik Emas (G1) ➔ Kelopak Teratai (G5+)',
+    stops: [
+      { bg: '#451a03', border: '#fbbf24', line: '#f59e0b' },
+      { bg: '#831843', border: '#f472b6', line: '#ec4899' },
+      { bg: '#be185d', border: '#f9a8d4', line: '#f472b6' },
+      { bg: '#f472b6', border: '#9d174d', line: '#f9a8d4' },
+      { bg: '#fbcfe8', border: '#db2777', line: '#fbcfe8' },
+      { bg: '#fdf2f8', border: '#ec4899', line: '#f9a8d4' },
+    ],
+  },
 };
 
 export function getGenGradientStyle(

@@ -49,14 +49,38 @@ export interface ComputedCanvasEdgeItem {
 }
 
 export interface TreeSkeletonData {
-  rootPaths: Array<{ d: string; color: string }>;
-  trunkOuterPaths: Array<{ d: string; color: string }>;
+  rootPaths: Array<{ d: string; color: string; strokeColor?: string }>;
+  trunkOuterPaths: Array<{ d: string; color: string; strokeColor?: string }>;
   trunkInnerPaths: Array<{ d: string; color: string }>;
   boughPaths: Array<{
     d: string;
     color: string;
+    strokeColor?: string;
     innerD?: string;
     innerColor?: string;
+  }>;
+  twigPaths: Array<{
+    d: string;
+    color: string;
+    strokeColor?: string;
+    innerD?: string;
+    innerColor?: string;
+  }>;
+  accentLeaves: Array<{
+    cx: number;
+    cy: number;
+    w: number;
+    h: number;
+    angleDeg: number;
+    fill: string;
+    stroke: string;
+  }>;
+  arrowChevrons: Array<{
+    x: number;
+    y: number;
+    angleDeg: number;
+    size: number;
+    color: string;
   }>;
 }
 
@@ -142,13 +166,27 @@ export const GridHybridSnapshotCanvas: React.FC<
         ctx.clearRect(0, 0, targetW, targetH);
         ctx.scale(scale, scale);
 
-        // 0. Kerangka Akar & Batang Kayu Pohon Besar (di belakang semua garis & kartu)
+        // 0. Kerangka Akar, Batang, Dahan & Ranting Pohon Natal Bertingkat (dengan bayangan kedalaman)
         if (treeSkeleton) {
-          const fillPathList = (items: Array<{ d: string; color: string }>) => {
+          const fillPathList = (
+            items: Array<{ d: string; color: string; strokeColor?: string }>
+          ) => {
             items.forEach((it) => {
               try {
+                const p = new Path2D(it.d);
+                ctx.save();
+                ctx.shadowColor = 'rgba(0,0,0,0.34)';
+                ctx.shadowBlur = 10;
+                ctx.shadowOffsetY = 5;
                 ctx.fillStyle = it.color;
-                ctx.fill(new Path2D(it.d));
+                ctx.fill(p);
+                ctx.restore();
+                if (it.strokeColor) {
+                  ctx.strokeStyle = it.strokeColor;
+                  ctx.lineWidth = 2;
+                  ctx.lineJoin = 'round';
+                  ctx.stroke(p);
+                }
               } catch {
                 // ignore invalid path
               }
@@ -166,7 +204,57 @@ export const GridHybridSnapshotCanvas: React.FC<
               // ignore
             }
           });
-          fillPathList(treeSkeleton.trunkInnerPaths);
+          fillPathList(treeSkeleton.twigPaths);
+          treeSkeleton.twigPaths.forEach((tp) => {
+            if (!tp.innerD || !tp.innerColor) return;
+            try {
+              ctx.fillStyle = tp.innerColor;
+              ctx.fill(new Path2D(tp.innerD));
+            } catch {
+              // ignore
+            }
+          });
+          treeSkeleton.trunkInnerPaths.forEach((ti) => {
+            try {
+              ctx.fillStyle = ti.color;
+              ctx.fill(new Path2D(ti.d));
+            } catch {
+              // ignore
+            }
+          });
+          treeSkeleton.accentLeaves.forEach((lf) => {
+            ctx.save();
+            ctx.translate(lf.cx, lf.cy);
+            ctx.rotate((lf.angleDeg * Math.PI) / 180);
+            ctx.shadowColor = 'rgba(0,0,0,0.24)';
+            ctx.shadowBlur = 5;
+            ctx.shadowOffsetY = 2;
+            ctx.beginPath();
+            ctx.moveTo(0, -lf.h * 0.5);
+            ctx.bezierCurveTo(lf.w * 0.5, -lf.h * 0.2, lf.w * 0.5, lf.h * 0.25, 0, lf.h * 0.5);
+            ctx.bezierCurveTo(-lf.w * 0.5, lf.h * 0.25, -lf.w * 0.5, -lf.h * 0.2, 0, -lf.h * 0.5);
+            ctx.closePath();
+            ctx.fillStyle = lf.fill;
+            ctx.fill();
+            ctx.strokeStyle = lf.stroke;
+            ctx.lineWidth = 1.2;
+            ctx.stroke();
+            ctx.restore();
+          });
+          treeSkeleton.arrowChevrons.forEach((ac) => {
+            ctx.save();
+            ctx.translate(ac.x, ac.y);
+            ctx.rotate((ac.angleDeg * Math.PI) / 180);
+            ctx.beginPath();
+            ctx.moveTo(ac.size * 0.65, 0);
+            ctx.lineTo(-ac.size * 0.55, -ac.size * 0.48);
+            ctx.lineTo(-ac.size * 0.25, 0);
+            ctx.lineTo(-ac.size * 0.55, ac.size * 0.48);
+            ctx.closePath();
+            ctx.fillStyle = ac.color;
+            ctx.fill();
+            ctx.restore();
+          });
         }
 
         // 1. Garis Konektor
@@ -381,6 +469,17 @@ export const GridHybridSnapshotCanvas: React.FC<
             !isModular &&
             (cardFrameMode === 'leaf' ||
               (cardFrameMode === 'auto' && node.cardShape === 'leaf'));
+          const useHexFrame =
+            !isModular &&
+            !useLeafFrame &&
+            (cardFrameMode === 'hex' ||
+              (cardFrameMode === 'auto' && node.cardShape === 'hex'));
+          const usePetalFrame =
+            !isModular &&
+            !useLeafFrame &&
+            !useHexFrame &&
+            (cardFrameMode === 'petal' ||
+              (cardFrameMode === 'auto' && node.cardShape === 'petal'));
 
           ctx.save();
           if (useLeafFrame) {
@@ -389,13 +488,41 @@ export const GridHybridSnapshotCanvas: React.FC<
             const leafW = size.w * 1.28;
             const leafH = size.h * 1.28;
             const angleRad = ((node.leafAngleDeg ?? 0) * Math.PI) / 180;
-            const isLightLeaf =
-              node.leafTone === 'light' ||
-              (node.leafTone !== 'dark' && (node.genLevel ?? 0) >= 4);
+            const resolvedLeafTone: 'dark' | 'medium' | 'light' =
+              node.leafTone === 'dark' ||
+              node.leafTone === 'medium' ||
+              node.leafTone === 'light'
+                ? node.leafTone
+                : (node.genLevel ?? 0) <= 2
+                ? 'dark'
+                : (node.genLevel ?? 0) === 3
+                ? 'medium'
+                : 'light';
+            const leafFillCol =
+              resolvedLeafTone === 'dark'
+                ? '#14532d'
+                : resolvedLeafTone === 'medium'
+                ? '#16a34a'
+                : '#84cc16';
+            const leafStrokeDefault =
+              resolvedLeafTone === 'dark'
+                ? '#4ade80'
+                : resolvedLeafTone === 'medium'
+                ? '#86efac'
+                : '#d9f99d';
+            const leafVeinStroke =
+              resolvedLeafTone === 'dark'
+                ? '#86efac'
+                : resolvedLeafTone === 'medium'
+                ? '#bbf7d0'
+                : '#ecfccb';
 
             ctx.save();
             ctx.translate(cx, cy);
             ctx.rotate(angleRad);
+            ctx.shadowColor = 'rgba(0,0,0,0.32)';
+            ctx.shadowBlur = 7;
+            ctx.shadowOffsetY = 3;
             // Bentuk daun runcing organik simetris (puncak atas, pangkal tangkai bawah)
             ctx.beginPath();
             ctx.moveTo(0, -leafH * 0.54);
@@ -416,21 +543,20 @@ export const GridHybridSnapshotCanvas: React.FC<
               -leafH * 0.54
             );
             ctx.closePath();
-            ctx.fillStyle = isLightLeaf ? '#65a30d' : '#15803d';
+            ctx.fillStyle = leafFillCol;
             ctx.fill();
+            ctx.shadowBlur = 0;
             ctx.lineWidth = selectedSet.has(node.id) ? 3.2 : 1.8;
             ctx.strokeStyle = selectedSet.has(node.id)
               ? '#f59e0b'
-              : isLightLeaf
-              ? '#bef264'
-              : '#4ade80';
+              : leafStrokeDefault;
             ctx.stroke();
 
             // Tulang daun tengah
             ctx.beginPath();
             ctx.moveTo(0, leafH * 0.5);
             ctx.lineTo(0, -leafH * 0.44);
-            ctx.strokeStyle = isLightLeaf ? '#ecfccb' : '#86efac';
+            ctx.strokeStyle = leafVeinStroke;
             ctx.lineWidth = 1.4;
             ctx.stroke();
             ctx.restore();
@@ -473,7 +599,7 @@ export const GridHybridSnapshotCanvas: React.FC<
                 : 'rgba(255, 255, 255, 0.94)';
               drawCardRoundedRect(node.x + 2, badgeY, size.w - 4, badgeH, 6);
               ctx.fill();
-              ctx.strokeStyle = isLightLeaf ? '#84cc16' : '#22c55e';
+              ctx.strokeStyle = leafStrokeDefault;
               ctx.lineWidth = 1;
               ctx.stroke();
 
@@ -485,6 +611,247 @@ export const GridHybridSnapshotCanvas: React.FC<
 
               if (cardDisplayMode === 'full' && node.sub) {
                 ctx.fillStyle = isDark ? '#d9f99d' : '#166534';
+                ctx.font = `600 ${Math.max(6.5, Math.round(8 * effScale))}px sans-serif`;
+                ctx.fillText(
+                  node.sub,
+                  cx,
+                  badgeY + Math.max(11, Math.round(12 * effScale)),
+                  size.w - 10
+                );
+              }
+            }
+            ctx.restore();
+            return;
+          }
+
+          if (useHexFrame) {
+            const cx = node.x + size.w / 2;
+            const cy = node.y + size.h / 2;
+            const hw = size.w * 0.54;
+            const hh = size.h * 0.54;
+            const hexBorderCol = selectedSet.has(node.id)
+              ? '#f59e0b'
+              : effectiveBorder || (isDark ? '#38bdf8' : '#0284c7');
+
+            ctx.save();
+            ctx.shadowColor = 'rgba(0,0,0,0.3)';
+            ctx.shadowBlur = 7;
+            ctx.shadowOffsetY = 3;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - hh);
+            ctx.lineTo(cx + hw, cy - hh * 0.5);
+            ctx.lineTo(cx + hw, cy + hh * 0.5);
+            ctx.lineTo(cx, cy + hh);
+            ctx.lineTo(cx - hw, cy + hh * 0.5);
+            ctx.lineTo(cx - hw, cy - hh * 0.5);
+            ctx.closePath();
+            ctx.fillStyle = fillCol;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.lineWidth = selectedSet.has(node.id)
+              ? 3.2
+              : (node.genLevel ?? 0) === 0
+              ? 2.8
+              : 1.9;
+            if (node.wafat) ctx.setLineDash([5, 3]);
+            ctx.strokeStyle = hexBorderCol;
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.restore();
+
+            if (cardDisplayMode === 'name_only') {
+              ctx.fillStyle = isDark
+                ? 'rgba(2, 6, 23, 0.92)'
+                : 'rgba(255, 255, 255, 0.96)';
+              drawCardRoundedRect(
+                node.x + 2,
+                cy - 11,
+                size.w - 4,
+                22,
+                11
+              );
+              ctx.fill();
+              ctx.strokeStyle = hexBorderCol;
+              ctx.lineWidth = 1;
+              ctx.stroke();
+              ctx.fillStyle = isDark ? '#ffffff' : '#0f172a';
+              ctx.font = `800 ${Math.max(8, Math.round(10 * effScale))}px sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(node.name, cx, cy, size.w - 10);
+            } else {
+              const pDim = getScaledPhotoDim(photoFrameSize, effScale);
+              const px = node.x + (size.w - pDim.w) / 2;
+              const py = node.y + 3;
+              loadAndDrawPhoto(
+                node.photo,
+                px,
+                py,
+                pDim.w,
+                pDim.h,
+                node.name,
+                isCardLight
+              );
+
+              const badgeY = py + pDim.h + 2;
+              const badgeH = Math.max(13, size.h - (pDim.h + 8));
+              ctx.fillStyle = isDark
+                ? 'rgba(2, 6, 23, 0.92)'
+                : 'rgba(255, 255, 255, 0.96)';
+              drawCardRoundedRect(node.x + 2, badgeY, size.w - 4, badgeH, 8);
+              ctx.fill();
+              ctx.strokeStyle = hexBorderCol;
+              ctx.lineWidth = 1;
+              ctx.stroke();
+
+              ctx.fillStyle = isDark ? '#ffffff' : '#0f172a';
+              ctx.font = `800 ${Math.max(7.5, Math.round(9.5 * effScale))}px sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'top';
+              ctx.fillText(node.name, cx, badgeY + 2, size.w - 10);
+
+              if (cardDisplayMode === 'full' && node.sub) {
+                ctx.fillStyle = isDark ? '#bae6fd' : '#0369a1';
+                ctx.font = `600 ${Math.max(6.5, Math.round(8 * effScale))}px sans-serif`;
+                ctx.fillText(
+                  node.sub,
+                  cx,
+                  badgeY + Math.max(11, Math.round(12 * effScale)),
+                  size.w - 10
+                );
+              }
+            }
+            ctx.restore();
+            return;
+          }
+
+          if (usePetalFrame) {
+            const cx = node.x + size.w / 2;
+            const cy = node.y + size.h / 2;
+            const pGen = node.genLevel ?? 0;
+            const isStamen = pGen === 0;
+            const petalW = size.w * 1.32;
+            const petalH = size.h * 1.32;
+            const angleRad = ((node.leafAngleDeg ?? 0) * Math.PI) / 180;
+            const petalFillCol =
+              effectiveBg ||
+              (pGen === 0
+                ? '#78350f'
+                : pGen === 1
+                ? '#9d174d'
+                : pGen === 2
+                ? '#db2777'
+                : pGen === 3
+                ? '#f472b6'
+                : '#fbcfe8');
+            const petalStrokeCol = selectedSet.has(node.id)
+              ? '#f59e0b'
+              : effectiveBorder ||
+                (pGen === 0 ? '#fbbf24' : pGen <= 3 ? '#f9a8d4' : '#db2777');
+
+            ctx.save();
+            ctx.translate(cx, cy);
+            if (!isStamen) ctx.rotate(angleRad);
+            ctx.shadowColor = 'rgba(0,0,0,0.3)';
+            ctx.shadowBlur = 7;
+            ctx.shadowOffsetY = 3;
+
+            if (isStamen) {
+              const r = Math.max(size.w, size.h) * 0.62;
+              ctx.beginPath();
+              for (let k = 0; k < 24; k++) {
+                const a = (k * Math.PI * 2) / 24;
+                const rad = k % 2 === 0 ? r * 1.06 : r * 0.88;
+                const px = Math.cos(a) * rad;
+                const py = Math.sin(a) * rad;
+                if (k === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+              }
+              ctx.closePath();
+              ctx.fillStyle = petalFillCol;
+              ctx.fill();
+              ctx.shadowBlur = 0;
+              ctx.lineWidth = selectedSet.has(node.id) ? 3.2 : 2.2;
+              ctx.strokeStyle = petalStrokeCol;
+              ctx.stroke();
+            } else {
+              ctx.beginPath();
+              ctx.moveTo(0, -petalH * 0.54);
+              ctx.bezierCurveTo(
+                petalW * 0.52,
+                -petalH * 0.22,
+                petalW * 0.56,
+                petalH * 0.34,
+                0,
+                petalH * 0.52
+              );
+              ctx.bezierCurveTo(
+                -petalW * 0.56,
+                petalH * 0.34,
+                -petalW * 0.52,
+                -petalH * 0.22,
+                0,
+                -petalH * 0.54
+              );
+              ctx.closePath();
+              ctx.fillStyle = petalFillCol;
+              ctx.fill();
+              ctx.shadowBlur = 0;
+              ctx.lineWidth = selectedSet.has(node.id) ? 3.2 : 1.9;
+              if (node.wafat) ctx.setLineDash([5, 3]);
+              ctx.strokeStyle = petalStrokeCol;
+              ctx.stroke();
+              ctx.setLineDash([]);
+            }
+            ctx.restore();
+
+            if (cardDisplayMode === 'name_only') {
+              ctx.fillStyle = isDark
+                ? 'rgba(76, 5, 25, 0.92)'
+                : 'rgba(255, 255, 255, 0.96)';
+              drawCardRoundedRect(node.x + 2, cy - 11, size.w - 4, 22, 11);
+              ctx.fill();
+              ctx.strokeStyle = petalStrokeCol;
+              ctx.lineWidth = 1;
+              ctx.stroke();
+              ctx.fillStyle = isDark ? '#ffffff' : '#0f172a';
+              ctx.font = `800 ${Math.max(8, Math.round(10 * effScale))}px sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(node.name, cx, cy, size.w - 10);
+            } else {
+              const pDim = getScaledPhotoDim(photoFrameSize, effScale);
+              const px = node.x + (size.w - pDim.w) / 2;
+              const py = node.y + 3;
+              loadAndDrawPhoto(
+                node.photo,
+                px,
+                py,
+                pDim.w,
+                pDim.h,
+                node.name,
+                isCardLight
+              );
+
+              const badgeY = py + pDim.h + 2;
+              const badgeH = Math.max(13, size.h - (pDim.h + 8));
+              ctx.fillStyle = isDark
+                ? 'rgba(76, 5, 25, 0.92)'
+                : 'rgba(255, 255, 255, 0.96)';
+              drawCardRoundedRect(node.x + 2, badgeY, size.w - 4, badgeH, 8);
+              ctx.fill();
+              ctx.strokeStyle = petalStrokeCol;
+              ctx.lineWidth = 1;
+              ctx.stroke();
+
+              ctx.fillStyle = isDark ? '#ffffff' : '#0f172a';
+              ctx.font = `800 ${Math.max(7.5, Math.round(9.5 * effScale))}px sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'top';
+              ctx.fillText(node.name, cx, badgeY + 2, size.w - 10);
+
+              if (cardDisplayMode === 'full' && node.sub) {
+                ctx.fillStyle = isDark ? '#fbcfe8' : '#9d174d';
                 ctx.font = `600 ${Math.max(6.5, Math.round(8 * effScale))}px sans-serif`;
                 ctx.fillText(
                   node.sub,

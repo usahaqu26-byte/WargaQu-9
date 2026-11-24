@@ -1810,7 +1810,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
                   Terpasang: v{apkUpdateStatus?.installedVersion || APP_VERSION} (Build{' '}
                   {apkUpdateStatus?.installedVersionCode || APP_VERSION_CODE})
                   {apkUpdateStatus?.latestVersion
-                    ? ` · Rilis: v${apkUpdateStatus.latestVersion}`
+                    ? ` · Rilis: v${apkUpdateStatus.latestVersion} (Build ${apkUpdateStatus.latestVersionCode})`
                     : ''}
                 </div>
               </div>

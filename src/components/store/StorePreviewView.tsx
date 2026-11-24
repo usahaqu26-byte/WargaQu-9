@@ -222,14 +222,24 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
         });
         return;
       }
+      const dateLabel = status.publishedAt
+        ? ` · Rilis ${new Date(status.publishedAt).toLocaleDateString('id-ID', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })}`
+        : '';
+      const tagLabel = status.releaseTag || `v${status.latestVersion}`;
       setReleaseCheck({
         status: 'ready',
-        tag: `v${status.latestVersion}`,
+        tag: tagLabel,
         downloadUrl: status.apkDownloadUrl || apkDirectUrl,
         hasUpdate: status.hasUpdate,
         message: status.hasUpdate
-          ? `Versi baru v${status.latestVersion} tersedia (terpasang v${status.installedVersion}). Siap timpa langsung!`
-          : `Rilis terbaru v${status.latestVersion} terdeteksi (perangkat memakai v${status.installedVersion}).`,
+          ? `Versi baru ${tagLabel} (Build #${status.latestVersionCode}${dateLabel}) tersedia! Siap timpa langsung.`
+          : `Rilis terbaru ${tagLabel} (Build #${status.latestVersionCode}${dateLabel}) · terpasang v${status.installedVersion} (Build #${status.installedVersionCode}).`,
       });
     } catch {
       setReleaseCheck({

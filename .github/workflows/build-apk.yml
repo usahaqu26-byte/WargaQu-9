@@ -35,11 +35,35 @@ jobs:
         with:
           packages: 'platforms;android-35 build-tools;35.0.0'
 
-      - name: 5. Prepare environment and persistent signing keystore
+      - name: 5. Prepare environment, monotonic build version & signing keystore
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ ! -f .env ]; then
             cp .env.example .env 2>/dev/null || touch .env
           fi
+
+          BASE_VERSION=$(node -e "console.log((require('./package.json').version || '1.5.9').trim())")
+          BASE_CODE=$(node -e "const fs=require('fs');const t=fs.readFileSync('android/app/build.gradle','utf8');const m=t.match(/WARGAQU_VERSION_CODE[^\"]*\"(\d+)\"/)||t.match(/versionCode\s+(\d+)/);console.log(m?Number(m[1]):4)")
+          RUN_NUM="${GITHUB_RUN_NUMBER:-1}"
+          BUILD_VERSION_CODE=$((BASE_CODE + RUN_NUM))
+
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            RELEASE_TAG="${GITHUB_REF#refs/tags/}"
+          elif gh release view "v${BASE_VERSION}" >/dev/null 2>&1; then
+            RELEASE_TAG="v${BASE_VERSION}-b${RUN_NUM}"
+          else
+            RELEASE_TAG="v${BASE_VERSION}"
+          fi
+
+          echo "APP_VERSION=${BASE_VERSION}" >> $GITHUB_ENV
+          echo "BUILD_VERSION_CODE=${BUILD_VERSION_CODE}" >> $GITHUB_ENV
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
+          echo "WARGAQU_VERSION_NAME=${BASE_VERSION}" >> $GITHUB_ENV
+          echo "WARGAQU_VERSION_CODE=${BUILD_VERSION_CODE}" >> $GITHUB_ENV
+          echo "VITE_APP_VERSION=${BASE_VERSION}" >> $GITHUB_ENV
+          echo "VITE_APP_VERSION_CODE=${BUILD_VERSION_CODE}" >> $GITHUB_ENV
+          echo "🔧 Release Tag: ${RELEASE_TAG} | Version: ${BASE_VERSION} (Build ${BUILD_VERSION_CODE})"
 
           mkdir -p ~/.android
           if [ -n "${{ secrets.WARGAQU_KEYSTORE_B64 }}" ]; then
@@ -59,6 +83,8 @@ jobs:
       - name: 6. Install Dependencies & Build Web App
         env:
           VITE_GITHUB_REPO: ${{ github.repository }}
+          VITE_APP_VERSION: ${{ env.VITE_APP_VERSION }}
+          VITE_APP_VERSION_CODE: ${{ env.VITE_APP_VERSION_CODE }}
         run: |
           npm install --legacy-peer-deps
           npm run build
@@ -106,16 +132,21 @@ jobs:
           chmod +x gradlew 2>/dev/null || true
 
       - name: 8. Build APK with Gradle
+        env:
+          WARGAQU_VERSION_CODE: ${{ env.WARGAQU_VERSION_CODE }}
+          WARGAQU_VERSION_NAME: ${{ env.WARGAQU_VERSION_NAME }}
         run: |
           chmod +x android/gradlew gradlew 2>/dev/null || true
           cd android
-          ./gradlew assembleDebug --no-daemon --stacktrace -x test -x lint
+          ./gradlew assembleDebug -PversionCodeProp=${WARGAQU_VERSION_CODE} -PversionNameProp=${WARGAQU_VERSION_NAME} --no-daemon --stacktrace -x test -x lint
           cd ..
 
       - name: 9. Siapkan File APK WargaQu
         run: |
           mkdir -p output-apk
-          APP_VERSION=$(node -e "console.log(require('./package.json').version || '1.5.8')")
+          APP_VERSION="${APP_VERSION:-1.5.9}"
+          BUILD_CODE="${BUILD_VERSION_CODE:-4}"
+          REL_TAG="${RELEASE_TAG:-v${APP_VERSION}}"
           APK_FILE=""
           if [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
             APK_FILE="android/app/build/outputs/apk/debug/app-debug.apk"
@@ -124,11 +155,14 @@ jobs:
           fi
 
           if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
-            cp "$APK_FILE" "output-apk/WargaQu-v${APP_VERSION}.apk"
+            cp "$APK_FILE" "output-apk/WargaQu-${REL_TAG}.apk"
             cp "$APK_FILE" "output-apk/WargaQu-latest.apk"
-            echo "APP_VERSION=${APP_VERSION}" >> $GITHUB_ENV
+            PUBLISHED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+            printf '{"appId":"com.wargaqu.app","version":"%s","versionCode":%s,"tag":"%s","publishedAt":"%s","apkName":"WargaQu-latest.apk"}\n' \
+              "${APP_VERSION}" "${BUILD_CODE}" "${REL_TAG}" "${PUBLISHED_AT}" > output-apk/wargaqu-version.json
+            echo "PUBLISHED_AT=${PUBLISHED_AT}" >> $GITHUB_ENV
             echo "========================================="
-            echo "✅ APK WargaQu v${APP_VERSION} berhasil dibuat"
+            echo "✅ APK WargaQu ${REL_TAG} (Build #${BUILD_CODE}) berhasil dibuat"
             ls -lh output-apk/
             sha256sum output-apk/WargaQu-latest.apk
             echo "========================================="
@@ -141,28 +175,29 @@ jobs:
       - name: 10. Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WargaQu-v${{ env.APP_VERSION }}-APK
-          path: output-apk/*.apk
+          name: WargaQu-${{ env.RELEASE_TAG }}-APK
+          path: output-apk/*
           retention-days: 30
 
-      - name: 11. Terbitkan ke GitHub Releases (Unduhan Publik Langsung)
+      - name: 11. Terbitkan ke GitHub Releases (Rilis Baru Selalu Jadi Latest)
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG_NAME="v${APP_VERSION}"
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          TAG_NAME="${RELEASE_TAG:-v${APP_VERSION}}"
+          BUILD_CODE="${BUILD_VERSION_CODE:-4}"
+          BUILD_TIME_UTC="${PUBLISHED_AT:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
+          NOTES="Rilis otomatis WargaQu ${TAG_NAME} (Build #${BUILD_CODE} · ${BUILD_TIME_UTC}). Mendukung pasang timpa APK langsung tanpa uninstall serta versi PWA."
+
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            echo "Menghapus rilis tag duplikat ${TAG_NAME} agar published_at dan --latest diperbarui segar..."
+            gh release delete "${TAG_NAME}" --yes --cleanup-tag || true
           fi
 
-          NOTES="Rilis otomatis WargaQu ${TAG_NAME} (Android APK). Tersedia juga versi PWA & halaman pratinjau via GitHub Pages."
-          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
-            gh release upload "${TAG_NAME}" "output-apk/WargaQu-v${APP_VERSION}.apk" "output-apk/WargaQu-latest.apk" --clobber
-          else
-            gh release create "${TAG_NAME}" \
-              "output-apk/WargaQu-v${APP_VERSION}.apk" \
-              "output-apk/WargaQu-latest.apk" \
-              --title "WargaQu ${TAG_NAME}" \
-              --notes "${NOTES}" \
-              --latest
-          fi
+          gh release create "${TAG_NAME}" \
+            "output-apk/WargaQu-${TAG_NAME}.apk" \
+            "output-apk/WargaQu-latest.apk" \
+            "output-apk/wargaqu-version.json" \
+            --title "WargaQu ${TAG_NAME} (Build #${BUILD_CODE})" \
+            --notes "${NOTES}" \
+            --latest

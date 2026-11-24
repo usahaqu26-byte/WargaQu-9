@@ -7,8 +7,10 @@ android {
         applicationId "com.wargaqu.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 3
-        versionName "1.5.8"
+        def resolvedVersionCode = (project.findProperty("versionCodeProp") ?: System.getenv("WARGAQU_VERSION_CODE") ?: "4").toInteger()
+        def resolvedVersionName = (project.findProperty("versionNameProp") ?: System.getenv("WARGAQU_VERSION_NAME") ?: "1.5.9").toString()
+        versionCode resolvedVersionCode
+        versionName resolvedVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

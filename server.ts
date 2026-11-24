@@ -567,7 +567,7 @@ ATURAN EKSTRAKSI:
     const diagSummary = rawDiag
       ? [
           `Wadah: ${String(rawDiag.container || 'pwa').toUpperCase()}`,
-          `Versi App: ${String(rawDiag.appVersion || '1.5.8').slice(0, 24)}`,
+          `Versi App: ${String(rawDiag.appVersion || '1.5.9').slice(0, 24)}`,
           `Jaringan: ${rawDiag.online === false ? 'Offline' : 'Online'}`,
           `Relay Realtime: ${String(rawDiag.relayStatus || 'unknown').slice(0, 24)}`,
           `Penyimpanan Lokal: ${Math.max(0, Number(rawDiag.storagePct || 0))}% (${Math.max(0, Number(rawDiag.storageUsedKb || 0))} KB)`,
@@ -610,7 +610,7 @@ PENGETAHUAN NYATA MODUL WARGAQU:
 7. Akun, Sesi Tunggal APK vs PWA & Cadangan:
    - Hanya 1 sesi aktif terbaru yang berlaku per akun (jika login di APK, sesi lama PWA otomatis ditutup dan sebaliknya).
    - Gunakan login Akun (Email + No HP) atau ekspor/impor file cadangan terenkripsi (.wqbak) serta transfer 1-ketuk PWA -> APK untuk sinkronisasi aman tanpa database pusat.
-   - Update APK mendukung pengecekan versi rilis (v1.5.8) & pasang timpa langsung tanpa uninstall jika izin "Pasang aplikasi tak dikenal" aktif.
+   - Update APK mendukung pengecekan versi rilis (v1.5.9+) & pasang timpa langsung tanpa uninstall jika izin "Pasang aplikasi tak dikenal" aktif.
 
 ATURAN MENJAWAB:
 - Jawab dalam bahasa Indonesia yang ramah, ringkas, praktis, dan jujur berdasarkan fitur WargaQu di atas (JANGAN mengarang tombol atau menu yang tidak ada).
@@ -2269,38 +2269,64 @@ Tuliskan draf balasan langsung yang siap dikirim Admin ke pelapor di field "repl
   });
 
   // Lightweight App Version & GitHub Release Discovery Endpoint (no private data)
-  const SERVER_APP_VERSION = '1.5.8';
-  const SERVER_APP_VERSION_CODE = 3;
+  const SERVER_APP_VERSION = '1.5.9';
+  const SERVER_APP_VERSION_CODE = 4;
   const cachedGithubReleases = new Map<
     string,
     {
       fetchedAt: number;
       tag: string;
+      versionCode: number;
+      publishedAt: string;
       apkDownloadUrl: string;
       releasePageUrl: string;
       notes: string;
     }
   >();
 
+  function parseReleaseVersionCode(tag: string, body: string, title: string, fallbackCode: number): number {
+    const bodyMatch =
+      body.match(/Build\s*[:#]?\s*#?(\d+)/i) ||
+      title.match(/Build\s*[:#]?\s*#?(\d+)/i);
+    if (bodyMatch?.[1]) {
+      const n = Number(bodyMatch[1]);
+      if (Number.isFinite(n) && n > 0) return Math.floor(n);
+    }
+    const tagMatch = tag.match(/-b(\d+)$/i);
+    if (tagMatch?.[1]) {
+      const n = Number(tagMatch[1]);
+      if (Number.isFinite(n) && n > 0) return fallbackCode + Math.floor(n);
+    }
+    return fallbackCode;
+  }
+
   app.get('/api/app-version', async (req, res) => {
     const rawRepo = String(req.query.repo || process.env.VITE_GITHUB_REPO || process.env.GITHUB_REPO || '').trim();
     const validRepo = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(rawRepo) ? rawRepo : '';
+    const forceRefresh = String(req.query.force || req.query.refresh || '').trim() === '1';
 
     let latestVersion = SERVER_APP_VERSION;
     let latestVersionCode = SERVER_APP_VERSION_CODE;
+    let releaseTag = `v${SERVER_APP_VERSION}`;
+    let publishedAt = '';
     let apkDownloadUrl = String(process.env.WARGAQU_APK_URL || '').trim();
     let releasePageUrl = validRepo ? `https://github.com/${validRepo}/releases/latest` : '';
     const changelog = [
-      'Kontrol Sesi Tunggal APK vs PWA & sinkronisasi akun otomatis lintas wadah',
-      'Deteksi pembaruan APK otomatis & pasang timpa langsung tanpa uninstall',
-      'Penanda rilis v1.5.8 (Build 3) terlihat di beranda, akun, dan toko',
+      'Auto-Release APK monotonik dengan Build # unik & pembaruan rilis --latest otomatis',
+      'Kontrol Sesi Tunggal APK vs PWA & pasang timpa langsung tanpa uninstall',
+      'NasabQu Smart Grid: Teratai Mekar, Molekul Organik, & Pohon Cemara Bertingkat',
     ];
 
     if (validRepo) {
       const cached = cachedGithubReleases.get(validRepo);
       const now = Date.now();
-      if (cached && now - cached.fetchedAt < 60 * 1000) {
-        if (cached.tag) latestVersion = cached.tag.replace(/^v/i, '');
+      if (!forceRefresh && cached && now - cached.fetchedAt < 30 * 1000) {
+        if (cached.tag) {
+          releaseTag = cached.tag;
+          latestVersion = cached.tag.replace(/^v/i, '').split(/[-+]/)[0];
+        }
+        if (cached.versionCode) latestVersionCode = Math.max(latestVersionCode, cached.versionCode);
+        if (cached.publishedAt) publishedAt = cached.publishedAt;
         if (cached.apkDownloadUrl) apkDownloadUrl = cached.apkDownloadUrl;
         if (cached.releasePageUrl) releasePageUrl = cached.releasePageUrl;
       } else {
@@ -2308,31 +2334,47 @@ Tuliskan draf balasan langsung yang siap dikirim Admin ke pelapor di field "repl
           const ghRes = await fetch(`https://api.github.com/repos/${validRepo}/releases/latest`, {
             headers: {
               Accept: 'application/vnd.github+json',
-              'User-Agent': 'WargaQu-Relay/1.5.8',
+              'User-Agent': `WargaQu-Relay/${SERVER_APP_VERSION}`,
             },
           });
           if (ghRes.ok) {
             const ghData = (await ghRes.json()) as {
               tag_name?: string;
+              name?: string;
+              published_at?: string;
               html_url?: string;
               body?: string;
               assets?: Array<{ name?: string; browser_download_url?: string }>;
             };
             const tag = String(ghData.tag_name || '').trim();
+            const parsedCode = parseReleaseVersionCode(
+              tag,
+              String(ghData.body || ''),
+              String(ghData.name || ''),
+              SERVER_APP_VERSION_CODE
+            );
             const apkAsset =
               ghData.assets?.find(a => (a.name || '').toLowerCase() === 'wargaqu-latest.apk') ||
               ghData.assets?.find(a => (a.name || '').toLowerCase().endsWith('.apk'));
             const dlUrl =
               apkAsset?.browser_download_url ||
               `https://github.com/${validRepo}/releases/latest/download/WargaQu-latest.apk`;
+            const pubAt = String(ghData.published_at || '').trim();
             cachedGithubReleases.set(validRepo, {
               fetchedAt: now,
               tag,
+              versionCode: parsedCode,
+              publishedAt: pubAt,
               apkDownloadUrl: dlUrl,
               releasePageUrl: ghData.html_url || releasePageUrl,
               notes: String(ghData.body || '').slice(0, 200),
             });
-            if (tag) latestVersion = tag.replace(/^v/i, '');
+            if (tag) {
+              releaseTag = tag;
+              latestVersion = tag.replace(/^v/i, '').split(/[-+]/)[0];
+            }
+            latestVersionCode = Math.max(latestVersionCode, parsedCode);
+            if (pubAt) publishedAt = pubAt;
             apkDownloadUrl = dlUrl;
             if (ghData.html_url) releasePageUrl = ghData.html_url;
           }
@@ -2345,10 +2387,13 @@ Tuliskan draf balasan langsung yang siap dikirim Admin ke pelapor di field "repl
       }
     }
 
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.json({
       appId: 'com.wargaqu.app',
       version: latestVersion,
       versionCode: latestVersionCode,
+      releaseTag,
+      publishedAt,
       githubRepo: validRepo,
       apkDownloadUrl,
       releasePageUrl,
