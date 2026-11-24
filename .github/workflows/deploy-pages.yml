@@ -14,13 +14,10 @@ permissions:
 
 concurrency:
   group: 'pages'
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: 1. Checkout Repository
@@ -36,7 +33,7 @@ jobs:
         run: |
           npm ci || npm install --legacy-peer-deps
 
-      - name: 4. Build Vite Application
+      - name: 4. Build Vite PWA Application
         env:
           VITE_GITHUB_REPO: ${{ github.repository }}
         run: |
@@ -44,15 +41,31 @@ jobs:
           rm -rf dist/assets/aistudio
           touch dist/.nojekyll
           cp dist/index.html dist/404.html
+          test -f dist/index.html
+          test -f dist/sw.js
+          test -f dist/manifest.webmanifest
+          ls -la dist/
 
       - name: 5. Configure GitHub Pages
         uses: actions/configure-pages@v5
 
       - name: 6. Upload Pages Artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: './dist'
+          retention-days: 1
+          include-hidden-files: true
 
-      - name: 7. Deploy to GitHub Pages
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
