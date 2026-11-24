@@ -587,7 +587,140 @@ export function computeMergedCardMetrics(
   };
 }
 
-// Hitung skala ukuran kartu & foto paling ideal agar kertas pilihan (mis. A3) terisi pas: tidak terlalu kosong & tidak menumpuk
+export interface SmartLayoutQuality {
+  overlapCount: number;
+  outOfBoundsCount: number;
+  coveragePct: number;
+  usedWidthPct: number;
+  usedHeightPct: number;
+}
+
+export interface SmartGalleryOption {
+  preset: SmartLayoutPreset;
+  optimalScale: number;
+  quality: SmartLayoutQuality;
+  recommendedPaper: GridPaperSize;
+  score: number;
+  isTopPick: boolean;
+}
+
+export function estimateSmartNodeBoxSize(
+  node: InteractiveNode,
+  displayMode: CardDisplayMode,
+  photoSize: PhotoFrameSize,
+  cardScale = 1
+): { w: number; h: number } {
+  const effScale = cardScale * (node.scaleMultiplier ?? 1);
+
+  if (node.mergedMembers && node.mergedMembers.length >= 2) {
+    const m = computeMergedCardMetrics(
+      node.mergedMembers.length,
+      displayMode,
+      photoSize,
+      effScale,
+      node.mergedCols,
+      node.modularSubLayout || 'grid',
+      node.mergedMembers
+    );
+    return { w: m.w, h: m.h };
+  }
+
+  if (
+    node.modularSubLayout === 'I' ||
+    node.modularSubLayout === 'L' ||
+    (node.scaleMultiplier ?? 1) > 1.05
+  ) {
+    const u = getUniformSubCardSize(displayMode, photoSize, effScale);
+    return { w: u.w, h: u.h };
+  }
+
+  if (displayMode === 'photo_name') {
+    const u = getUniformSubCardSize(displayMode, photoSize, effScale);
+    return { w: u.w, h: u.h };
+  }
+
+  if (displayMode === 'name_only') {
+    const nameLen = node.name.trim().length;
+    const estW = Math.max(104, Math.min(200, nameLen * 7.5 + 24));
+    const estLines = nameLen > 24 ? 2 : 1;
+    return {
+      w: Math.round(estW * effScale),
+      h: Math.max(26, Math.round((estLines > 1 ? 48 : 38) * effScale)),
+    };
+  }
+
+  const pDim = BASE_PHOTO_DIMS[photoSize] || BASE_PHOTO_DIMS['3x4'];
+  return {
+    w: Math.round(Math.max(142, pDim.w + 26) * effScale),
+    h: Math.round((pDim.h + 50) * effScale),
+  };
+}
+
+export function evaluateSmartLayoutQuality(
+  nodes: InteractiveNode[],
+  _edges: InteractiveEdge[],
+  boardWidth: number,
+  boardHeight: number,
+  displayMode: CardDisplayMode,
+  photoSize: PhotoFrameSize,
+  cardScale: number
+): SmartLayoutQuality {
+  if (nodes.length === 0) {
+    return {
+      overlapCount: 0,
+      outOfBoundsCount: 0,
+      coveragePct: 0,
+      usedWidthPct: 0,
+      usedHeightPct: 0,
+    };
+  }
+
+  const boxes = nodes.map((n) => {
+    const sz = estimateSmartNodeBoxSize(n, displayMode, photoSize, cardScale);
+    return { id: n.id, x: n.x, y: n.y, w: sz.w, h: sz.h };
+  });
+
+  let overlapCount = 0;
+  let outOfBoundsCount = 0;
+  let totalArea = 0;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+
+  for (let i = 0; i < boxes.length; i++) {
+    const a = boxes[i];
+    totalArea += a.w * a.h;
+    minX = Math.min(minX, a.x);
+    maxX = Math.max(maxX, a.x + a.w);
+    minY = Math.min(minY, a.y);
+    maxY = Math.max(maxY, a.y + a.h);
+
+    if (a.x < 8 || a.y < 36 || a.x + a.w > boardWidth - 8 || a.y + a.h > boardHeight - 10) {
+      outOfBoundsCount++;
+    }
+
+    for (let j = i + 1; j < boxes.length; j++) {
+      const b = boxes[j];
+      const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+      const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      if (ox > 3 && oy > 3) {
+        overlapCount++;
+      }
+    }
+  }
+
+  const boardArea = Math.max(1, boardWidth * boardHeight);
+  return {
+    overlapCount,
+    outOfBoundsCount,
+    coveragePct: Math.min(100, Math.round((totalArea / boardArea) * 100)),
+    usedWidthPct: Math.min(100, Math.round(((maxX - minX) / Math.max(1, boardWidth)) * 100)),
+    usedHeightPct: Math.min(100, Math.round(((maxY - minY) / Math.max(1, boardHeight)) * 100)),
+  };
+}
+
+// Hitung skala ukuran kartu & foto paling ideal lewat simulasi tata letak nyata: bebas tumpuk & penuh proporsional!
 export function computeOptimalCardScale(
   members: FamilyMember[],
   boardWidth: number,
@@ -601,12 +734,6 @@ export function computeOptimalCardScale(
     0
   );
   const totalCards = Math.max(1, members.length + spouseCount);
-  const genCounts = new Map<number, number>();
-  members.forEach((m) => {
-    const g = m.generationLevel ?? 0;
-    genCounts.set(g, (genCounts.get(g) ?? 0) + 1 + (m.spouses ? m.spouses.length : 0));
-  });
-  const genCount = Math.max(1, genCounts.size);
 
   // Untuk Modular Card I / L di A3 (kapasitas 100+ anggota), simulasikan packing langsung agar skala terbesar muat tanpa dead space!
   if (presetId === 'modular_g3_I' || presetId === 'modular_g3_L') {
@@ -630,7 +757,6 @@ export function computeOptimalCardScale(
           modularG12Position: 'center',
         }
       );
-      // Cek apakah semua node muat di dalam kertas A3 tanpa melebihi batas kanan/bawah
       let maxBottom = 0;
       let maxRight = 0;
       res.nodes.forEach((n) => {
@@ -671,55 +797,85 @@ export function computeOptimalCardScale(
     return bestScale;
   }
 
-  const base1 = getBaseCardSizeForScale(displayMode, photoSize, 1);
-  const usableW = Math.max(320, boardWidth - 116);
-  const usableH = Math.max(260, boardHeight - 160);
+  // Simulasi nyata untuk semua preset lain (9 Baris, Orbit, Pohon, Klaster)
+  // Memastikan G4 & G5 tidak terjepit sampai menumpuk sebelum disusun!
+  const effPreset: SmartPresetId =
+    presetId || (totalCards > 16 ? 'hierarchy_grid_fill' : 'subtree_vertical');
+  const minAllowedScale =
+    totalCards >= 85 ? 0.35 : totalCards >= 45 ? 0.42 : totalCards >= 24 ? 0.48 : 0.55;
+  const maxAllowedScale = totalCards <= 10 ? 1.35 : totalCards <= 24 ? 1.15 : 0.95;
 
-  const minAllowedScale = totalCards > 40 ? 0.38 : totalCards > 24 ? 0.45 : 0.55;
-
-  // Target total area kartu + celah garis sekitar 58% dari bidang usable agar tetap bersih & penuh proporsional
-  const targetCoverage = totalCards <= 10 ? 0.48 : 0.58;
-  const cellAreaAt1 = (base1.w + 26) * (base1.h + 40);
-  const rawScale = Math.sqrt((usableW * usableH * targetCoverage) / (totalCards * cellAreaAt1));
-
-  // Estimasi jumlah sub-baris nyata (termasuk pembungkusan generasi padat) agar semua baris muat vertikal tanpa saling menumpuk
-  let candidate = Math.max(minAllowedScale, Math.min(1.45, rawScale));
-  for (let iter = 0; iter < 6; iter++) {
-    const cW = Math.max(46, base1.w * candidate);
-    const cH = Math.max(24, base1.h * candidate);
-    const gapX = Math.max(10, cW * 0.14);
-    const maxCols = Math.max(1, Math.floor((usableW + gapX) / (cW + gapX)));
-    let estSubRows = 0;
-    genCounts.forEach((cnt) => {
-      estSubRows += Math.max(1, Math.ceil(cnt / maxCols));
-    });
-    const minRowGap = Math.max(14, cH * 0.22);
-    const neededH = estSubRows * cH + Math.max(0, estSubRows - 1) * minRowGap;
-    if (neededH <= usableH || candidate <= minAllowedScale) {
-      break;
-    }
-    candidate = Math.max(minAllowedScale, candidate * 0.9);
+  const scaleCandidates: number[] = [];
+  for (let s = maxAllowedScale; s >= minAllowedScale - 0.001; s = +(s - 0.1).toFixed(2)) {
+    scaleCandidates.push(Math.max(minAllowedScale, s));
   }
 
-  // Batas vertikal minimal per generasi (untuk konsep 9 baris, pastikan muat 9 baris simetris)
-  const effectiveBandCount =
-    presetId === 'kotak_9_baris'
-      ? Math.max(genCount, 9)
-      : presetId === 'kotak_9_baris_g45_gabung'
-      ? Math.max(genCount, 6)
-      : presetId === 'orbit_elips_1_5' || presetId === 'orbit_elips_gabung'
-      ? Math.max(genCount, 7)
-      : genCount;
+  let bestCleanScale = 0;
+  let fallbackBestScale = minAllowedScale;
+  let fallbackMinIssues = Infinity;
 
-  const bandGap =
-    presetId === 'kotak_9_baris' || presetId === 'orbit_elips_1_5' ? 16 : 28;
-  const maxVertScale =
-    (usableH - Math.max(1, effectiveBandCount) * bandGap) /
-    Math.max(1, effectiveBandCount * base1.h);
+  for (const s of scaleCandidates) {
+    const dim = getBaseCardSizeForScale(displayMode, photoSize, s);
+    const sim = generateSmartLayoutFromTable(
+      members,
+      effPreset,
+      boardWidth,
+      boardHeight,
+      dim,
+      {
+        displayMode,
+        photoSize,
+        cardScale: s,
+        cardGapMm: 3,
+      }
+    );
+    const q = evaluateSmartLayoutQuality(
+      sim.nodes,
+      sim.edges,
+      boardWidth,
+      boardHeight,
+      displayMode,
+      photoSize,
+      s
+    );
+    const issues = q.overlapCount * 10 + q.outOfBoundsCount;
+    if (issues < fallbackMinIssues) {
+      fallbackMinIssues = issues;
+      fallbackBestScale = s;
+    }
+    if (q.overlapCount === 0 && q.outOfBoundsCount === 0) {
+      bestCleanScale = s;
+      // Coba 1 tingkat +0.05 di atasnya bila masih bebas tumpuk
+      const higher = Math.min(maxAllowedScale, +(s + 0.05).toFixed(2));
+      if (higher > s) {
+        const hiDim = getBaseCardSizeForScale(displayMode, photoSize, higher);
+        const hiSim = generateSmartLayoutFromTable(
+          members,
+          effPreset,
+          boardWidth,
+          boardHeight,
+          hiDim,
+          { displayMode, photoSize, cardScale: higher, cardGapMm: 3 }
+        );
+        const hiQ = evaluateSmartLayoutQuality(
+          hiSim.nodes,
+          hiSim.edges,
+          boardWidth,
+          boardHeight,
+          displayMode,
+          photoSize,
+          higher
+        );
+        if (hiQ.overlapCount === 0 && hiQ.outOfBoundsCount === 0) {
+          bestCleanScale = higher;
+        }
+      }
+      break;
+    }
+  }
 
-  const bounded = Math.min(candidate, Math.max(minAllowedScale, maxVertScale));
-  const clamped = Math.max(minAllowedScale, Math.min(1.45, bounded));
-  return Math.round(clamped * 20) / 20; // kelipatan 5% (0.05)
+  const chosen = bestCleanScale > 0 ? bestCleanScale : fallbackBestScale;
+  return Math.round(Math.max(minAllowedScale, Math.min(1.45, chosen)) * 20) / 20;
 }
 
 // Analisis cerdas dari data Tabel Trah untuk merekomendasikan ukuran kertas & tata letak terbaik
@@ -742,14 +898,17 @@ export function analyzeTrahForSmartLayout(
   else recommendedPaper = 'a0';
 
   let topPresetId: SmartPresetId = 'hierarchy_grid_fill';
-  let reason = `${totalPeopleWithSpouses} kartu dalam ${generationCount} generasi siap ditata penuh ke kertas A3/pilihan dengan pita generasi & garis hirarki tanpa menyisakan ruang kosong.`;
+  let reason = `${totalPeopleWithSpouses} kartu dalam ${generationCount} generasi siap ditata otomatis bebas tumpukan dengan solver 4-arah di kertas ${recommendedPaper.toUpperCase()}.`;
 
-  if (totalPeopleWithSpouses <= 16 && generationCount <= 4) {
+  if (totalPeopleWithSpouses >= 32) {
+    topPresetId = 'modular_g3_I';
+    reason = `Trah besar (${totalPeopleWithSpouses} orang, ${generationCount} generasi): Modular Poros Tengah atau Kotak 9 Baris Gabung sangat rapi tanpa edit manual.`;
+  } else if (totalPeopleWithSpouses <= 16 && generationCount <= 4) {
     topPresetId = 'subtree_vertical';
     reason = `Cocok untuk ${totalPeopleWithSpouses} kartu (${generationCount} generasi) agar garis keturunan lurus tegak dan foto besar mengisi kertas.`;
   } else if (generationCount >= 6 && totalPeopleWithSpouses <= 28) {
     topPresetId = 'subtree_horizontal';
-    reason = `${generationCount} tingkatan generasi rapi mengalir kiri ke kanan; atau pilih "Isi Penuh Kertas" agar padat seimbang di A3.`;
+    reason = `${generationCount} tingkatan generasi rapi mengalir kiri ke kanan; atau pilih Kotak 9 Baris / Modular agar padat seimbang.`;
   }
 
   return {
@@ -759,6 +918,107 @@ export function analyzeTrahForSmartLayout(
     topPresetId,
     reason,
   };
+}
+
+// Bangun daftar pilihan galeri Smart terbaik yang sudah diuji nol-tumpukan untuk kanvas aktif
+export function buildSmartGalleryOptions(
+  members: FamilyMember[],
+  boardWidth: number,
+  boardHeight: number,
+  displayMode: CardDisplayMode,
+  photoSize: PhotoFrameSize,
+  cardGapMm = 3.5
+): SmartGalleryOption[] {
+  if (!members || members.length === 0) return [];
+  const summary = analyzeTrahForSmartLayout(members);
+  const isDense = summary.totalPeopleWithSpouses >= 24;
+
+  const candidateIds: SmartPresetId[] = isDense
+    ? [
+        'modular_g3_I',
+        'modular_g3_L',
+        'kotak_9_baris_g45_gabung',
+        'kotak_9_baris',
+        'orbit_elips_gabung',
+        'hierarchy_grid_fill',
+      ]
+    : [
+        'subtree_vertical',
+        'kotak_9_baris',
+        'orbit_elips_1_5',
+        'modular_g3_I',
+        'hierarchy_grid_fill',
+        'subtree_horizontal',
+      ];
+
+  const evaluated: SmartGalleryOption[] = candidateIds
+    .map((pid) => {
+      const preset = SMART_LAYOUT_PRESETS.find((p) => p.id === pid);
+      if (!preset) return null;
+      const effMode = displayMode;
+      const effPhoto = photoSize;
+      const optScale = computeOptimalCardScale(
+        members,
+        boardWidth,
+        boardHeight,
+        effMode,
+        effPhoto,
+        pid
+      );
+      const isMod = pid === 'modular_g3_I' || pid === 'modular_g3_L';
+      const dim = isMod
+        ? getUniformSubCardSize(effMode, effPhoto, optScale)
+        : getBaseCardSizeForScale(effMode, effPhoto, optScale);
+
+      const sim = generateSmartLayoutFromTable(
+        members,
+        pid,
+        boardWidth,
+        boardHeight,
+        dim,
+        {
+          displayMode: effMode,
+          photoSize: effPhoto,
+          cardScale: optScale,
+          cardGapMm,
+          modularG12Position: 'center',
+        }
+      );
+      const quality = evaluateSmartLayoutQuality(
+        sim.nodes,
+        sim.edges,
+        boardWidth,
+        boardHeight,
+        effMode,
+        effPhoto,
+        optScale
+      );
+
+      // Skor lebih tinggi untuk nol-tumpuk + skala kartu besar + area kertas terisi baik
+      const cleanBonus = quality.overlapCount === 0 && quality.outOfBoundsCount === 0 ? 1000 : 0;
+      const overlapPenalty = quality.overlapCount * 140 + quality.outOfBoundsCount * 60;
+      const scaleScore = Math.round(optScale * 180);
+      const balanceScore =
+        quality.coveragePct >= 18 && quality.coveragePct <= 72 ? 80 : 30;
+      const presetBonus = pid === summary.topPresetId ? 65 : 0;
+      const score = cleanBonus - overlapPenalty + scaleScore + balanceScore + presetBonus;
+
+      return {
+        preset,
+        optimalScale: optScale,
+        quality,
+        recommendedPaper: summary.recommendedPaper,
+        score,
+        isTopPick: false,
+      };
+    })
+    .filter((x): x is SmartGalleryOption => Boolean(x));
+
+  evaluated.sort((a, b) => b.score - a.score);
+  if (evaluated.length > 0) {
+    evaluated[0].isTopPick = true;
+  }
+  return evaluated;
 }
 
 export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
@@ -1063,7 +1323,10 @@ export function generateSmartLayoutFromTable(
       const rawKids = (childrenMap.get(m.id) || []).filter((k) => !seen.has(k.id));
       const measuredKids = rawKids.map((k) => measureBlock(k, depth + 1));
 
-      // Jika semua anak adalah daun (tidak punya cucu) dan jumlahnya banyak, susun rapi jadi grid 2..4 kolom tepat di bawah orang tua agar jarak tetap pendek!
+      // Lipat saudara daun (tanpa anak) secara cerdas!
+      // 1) Jika semua anak adalah daun dan jumlah > maxCols -> susun grid rapi di bawah induk.
+      // 2) Jika cabang campuran (sebagian G4 punya G5, sebagian G4 tidak punya anak) dan berjumlah banyak ->
+      //    susun anak-daun dalam kelompok ringkas atau bagi 2 baris bertingkat (staggered) agar tidak meluber!
       const allKidsAreSingleLeaves =
         measuredKids.length > opts.wrapLeafSiblingsMaxCols &&
         measuredKids.every((k) => k.children.length === 0);
@@ -1092,15 +1355,52 @@ export function generateSmartLayoutFromTable(
         };
       }
 
-      const kidsTotalW =
+      // Cabang campuran (misal 1 G4 punya anak G5, 4 saudara G4 lainnya tidak): lipat anak-anak menjadi 2 baris bertingkat bila lebar berlebih
+      const rawKidsTotalW =
         measuredKids.length > 0
           ? measuredKids.reduce((s, ch) => s + ch.blockW, 0) +
             (measuredKids.length - 1) * kidGapX
           : 0;
+      const maxAllowBranchW = Math.max(
+        cardW * 3,
+        boardWidth - opts.leftMargin - opts.rightMargin - 20
+      );
+      const shouldStaggerMixedRow =
+        measuredKids.length >= 4 && rawKidsTotalW > maxAllowBranchW * 0.92;
+
+      if (shouldStaggerMixedRow) {
+        const half = Math.ceil(measuredKids.length / 2);
+        const topSlice = measuredKids.slice(0, half);
+        const botSlice = measuredKids.slice(half);
+        const topW =
+          topSlice.reduce((s, ch) => s + ch.blockW, 0) +
+          Math.max(0, topSlice.length - 1) * kidGapX;
+        const botW =
+          botSlice.reduce((s, ch) => s + ch.blockW, 0) +
+          Math.max(0, botSlice.length - 1) * kidGapX;
+        const topH = Math.max(...topSlice.map((ch) => ch.blockH));
+        const botH = botSlice.length > 0 ? Math.max(...botSlice.map((ch) => ch.blockH)) : 0;
+        const tierGap = Math.max(18, Math.round(cardH * 0.22));
+        const blockW = Math.max(unitW, topW, botW);
+        const blockH = cardH + opts.rowStepY + topH + (botH > 0 ? tierGap + botH : 0);
+        return {
+          member: m,
+          unitW,
+          spouses,
+          depth,
+          children: measuredKids,
+          isLeafGrid: true,
+          leafCols: -half, // penanda khusus: 2 baris cabang campuran bertingkat
+          leafRows: 2,
+          blockW,
+          blockH,
+        };
+      }
+
       const kidsMaxH =
         measuredKids.length > 0 ? Math.max(...measuredKids.map((ch) => ch.blockH)) : 0;
 
-      const blockW = Math.max(unitW, kidsTotalW);
+      const blockW = Math.max(unitW, rawKidsTotalW);
       const blockH = measuredKids.length > 0 ? cardH + opts.rowStepY + kidsMaxH : cardH;
 
       return {
@@ -1201,7 +1501,33 @@ export function generateSmartLayoutFromTable(
       const anyKidHasSpouse = block.children.some((k) => k.spouses.length > 0);
       const kidGapX = anyKidHasSpouse ? compactSiblingGap : unmarriedGapPx;
 
-      if (block.isLeafGrid) {
+      if (block.isLeafGrid && block.leafCols < 0) {
+        // 2 baris bertingkat untuk cabang campuran (G4 punya G5 + saudara G4 lain)
+        const half = Math.abs(block.leafCols);
+        const topSlice = block.children.slice(0, half);
+        const botSlice = block.children.slice(half);
+        const topW =
+          topSlice.reduce((s, ch) => s + ch.blockW, 0) +
+          Math.max(0, topSlice.length - 1) * kidGapX;
+        const botW =
+          botSlice.reduce((s, ch) => s + ch.blockW, 0) +
+          Math.max(0, botSlice.length - 1) * kidGapX;
+        const topH = Math.max(...topSlice.map((ch) => ch.blockH));
+        const tierGap = Math.max(18, Math.round(cardH * 0.22));
+
+        let cx1 = leftX + (block.blockW - topW) / 2;
+        topSlice.forEach((ch) => {
+          placeBlock(ch, cx1, childTopY, primaryId);
+          cx1 += ch.blockW + kidGapX;
+        });
+
+        let cx2 = leftX + (block.blockW - botW) / 2;
+        const botY = childTopY + topH + tierGap;
+        botSlice.forEach((ch) => {
+          placeBlock(ch, cx2, botY, primaryId);
+          cx2 += ch.blockW + kidGapX;
+        });
+      } else if (block.isLeafGrid) {
         const maxChildUnitW = Math.max(...block.children.map((k) => k.unitW));
         const gridTotalW =
           block.leafCols * maxChildUnitW + (block.leafCols - 1) * kidGapX;
@@ -1246,6 +1572,14 @@ export function generateSmartLayoutFromTable(
     });
   };
 
+  const solverCommonOpts = {
+    displayMode,
+    photoSize,
+    cardScale,
+    padX: Math.max(6, Math.round(compactSiblingGap * 0.7)),
+    padY: Math.max(8, Math.round(cardH * 0.14)),
+  };
+
   // -------------------------------------------------------------------------
   // MODE 0: ISI PENUH KERTAS (RAPAT, DEKAT INDUK & PITA GENERASI)
   // -------------------------------------------------------------------------
@@ -1263,7 +1597,16 @@ export function generateSmartLayoutFromTable(
       rootGapX: Math.max(24, Math.round(cardW * 0.25)),
     });
 
-    return fitNodesInsideBoard(nodes, edges, boardWidth, boardHeight, cardW, cardH, leftLabelMargin);
+    return fitNodesInsideBoard(
+      nodes,
+      edges,
+      boardWidth,
+      boardHeight,
+      cardW,
+      cardH,
+      leftLabelMargin,
+      solverCommonOpts
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -1279,7 +1622,16 @@ export function generateSmartLayoutFromTable(
       rootGapX: Math.max(26, Math.round(cardW * 0.28)),
     });
 
-    return fitNodesInsideBoard(nodes, edges, boardWidth, boardHeight, cardW, cardH, 24);
+    return fitNodesInsideBoard(
+      nodes,
+      edges,
+      boardWidth,
+      boardHeight,
+      cardW,
+      cardH,
+      24,
+      solverCommonOpts
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -1419,7 +1771,16 @@ export function generateSmartLayoutFromTable(
       curY += rb.subtreeH + 24;
     });
 
-    return fitNodesInsideBoard(nodes, edges, boardWidth, boardHeight, cardW, cardH, 24);
+    return fitNodesInsideBoard(
+      nodes,
+      edges,
+      boardWidth,
+      boardHeight,
+      cardW,
+      cardH,
+      24,
+      solverCommonOpts
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -2452,8 +2813,28 @@ export function generateSmartLayoutFromTable(
       }
     }
 
+    // Jalankan Solver Ruang Kosong 4-Arah Berjangkar Induk untuk G4/G5 & kartu besar agar 0 tumpukan!
+    const solved9Rows = resolveCollisionsNearParents4Dir(
+      allPlaced.map((p) => p.node),
+      edges,
+      boardWidth,
+      boardHeight,
+      displayMode,
+      photoSize,
+      cardScale,
+      {
+        minLeftX: leftMargin,
+        rightMargin,
+        minTopY: 64,
+        bottomMargin: 22,
+        padX: Math.max(6, Math.round(compactSiblingGap * 0.65)),
+        padY: Math.max(8, Math.round(cardH * 0.12)),
+        anchorMaxGen: 2, // G1–G3 tetap jangkar stabil di baris tengah 4,5,6
+      }
+    );
+
     return {
-      nodes: allPlaced.map((p) => p.node),
+      nodes: solved9Rows,
       edges,
     };
   }
@@ -2717,68 +3098,33 @@ export function generateSmartLayoutFromTable(
       angleCursor += span;
     });
 
-    // Resolusi tabrakan ringan agar setiap kartu tetap di posisi sudut terdekatnya tanpa saling bertumpuk
-    const minBX = 20;
-    const minBY = 66;
-    for (let pass = 0; pass < 16; pass++) {
-      let moved = false;
-      for (let i = 0; i < placedBoxes.length; i++) {
-        for (let j = i + 1; j < placedBoxes.length; j++) {
-          const a = placedBoxes[i];
-          const b = placedBoxes[j];
-          const pad = 10;
-          const overlapX =
-            Math.min(a.node.x + a.w + pad, b.node.x + b.w) -
-            Math.max(a.node.x, b.node.x - pad);
-          const overlapY =
-            Math.min(a.node.y + a.h + pad, b.node.y + b.h) -
-            Math.max(a.node.y, b.node.y - pad);
-          if (overlapX > 0 && overlapY > 0) {
-            const aCx = a.node.x + a.w / 2;
-            const aCy = a.node.y + a.h / 2;
-            const bCx = b.node.x + b.w / 2;
-            const bCy = b.node.y + b.h / 2;
-            let dx = bCx - aCx;
-            let dy = bCy - aCy;
-            if (Math.abs(dx) < 1 && Math.abs(dy) < 1) {
-              dx = Math.cos(b.angle || 0.5) * 14;
-              dy = Math.sin(b.angle || 0.5) * 14;
-            }
-            const dist = Math.hypot(dx, dy) || 1;
-            const push = Math.min(overlapX, overlapY) * 0.55 + 2;
-            const px = (dx / dist) * push;
-            const py = (dy / dist) * push;
-
-            // Pertahankan node pusat (orbit 0) tetap stabil di tengah bila memungkinkan
-            if (a.orbitRing === 0) {
-              b.node.x += px * 1.4;
-              b.node.y += py * 1.4;
-            } else if (b.orbitRing === 0) {
-              a.node.x -= px * 1.4;
-              a.node.y -= py * 1.4;
-            } else {
-              a.node.x -= px;
-              a.node.y -= py;
-              b.node.x += px;
-              b.node.y += py;
-            }
-            moved = true;
-          }
-        }
+    // Resolusi tabrakan 4-arah berjangkar induk: G1 pusat stabil, G4 & G5 geser ke ruang kosong terdekat (kanan/kiri/atas/bawah)
+    const centerLockedIds = new Set<string>(
+      placedBoxes.filter((p) => p.orbitRing === 0).map((p) => p.node.id)
+    );
+    const solvedOrbitNodes = resolveCollisionsNearParents4Dir(
+      placedBoxes.map((p) => p.node),
+      edges,
+      boardWidth,
+      boardHeight,
+      displayMode,
+      photoSize,
+      cardScale,
+      {
+        minLeftX: 20,
+        rightMargin: 20,
+        minTopY: 64,
+        bottomMargin: 24,
+        padX: Math.max(8, Math.round(compactSiblingGap * 0.7)),
+        padY: Math.max(10, Math.round(cardH * 0.14)),
+        anchorMaxGen: 1,
+        lockedNodeIds: centerLockedIds,
+        radialCenter: { x: cx, y: cy },
       }
-      placedBoxes.forEach((p) => {
-        p.node.x = Math.round(
-          Math.max(minBX, Math.min(boardWidth - p.w - 20, p.node.x))
-        );
-        p.node.y = Math.round(
-          Math.max(minBY, Math.min(boardHeight - p.h - 24, p.node.y))
-        );
-      });
-      if (!moved) break;
-    }
+    );
 
     return {
-      nodes: placedBoxes.map((p) => p.node),
+      nodes: solvedOrbitNodes,
       edges,
     };
   }
@@ -2794,10 +3140,356 @@ export function generateSmartLayoutFromTable(
     rootGapX: Math.max(20, Math.round(cardW * 0.2)),
   });
 
-  return fitNodesInsideBoard(nodes, edges, boardWidth, boardHeight, cardW, cardH, 24);
+  return fitNodesInsideBoard(
+    nodes,
+    edges,
+    boardWidth,
+    boardHeight,
+    cardW,
+    cardH,
+    24,
+    solverCommonOpts
+  );
 }
 
-// Menjaga seluruh pohon tetap di dalam batas kertas secara proporsional tanpa menggeser kartu jadi tumpang tindih!
+// ============================================================================
+// SOLVER ANTI-TUMPUK 4 ARAH BERJANGKAR INDUK (KHUSUSNYA G4 & G5 AGAR DEKAT INDUK)
+// Mengelompokkan pasangan sebagai 1 unit utuh lalu memindai ruang kosong terdekat
+// (kanan, kiri, bawah, atas, diagonal bertingkat) di sekitar induknya.
+// ============================================================================
+function resolveCollisionsNearParents4Dir(
+  nodes: InteractiveNode[],
+  edges: InteractiveEdge[],
+  boardWidth: number,
+  boardHeight: number,
+  displayMode: CardDisplayMode,
+  photoSize: PhotoFrameSize,
+  cardScale: number,
+  opts: {
+    minLeftX?: number;
+    rightMargin?: number;
+    minTopY?: number;
+    bottomMargin?: number;
+    padX?: number;
+    padY?: number;
+    anchorMaxGen?: number;
+    lockedNodeIds?: Set<string>;
+    radialCenter?: { x: number; y: number };
+  }
+): InteractiveNode[] {
+  if (nodes.length <= 1) return nodes;
+
+  const minLeftX = opts.minLeftX ?? 20;
+  const rightMargin = opts.rightMargin ?? 20;
+  const minTopY = opts.minTopY ?? 64;
+  const bottomMargin = opts.bottomMargin ?? 22;
+  const padX = opts.padX ?? 8;
+  const padY = opts.padY ?? 10;
+  const anchorMaxGen = opts.anchorMaxGen ?? 2;
+
+  const cloned = nodes.map((n) => ({ ...n }));
+  const byId = new Map<string, InteractiveNode>();
+  cloned.forEach((n) => byId.set(n.id, n));
+
+  // Bangun peta pasangan (_sp_ atau edge 'couple') agar suami-istri selalu digeser sebagai 1 blok kaku
+  const couplePrimaryOf = new Map<string, string>();
+  const spousesByPrimary = new Map<string, InteractiveNode[]>();
+
+  edges.forEach((e) => {
+    if (e.type === 'couple' && byId.has(e.from) && byId.has(e.to)) {
+      const target = byId.get(e.to)!;
+      if (target.id.includes('_sp_') || !couplePrimaryOf.has(e.from)) {
+        couplePrimaryOf.set(e.to, e.from);
+      }
+    }
+  });
+  cloned.forEach((n) => {
+    const spMatch = n.id.match(/^(.+)_sp_\d+$/);
+    if (spMatch && byId.has(spMatch[1])) {
+      couplePrimaryOf.set(n.id, spMatch[1]);
+    }
+  });
+  cloned.forEach((n) => {
+    const pId = couplePrimaryOf.get(n.id);
+    if (pId) {
+      if (!spousesByPrimary.has(pId)) spousesByPrimary.set(pId, []);
+      spousesByPrimary.get(pId)!.push(n);
+    }
+  });
+
+  // Peta induk anak -> orang tua (untuk menjaga G4/G5 sedekat mungkin dengan induknya)
+  const parentOf = new Map<string, string>();
+  edges.forEach((e) => {
+    if (e.type === 'child' && byId.has(e.from) && byId.has(e.to)) {
+      parentOf.set(e.to, e.from);
+    }
+  });
+
+  interface RigidUnit {
+    primary: InteractiveNode;
+    members: { node: InteractiveNode; dx: number; dy: number; w: number; h: number }[];
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    idealX: number;
+    idealY: number;
+    gen: number;
+    locked: boolean;
+  }
+
+  const units: RigidUnit[] = [];
+  cloned.forEach((n) => {
+    if (couplePrimaryOf.has(n.id)) return;
+    const spList = spousesByPrimary.get(n.id) || [];
+    const groupNodes = [n, ...spList];
+    const sized = groupNodes.map((gn) => {
+      const sz = estimateSmartNodeBoxSize(gn, displayMode, photoSize, cardScale);
+      return { node: gn, x: gn.x, y: gn.y, w: sz.w, h: sz.h };
+    });
+
+    const minX = Math.min(...sized.map((s) => s.x));
+    const minY = Math.min(...sized.map((s) => s.y));
+    const maxX = Math.max(...sized.map((s) => s.x + s.w));
+    const maxY = Math.max(...sized.map((s) => s.y + s.h));
+
+    const unitW = maxX - minX;
+    const unitH = maxY - minY;
+    const clampedX = Math.max(minLeftX, Math.min(boardWidth - rightMargin - unitW, minX));
+    const clampedY = Math.max(minTopY, Math.min(boardHeight - bottomMargin - unitH, minY));
+
+    const gen = n.genLevel ?? 0;
+    const isLocked = Boolean(opts.lockedNodeIds?.has(n.id));
+
+    units.push({
+      primary: n,
+      members: sized.map((s) => ({
+        node: s.node,
+        dx: s.x - minX,
+        dy: s.y - minY,
+        w: s.w,
+        h: s.h,
+      })),
+      x: clampedX,
+      y: clampedY,
+      w: unitW,
+      h: unitH,
+      idealX: clampedX,
+      idealY: clampedY,
+      gen,
+      locked: isLocked,
+    });
+  });
+
+  // Urutkan penempatan: terkunci -> generasi awal (G1..G3) -> generasi luar (G4, G5+)
+  units.sort((a, b) => {
+    if (a.locked !== b.locked) return a.locked ? -1 : 1;
+    if (a.gen !== b.gen) return a.gen - b.gen;
+    return a.idealY - b.idealY || a.idealX - b.idealX;
+  });
+
+  const placedUnits: RigidUnit[] = [];
+
+  const getOverlapAreaAgainstPlaced = (
+    cx: number,
+    cy: number,
+    cw: number,
+    ch: number,
+    pPadX: number,
+    pPadY: number
+  ): number => {
+    let area = 0;
+    for (let i = 0; i < placedUnits.length; i++) {
+      const pu = placedUnits[i];
+      const ox =
+        Math.min(cx + cw + pPadX, pu.x + pu.w) - Math.max(cx - pPadX, pu.x);
+      if (ox <= 0) continue;
+      const oy =
+        Math.min(cy + ch + pPadY, pu.y + pu.h) - Math.max(cy - pPadY, pu.y);
+      if (oy > 0) {
+        area += ox * oy;
+      }
+    }
+    return area;
+  };
+
+  for (const unit of units) {
+    const maxAllowedX = Math.max(minLeftX, boardWidth - rightMargin - unit.w);
+    const maxAllowedY = Math.max(minTopY, boardHeight - bottomMargin - unit.h);
+
+    if (unit.locked) {
+      placedUnits.push(unit);
+      continue;
+    }
+
+    const initialOverlap = getOverlapAreaAgainstPlaced(
+      unit.x,
+      unit.y,
+      unit.w,
+      unit.h,
+      padX,
+      padY
+    );
+
+    if (initialOverlap <= 0) {
+      placedUnits.push(unit);
+      continue;
+    }
+
+    // Tentukan jangkar induk bila ada agar G4/G5 yang digeser tetap dekat induknya
+    const parentId = parentOf.get(unit.primary.id);
+    const parentNode = parentId ? byId.get(parentId) : undefined;
+    const parentSz = parentNode
+      ? estimateSmartNodeBoxSize(parentNode, displayMode, photoSize, cardScale)
+      : undefined;
+    const anchorX =
+      parentNode && parentSz
+        ? parentNode.x + parentSz.w / 2 - unit.w / 2
+        : unit.idealX;
+    const anchorY =
+      parentNode && parentSz
+        ? parentNode.y + parentSz.h / 2 - unit.h / 2
+        : unit.idealY;
+
+    const stepX = Math.max(18, Math.round(Math.min(unit.w, 120) * 0.34));
+    const stepY = Math.max(16, Math.round(Math.min(unit.h, 120) * 0.42));
+
+    let bestX = unit.x;
+    let bestY = unit.y;
+    let foundClean = false;
+    let bestCleanScore = Infinity;
+    let bestFallbackOverlap = initialOverlap;
+    let bestFallbackScore = Infinity;
+
+    // Pindai 4 arah & cincin spiral di sekitar posisi ideal + posisi induk (bawah, kanan, kiri, atas, diagonal)
+    const seeds: Array<{ sx: number; sy: number }> = [{ sx: unit.idealX, sy: unit.idealY }];
+    if (Math.hypot(anchorX - unit.idealX, anchorY - unit.idealY) > 24) {
+      seeds.push({
+        sx: Math.round((unit.idealX + anchorX) / 2),
+        sy: Math.round((unit.idealY + anchorY) / 2),
+      });
+    }
+
+    const maxRing = unit.gen > anchorMaxGen ? 12 : 7;
+    for (const seed of seeds) {
+      for (let ring = 1; ring <= maxRing; ring++) {
+        const offsets: Array<[number, number]> = [];
+        for (let r = -ring; r <= ring; r++) {
+          for (let c = -ring; c <= ring; c++) {
+            if (Math.max(Math.abs(r), Math.abs(c)) !== ring) continue;
+            offsets.push([c * stepX, r * stepY]);
+          }
+        }
+        // Tambahkan geseran tepat seukuran tinggi/lebar kartu untuk menukar posisi langsung di ruang kosong sebelah
+        if (ring === 1) {
+          offsets.push(
+            [unit.w + padX, 0],
+            [-(unit.w + padX), 0],
+            [0, unit.h + padY],
+            [0, -(unit.h + padY)],
+            [Math.round(unit.w * 0.6), unit.h + padY],
+            [-Math.round(unit.w * 0.6), unit.h + padY],
+            [Math.round(unit.w * 0.6), -(unit.h + padY)],
+            [-Math.round(unit.w * 0.6), -(unit.h + padY)]
+          );
+        }
+
+        for (const [ox, oy] of offsets) {
+          const cx = Math.max(minLeftX, Math.min(maxAllowedX, Math.round(seed.sx + ox)));
+          const cy = Math.max(minTopY, Math.min(maxAllowedY, Math.round(seed.sy + oy)));
+
+          const overlapArea = getOverlapAreaAgainstPlaced(
+            cx,
+            cy,
+            unit.w,
+            unit.h,
+            padX,
+            padY
+          );
+
+          const distIdeal = Math.hypot(cx - unit.idealX, cy - unit.idealY);
+          const distParent = Math.hypot(cx - anchorX, cy - anchorY);
+          const distRadial = opts.radialCenter
+            ? Math.abs(
+                Math.hypot(cx + unit.w / 2 - opts.radialCenter.x, cy + unit.h / 2 - opts.radialCenter.y) -
+                  Math.hypot(
+                    unit.idealX + unit.w / 2 - opts.radialCenter.x,
+                    unit.idealY + unit.h / 2 - opts.radialCenter.y
+                  )
+              ) * 0.3
+            : 0;
+          const score = distIdeal + 0.45 * distParent + distRadial;
+
+          if (overlapArea <= 0) {
+            if (!foundClean || score < bestCleanScore) {
+              foundClean = true;
+              bestCleanScore = score;
+              bestX = cx;
+              bestY = cy;
+            }
+          } else if (!foundClean) {
+            if (
+              overlapArea < bestFallbackOverlap * 0.96 ||
+              (Math.abs(overlapArea - bestFallbackOverlap) < 12 && score < bestFallbackScore)
+            ) {
+              bestFallbackOverlap = overlapArea;
+              bestFallbackScore = score;
+              bestX = cx;
+              bestY = cy;
+            }
+          }
+        }
+        if (foundClean && ring >= 2) break;
+      }
+      if (foundClean) break;
+    }
+
+    unit.x = bestX;
+    unit.y = bestY;
+    placedUnits.push(unit);
+  }
+
+  // Sentuhan akhir ringan bila kanvas sangat padat: dorong pasangan yang masih bersinggungan halus
+  for (let pass = 0; pass < 6; pass++) {
+    let anyMoved = false;
+    for (let i = 0; i < placedUnits.length; i++) {
+      for (let j = i + 1; j < placedUnits.length; j++) {
+        const a = placedUnits[i];
+        const b = placedUnits[j];
+        const ox = Math.min(a.x + a.w + 4, b.x + b.w) - Math.max(a.x, b.x - 4);
+        const oy = Math.min(a.y + a.h + 4, b.y + b.h) - Math.max(a.y, b.y - 4);
+        if (ox > 0 && oy > 0) {
+          const mover = b.locked ? a : b;
+          const anchor = mover === b ? a : b;
+          if (mover.locked) continue;
+          const maxMX = Math.max(minLeftX, boardWidth - rightMargin - mover.w);
+          const maxMY = Math.max(minTopY, boardHeight - bottomMargin - mover.h);
+          if (ox < oy) {
+            const dir = mover.x + mover.w / 2 >= anchor.x + anchor.w / 2 ? 1 : -1;
+            mover.x = Math.max(minLeftX, Math.min(maxMX, Math.round(mover.x + dir * (ox * 0.7 + 3))));
+          } else {
+            const dir = mover.y + mover.h / 2 >= anchor.y + anchor.h / 2 ? 1 : -1;
+            mover.y = Math.max(minTopY, Math.min(maxMY, Math.round(mover.y + dir * (oy * 0.7 + 3))));
+          }
+          anyMoved = true;
+        }
+      }
+    }
+    if (!anyMoved) break;
+  }
+
+  // Terapkan koordinat final tiap unit kembali ke semua node anggotanya (suami-istri tetap menempel presisi!)
+  placedUnits.forEach((u) => {
+    u.members.forEach((m) => {
+      m.node.x = Math.round(u.x + m.dx);
+      m.node.y = Math.round(u.y + m.dy);
+    });
+  });
+
+  return cloned;
+}
+
+// Menjaga seluruh pohon tetap di dalam batas kertas lalu menyelaraskan tabrakan 4-arah agar G4/G5 tidak menumpuk!
 function fitNodesInsideBoard(
   nodes: InteractiveNode[],
   edges: InteractiveEdge[],
@@ -2805,7 +3497,14 @@ function fitNodesInsideBoard(
   boardHeight: number,
   cardW: number,
   cardH: number,
-  minLeftX = 20
+  minLeftX = 20,
+  solverOpts?: {
+    displayMode: CardDisplayMode;
+    photoSize: PhotoFrameSize;
+    cardScale: number;
+    padX?: number;
+    padY?: number;
+  }
 ): { nodes: InteractiveNode[]; edges: InteractiveEdge[] } {
   if (nodes.length === 0) return { nodes, edges };
 
@@ -2824,7 +3523,7 @@ function fitNodesInsideBoard(
   const availSpanX = Math.max(10, maxBoundX - minBoundX);
   const availSpanY = Math.max(10, maxBoundY - minBoundY);
 
-  // Kompres proporsional seluruh posisi X jika lebar total melebihi kertas (sehingga tidak ada kartu bertumpuk di tepi kanan)
+  // Kompres halus bila melebihi kertas (maksimal batas lembut, lalu rapikan benturan dengan solver 4-arah!)
   const scaleX = curSpanX > availSpanX && curSpanX > 0 ? availSpanX / curSpanX : 1;
   const scaleY = curSpanY > availSpanY && curSpanY > 0 ? availSpanY / curSpanY : 1;
 
@@ -2850,6 +3549,28 @@ function fitNodesInsideBoard(
       y: Math.max(minBoundY, Math.min(maxBoundY, Math.round(mappedY))),
     };
   });
+
+  if (solverOpts) {
+    const cleanNodes = resolveCollisionsNearParents4Dir(
+      adjusted,
+      edges,
+      boardWidth,
+      boardHeight,
+      solverOpts.displayMode,
+      solverOpts.photoSize,
+      solverOpts.cardScale,
+      {
+        minLeftX,
+        rightMargin: 20,
+        minTopY: 64,
+        bottomMargin: 22,
+        padX: solverOpts.padX ?? 8,
+        padY: solverOpts.padY ?? 10,
+        anchorMaxGen: 2,
+      }
+    );
+    return { nodes: cleanNodes, edges };
+  }
 
   return { nodes: adjusted, edges };
 }

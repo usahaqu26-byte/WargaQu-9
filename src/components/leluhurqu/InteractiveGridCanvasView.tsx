@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   LayoutGrid,
   Move,
-  Wand2,
   Sun,
   Moon,
   Plus,
@@ -50,6 +49,10 @@ import {
   Eye,
   EyeOff,
   RotateCw,
+  ChevronUp,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { FamilyMember, TrahCategory } from './LeluhurQuView';
 import { MonetizationService } from '../../services/monetizationService';
@@ -80,8 +83,10 @@ import {
   SmartPresetId,
   GuideOverlayMode,
   analyzeTrahForSmartLayout,
+  buildSmartGalleryOptions,
   computeOptimalCardScale,
   computeMergedCardMetrics,
+  evaluateSmartLayoutQuality,
   getUniformSubCardSize,
   formatMemberLifeSubtitle,
   generateSmartLayoutFromTable,
@@ -1508,7 +1513,9 @@ export const InteractiveGridCanvasView: React.FC<
   defaultPhotoShape = 'kotak',
   enterStudioTrigger = 0,
 }) => {
-  // Mode Layout & Interaksi
+  // Mode Ruang Kerja ('smart' bebas alat edit vs 'edit' manual opsional) & Interaksi
+  const [studioWorkspaceMode, setStudioWorkspaceMode] = useState<'smart' | 'edit'>('smart');
+  const [isSmartGalleryOpen, setIsSmartGalleryOpen] = useState<boolean>(true);
   const [layoutMode, setLayoutMode] = useState<GridLayoutMode>('manual');
   const [isMultiSelectMode, setIsMultiSelectMode] = useState<boolean>(false);
   const [snapToGrid, setSnapToGrid] = useState<boolean>(true);
@@ -1568,11 +1575,12 @@ export const InteractiveGridCanvasView: React.FC<
     getDefaultCaptionInfo(activeTrah.name, defaultCuratorName, defaultCreatedYear)
   );
 
-  // Kunci Geser Aman (Hold 2 detik untuk tampilkan panah ▲▼◀▶ & buka geser kartu)
+  // Kunci Geser Aman (Hold 2 detik atau tombol Pindah untuk buka popup panah ▲▼◀▶ & geser kartu)
   const [safeHoldMove, setSafeHoldMove] = useState<boolean>(true);
   const [holdingNodeId, setHoldingNodeId] = useState<string | null>(null);
   const [moveUnlockedIds, setMoveUnlockedIds] = useState<string[]>([]);
   const [moveAnchorId, setMoveAnchorId] = useState<string | null>(null);
+  const [moveStepPx, setMoveStepPx] = useState<5 | 20 | 40>(20);
   const [activeEdgeIdx, setActiveEdgeIdx] = useState<number | null>(null);
 
   // Panel Edit Kiri & Tab Panel ('edit' | 'designs' | 'smart' | 'style')
@@ -3437,11 +3445,59 @@ export const InteractiveGridCanvasView: React.FC<
   );
 
   // =========================================================================
-  // SMART REKOMENDASI TATA LETAK BERBASIS DATA TABEL (ANTI-SILANG)
+  // SMART REKOMENDASI TATA LETAK BERBASIS DATA TABEL (ANTI-SILANG & 4-ARAH)
   // =========================================================================
   const smartAnalysis = useMemo(
     () => analyzeTrahForSmartLayout(windowedMembers),
     [windowedMembers]
+  );
+
+  const smartGalleryOptions = useMemo(
+    () =>
+      buildSmartGalleryOptions(
+        windowedMembers,
+        boardWidth,
+        boardHeight,
+        cardDisplayMode,
+        photoFrameSize,
+        cardGapMm
+      ),
+    [windowedMembers, boardWidth, boardHeight, cardDisplayMode, photoFrameSize, cardGapMm]
+  );
+
+  const currentLayoutQuality = useMemo(
+    () =>
+      evaluateSmartLayoutQuality(
+        nodes,
+        edges,
+        boardWidth,
+        boardHeight,
+        cardDisplayMode,
+        photoFrameSize,
+        cardScale
+      ),
+    [nodes, edges, boardWidth, boardHeight, cardDisplayMode, photoFrameSize, cardScale]
+  );
+
+  const switchWorkspaceMode = useCallback(
+    (nextMode: 'smart' | 'edit') => {
+      setStudioWorkspaceMode(nextMode);
+      if (nextMode === 'smart') {
+        setSelectedIds([]);
+        setMoveUnlockedIds([]);
+        setMoveAnchorId(null);
+        setIsMultiSelectMode(false);
+        setConnectFromId(null);
+        setActiveEdgeIdx(null);
+        setIsPanelOpen(false);
+        setIsSmartGalleryOpen(true);
+        showNotification('Mode Smart aktif: pilih tata letak siap cetak tanpa alat edit!');
+      } else {
+        setLayoutMode('manual');
+        showNotification('Mode Edit Manual aktif: bebas geser, tambah & atur detail kartu.');
+      }
+    },
+    [showNotification]
   );
 
   const handleApplySmartPreset = useCallback(
@@ -3450,7 +3506,8 @@ export const InteractiveGridCanvasView: React.FC<
       overrideLockPaper?: boolean,
       overrideMembers?: FamilyMember[],
       overrideGapMm?: number,
-      overrideModPos?: 'top' | 'center'
+      overrideModPos?: 'top' | 'center',
+      preserveCardAppearance?: boolean
     ) => {
       const preset = SMART_LAYOUT_PRESETS.find((p) => p.id === presetId);
       if (!preset) return;
@@ -3482,7 +3539,7 @@ export const InteractiveGridCanvasView: React.FC<
         setPaperSize(nextPaper);
       }
 
-      if (applyRecommendedStyle) {
+      if (applyRecommendedStyle && !preserveCardAppearance) {
         if (!keepCurrentPaper) {
           nextOrient = preset.recommendedOrientation;
           setPaperOrientation(nextOrient);
@@ -3499,6 +3556,8 @@ export const InteractiveGridCanvasView: React.FC<
         if (preset.recommendedGenGradient) {
           setGenGradientPalette(preset.recommendedGenGradient as GenGradientPaletteId);
         }
+      } else if (preset.recommendedLineStyle && !preserveCardAppearance) {
+        setLineStyle(preset.recommendedLineStyle);
       }
 
       const targetPaperObj = GRID_PAPER_MAP[nextPaper];
@@ -3507,19 +3566,20 @@ export const InteractiveGridCanvasView: React.FC<
       const targetH =
         nextOrient === 'landscape' ? targetPaperObj.pxH : targetPaperObj.pxW;
 
-      // Hitung skala kartu/foto otomatis agar kertas pilihan (mis. A3) terisi pas: tidak terlalu kosong & tidak menumpuk
-      const nextScale = applyRecommendedStyle
-        ? computeOptimalCardScale(
-            sourceMembers,
-            targetW,
-            targetH,
-            nextCardMode,
-            nextPhotoSize,
-            presetId
-          )
-        : cardScale;
+      // Hitung skala kartu/foto otomatis lewat simulasi nyata agar bebas tumpuk & penuh proporsional
+      const nextScale =
+        applyRecommendedStyle || preserveCardAppearance
+          ? computeOptimalCardScale(
+              sourceMembers,
+              targetW,
+              targetH,
+              nextCardMode,
+              nextPhotoSize,
+              presetId
+            )
+          : cardScale;
 
-      if (applyRecommendedStyle) {
+      if (applyRecommendedStyle || preserveCardAppearance) {
         setCardScale(nextScale);
       }
 
@@ -3580,7 +3640,7 @@ export const InteractiveGridCanvasView: React.FC<
       persistCurrentDesign(result.nodes, result.edges, refreshedText, nextScale, presetId);
 
       showNotification(
-        `Tata letak "${preset.title}" ditata pas di ${targetPaperObj.label} (Skala Foto ${Math.round(
+        `Tata letak "${preset.badge}" ditata pas di ${targetPaperObj.label} (Skala ${Math.round(
           nextScale * 100
         )}%)!`
       );
@@ -3599,6 +3659,73 @@ export const InteractiveGridCanvasView: React.FC<
       persistCurrentDesign,
       pushUndoSnapshot,
       showNotification,
+    ]
+  );
+
+  // Saat pengguna mengubah Kertas / Orientasi / Mode Card di Mode Smart, otomatis tata ulang dengan skala bebas-tumpuk
+  const applySmartLiveSetting = useCallback(
+    (patch: {
+      paper?: GridPaperSize;
+      orient?: GridPaperOrientation;
+      cardMode?: CardDisplayMode;
+      photoSize?: PhotoFrameSize;
+    }) => {
+      const nextPaper = patch.paper ?? paperSize;
+      const nextOrient = patch.orient ?? paperOrientation;
+      const nextMode = patch.cardMode ?? cardDisplayMode;
+      const nextPhoto = patch.photoSize ?? photoFrameSize;
+
+      if (patch.paper) setPaperSize(nextPaper);
+      if (patch.orient) setPaperOrientation(nextOrient);
+      if (patch.cardMode) setCardDisplayMode(nextMode);
+      if (patch.photoSize) setPhotoFrameSize(nextPhoto);
+
+      if (studioWorkspaceMode !== 'smart' || windowedMembers.length === 0) return;
+
+      const presetId: SmartPresetId =
+        activePresetId || smartAnalysis.topPresetId || 'hierarchy_grid_fill';
+      const pObj = GRID_PAPER_MAP[nextPaper];
+      const tW = nextOrient === 'landscape' ? pObj.pxW : pObj.pxH;
+      const tH = nextOrient === 'landscape' ? pObj.pxH : pObj.pxW;
+      const optScale = computeOptimalCardScale(
+        windowedMembers,
+        tW,
+        tH,
+        nextMode,
+        nextPhoto,
+        presetId
+      );
+      setCardScale(optScale);
+      const rebuilt = rebuildSmartLayoutPreservingVisuals(
+        windowedMembers,
+        presetId,
+        nodes,
+        tW,
+        tH,
+        nextMode,
+        nextPhoto,
+        optScale,
+        cardGapMm,
+        modularG12Position
+      );
+      setNodes(rebuilt.nodes);
+      setEdges(rebuilt.edges);
+      persistCurrentDesign(rebuilt.nodes, rebuilt.edges, undefined, optScale, presetId);
+    },
+    [
+      paperSize,
+      paperOrientation,
+      cardDisplayMode,
+      photoFrameSize,
+      studioWorkspaceMode,
+      windowedMembers,
+      activePresetId,
+      smartAnalysis.topPresetId,
+      nodes,
+      cardGapMm,
+      modularG12Position,
+      rebuildSmartLayoutPreservingVisuals,
+      persistCurrentDesign,
     ]
   );
 
@@ -4390,7 +4517,7 @@ export const InteractiveGridCanvasView: React.FC<
       return;
     }
 
-    if (isPanMode) {
+    if (isPanMode || studioWorkspaceMode === 'smart') {
       return;
     }
     e.stopPropagation();
@@ -4522,7 +4649,7 @@ export const InteractiveGridCanvasView: React.FC<
       };
       setIsDraggingCards(true);
       showNotification(
-        'Kartu terbuka! Gunakan panah ▲▼◀▶ atau seret kartu untuk memindahkan.'
+        'Kartu terbuka! Gunakan popup panah ▲▼◀▶ atau seret kartu untuk memindahkan.'
       );
     }, HOLD_DURATION_MS);
 
@@ -4577,8 +4704,14 @@ export const InteractiveGridCanvasView: React.FC<
     if (e.touches.length === 1) {
       const t = e.touches[0];
       const vt = viewTransformRef.current;
-      // 1 jari di mode Geser Kanvas ATAU sentuhan di area kosong kanvas langsung menggeser kanvas dengan halus!
-      if (isPanMode || e.target === viewportRef.current || e.target === boardRef.current || (e.target as HTMLElement)?.dataset?.stageBg === 'true') {
+      // 1 jari di Mode Smart, mode Geser Kanvas, ATAU area kosong kanvas langsung menggeser kanvas dengan halus!
+      if (
+        studioWorkspaceMode === 'smart' ||
+        isPanMode ||
+        e.target === viewportRef.current ||
+        e.target === boardRef.current ||
+        (e.target as HTMLElement)?.dataset?.stageBg === 'true'
+      ) {
         panDragRef.current = {
           active: true,
           startClientX: t.clientX,
@@ -4626,7 +4759,7 @@ export const InteractiveGridCanvasView: React.FC<
     setActiveEdgeIdx(null);
 
     const vt = viewTransformRef.current;
-    if (isPanMode || e.button === 1 || e.button === 2) {
+    if (studioWorkspaceMode === 'smart' || isPanMode || e.button === 1 || e.button === 2) {
       e.preventDefault();
       panDragRef.current = {
         active: true,
@@ -5121,6 +5254,7 @@ export const InteractiveGridCanvasView: React.FC<
     setNodes(nextNodes);
     setSelectedIds([id]);
     setLayoutMode('manual');
+    setStudioWorkspaceMode('edit');
     setPanelTab('edit');
     setIsPanelOpen(true);
     persistCurrentDesign(nextNodes, edges);
@@ -5311,15 +5445,9 @@ export const InteractiveGridCanvasView: React.FC<
 
   const stableHandlersRef = useRef({
     startNodeInteraction,
-    startNudgeRepeat,
-    stopNudgeRepeat,
-    handleUnmergeSelectedCard,
   });
   stableHandlersRef.current = {
     startNodeInteraction,
-    startNudgeRepeat,
-    stopNudgeRepeat,
-    handleUnmergeSelectedCard,
   };
 
   const stableStartCardInteraction = useCallback(
@@ -5328,26 +5456,6 @@ export const InteractiveGridCanvasView: React.FC<
     },
     []
   );
-
-  const stableStartNudgeRepeat = useCallback(
-    (targets: string[], dx: number, dy: number) => {
-      stableHandlersRef.current.startNudgeRepeat(targets, dx, dy);
-    },
-    []
-  );
-
-  const stableStopNudgeRepeat = useCallback(() => {
-    stableHandlersRef.current.stopNudgeRepeat();
-  }, []);
-
-  const stableLockArrows = useCallback(() => {
-    setMoveUnlockedIds([]);
-    setMoveAnchorId(null);
-  }, []);
-
-  const stableUnmergeCard = useCallback((id: string) => {
-    stableHandlersRef.current.handleUnmergeSelectedCard(id);
-  }, []);
 
   // Memoized Rute Garis Silsilah (tidak dihitung ulang saat zoom, select, panel, atau drag!)
   const computedEdges = useMemo<ComputedCanvasEdgeItem[]>(() => {
@@ -5508,7 +5616,7 @@ export const InteractiveGridCanvasView: React.FC<
             : 'bg-white border-stone-200'
         }`}
       >
-        {/* Kiri: Auto (Smart) / Manual, Pilih Banyak, Tambah Kartu, Sambung Garis */}
+        {/* Kiri: Pemisah Tegas Mode Smart (Bersih) vs Edit Manual (Opsional) */}
         <div className="flex items-center gap-1.5 flex-wrap">
           <div
             className={`p-0.5 rounded-xl border flex items-center gap-0.5 ${
@@ -5519,154 +5627,161 @@ export const InteractiveGridCanvasView: React.FC<
           >
             <button
               type="button"
-              onClick={() => {
-                setLayoutMode('auto');
-                if (windowedMembers.length > 0) {
-                  pushUndoSnapshot('Tata Letak Auto');
-                  const chosenPreset =
-                    activePresetId ||
-                    (lockSelectedPaper && windowedMembers.length > 16
-                      ? 'hierarchy_grid_fill'
-                      : smartAnalysis.topPresetId);
-                  const optScale = computeOptimalCardScale(
-                    windowedMembers,
-                    boardWidth,
-                    boardHeight,
-                    cardDisplayMode,
-                    photoFrameSize,
-                    chosenPreset
-                  );
-                  setCardScale(optScale);
-                  const rebuilt = rebuildSmartLayoutPreservingVisuals(
-                    windowedMembers,
-                    chosenPreset,
-                    nodes,
-                    boardWidth,
-                    boardHeight,
-                    cardDisplayMode,
-                    photoFrameSize,
-                    optScale,
-                    cardGapMm,
-                    modularG12Position
-                  );
-                  setNodes(rebuilt.nodes);
-                  setEdges(rebuilt.edges);
-                  persistCurrentDesign(rebuilt.nodes, rebuilt.edges, undefined, optScale, chosenPreset);
-                  showNotification(
-                    `Tata letak otomatis dirapikan pas di ${paperDim.label} (Foto ${Math.round(
-                      optScale * 100
-                    )}%)!`
-                  );
-                } else {
-                  generateFromQuickText();
-                }
-              }}
-              className={`px-2 py-1 rounded-lg text-[11px] font-extrabold flex items-center gap-1 transition ${
-                layoutMode === 'auto'
-                  ? 'bg-amber-500 text-slate-950 shadow-xs'
-                  : isDark
-                  ? 'text-slate-300 hover:text-white'
-                  : 'text-stone-600 hover:text-stone-900'
-              }`}
-              title="Tata ulang otomatis rapi dari data Tabel"
-            >
-              <Wand2 className="w-3 h-3" />
-              <span>Auto</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setLayoutMode('manual');
-                showNotification('Mode Manual: Geser bebas, Gabung Card & Group!');
-              }}
-              className={`px-2 py-1 rounded-lg text-[11px] font-extrabold flex items-center gap-1 transition ${
-                layoutMode === 'manual'
+              onClick={() => switchWorkspaceMode('smart')}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold flex items-center gap-1 whitespace-nowrap shrink-0 transition ${
+                studioWorkspaceMode === 'smart'
                   ? 'bg-emerald-500 text-slate-950 shadow-xs'
                   : isDark
                   ? 'text-slate-300 hover:text-white'
                   : 'text-stone-600 hover:text-stone-900'
               }`}
-              title="Mode Manual: Geser kartu & rapikan sesuka hati"
+              title="Mode Smart Instan: pilih tata letak otomatis bebas tumpukan tanpa alat edit"
+            >
+              <Sparkles className="w-3 h-3" />
+              <span>Mode Smart</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => switchWorkspaceMode('edit')}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold flex items-center gap-1 whitespace-nowrap shrink-0 transition ${
+                studioWorkspaceMode === 'edit'
+                  ? 'bg-amber-500 text-slate-950 shadow-xs'
+                  : isDark
+                  ? 'text-slate-300 hover:text-white'
+                  : 'text-stone-600 hover:text-stone-900'
+              }`}
+              title="Mode Edit Manual: buka semua alat geser, tambah kartu & sambung garis"
             >
               <Move className="w-3 h-3" />
-              <span>Manual</span>
+              <span>Edit Manual</span>
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              const next = !isMultiSelectMode;
-              setIsMultiSelectMode(next);
-              if (next) {
-                cancelHoldTimer();
-                showNotification('Mode Pilih Checklist aktif: ketuk langsung kartu untuk memilih banyak!');
-              }
-            }}
-            className={`px-2 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1 whitespace-nowrap transition ${
-              isMultiSelectMode
-                ? 'bg-sky-500 text-slate-950 border-sky-400 shadow-xs'
-                : isDark
-                ? 'bg-slate-800 border-slate-700 text-slate-200 hover:border-sky-400'
-                : 'bg-stone-100 border-stone-300 text-stone-700'
-            }`}
-            title="Ketuk untuk memilih beberapa kartu langsung tanpa menekan lama"
-          >
-            <CheckSquare className="w-3.5 h-3.5" />
-            <span>Pilih {selectedIds.length > 0 ? `(${selectedIds.length})` : ''}</span>
-          </button>
+          {studioWorkspaceMode === 'smart' ? (
+            <>
+              <div
+                className={`p-0.5 rounded-xl border flex items-center gap-0.5 ${
+                  isDark
+                    ? 'bg-slate-900 border-slate-700'
+                    : 'bg-stone-100 border-stone-200'
+                }`}
+              >
+                {(
+                  [
+                    { id: 'name_only' as const, label: 'Nama' },
+                    { id: 'photo_name' as const, label: 'Foto+Nama' },
+                    { id: 'full' as const, label: 'Lengkap' },
+                  ] as const
+                ).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => applySmartLiveSetting({ cardMode: m.id })}
+                    className={`px-2 py-1 rounded-lg text-[10.5px] font-bold whitespace-nowrap transition ${
+                      cardDisplayMode === m.id
+                        ? 'bg-amber-400 text-slate-950'
+                        : isDark
+                        ? 'text-slate-300 hover:text-white'
+                        : 'text-stone-700 hover:bg-white'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSmartGalleryOpen((v) => !v)}
+                className={`px-2.5 py-1 rounded-lg border text-[11px] font-extrabold flex items-center gap-1 whitespace-nowrap transition ${
+                  isSmartGalleryOpen
+                    ? 'bg-emerald-600 border-emerald-400 text-white'
+                    : isDark
+                    ? 'bg-slate-800 border-slate-700 text-emerald-300'
+                    : 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                }`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>Pilihan Smart ({smartGalleryOptions.length})</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !isMultiSelectMode;
+                  setIsMultiSelectMode(next);
+                  if (next) {
+                    cancelHoldTimer();
+                    showNotification('Mode Pilih Checklist aktif: ketuk langsung kartu untuk memilih banyak!');
+                  }
+                }}
+                className={`px-2 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1 whitespace-nowrap transition ${
+                  isMultiSelectMode
+                    ? 'bg-sky-500 text-slate-950 border-sky-400 shadow-xs'
+                    : isDark
+                    ? 'bg-slate-800 border-slate-700 text-slate-200 hover:border-sky-400'
+                    : 'bg-stone-100 border-stone-300 text-stone-700'
+                }`}
+                title="Ketuk untuk memilih beberapa kartu langsung tanpa menekan lama"
+              >
+                <CheckSquare className="w-3.5 h-3.5" />
+                <span>Pilih {selectedIds.length > 0 ? `(${selectedIds.length})` : ''}</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={handleUndo}
-            disabled={undoCount === 0}
-            className={`px-2 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1 whitespace-nowrap transition ${
-              undoCount === 0
-                ? isDark
-                  ? 'bg-slate-900/50 border-slate-800 text-slate-600 cursor-not-allowed'
-                  : 'bg-stone-100 border-stone-200 text-stone-400 cursor-not-allowed'
-                : isDark
-                ? 'bg-slate-800 border-amber-500/40 text-amber-300 hover:border-amber-400'
-                : 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
-            }`}
-            title="Batalkan perubahan terakhir (Ctrl+Z)"
-          >
-            <Undo2 className="w-3.5 h-3.5" />
-            <span>Undo{undoCount > 0 ? ` (${undoCount})` : ''}</span>
-          </button>
+              <button
+                type="button"
+                onClick={handleUndo}
+                disabled={undoCount === 0}
+                className={`px-2 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1 whitespace-nowrap transition ${
+                  undoCount === 0
+                    ? isDark
+                      ? 'bg-slate-900/50 border-slate-800 text-slate-600 cursor-not-allowed'
+                      : 'bg-stone-100 border-stone-200 text-stone-400 cursor-not-allowed'
+                    : isDark
+                    ? 'bg-slate-800 border-amber-500/40 text-amber-300 hover:border-amber-400'
+                    : 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
+                }`}
+                title="Batalkan perubahan terakhir (Ctrl+Z)"
+              >
+                <Undo2 className="w-3.5 h-3.5" />
+                <span>Undo{undoCount > 0 ? ` (${undoCount})` : ''}</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={addNewNode}
-            className={`px-2 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1 whitespace-nowrap ${
-              isDark
-                ? 'bg-slate-800 border-slate-700 text-emerald-300 hover:border-emerald-400'
-                : 'bg-emerald-50 border-emerald-300 text-emerald-800'
-            }`}
-            title="Tambah Kartu Anggota Baru"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Kartu</span>
-          </button>
+              <button
+                type="button"
+                onClick={addNewNode}
+                className={`px-2 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1 whitespace-nowrap ${
+                  isDark
+                    ? 'bg-slate-800 border-slate-700 text-emerald-300 hover:border-emerald-400'
+                    : 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                }`}
+                title="Tambah Kartu Anggota Baru"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Kartu</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={startConnectMode}
-            className={`px-2 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1 whitespace-nowrap ${
-              connectFromId
-                ? 'bg-amber-500 text-slate-950 border-amber-400 animate-pulse'
-                : isDark
-                ? 'bg-slate-800 border-slate-700 text-sky-300'
-                : 'bg-sky-50 border-sky-300 text-sky-800'
-            }`}
-            title="Hubungkan garis antara 2 kartu"
-          >
-            <Link2 className="w-3.5 h-3.5" />
-            <span>{connectFromId ? 'Klik Tujuan...' : 'Garis'}</span>
-          </button>
+              <button
+                type="button"
+                onClick={startConnectMode}
+                className={`px-2 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1 whitespace-nowrap ${
+                  connectFromId
+                    ? 'bg-amber-500 text-slate-950 border-amber-400 animate-pulse'
+                    : isDark
+                    ? 'bg-slate-800 border-slate-700 text-sky-300'
+                    : 'bg-sky-50 border-sky-300 text-sky-800'
+                }`}
+                title="Hubungkan garis antara 2 kartu"
+              >
+                <Link2 className="w-3.5 h-3.5" />
+                <span>{connectFromId ? 'Klik Tujuan...' : 'Garis'}</span>
+              </button>
+            </>
+          )}
         </div>
 
-        {/* Kanan: Kertas A0-A4, Laci Atur & Desain, Mode Leluasa, Cetak */}
+        {/* Kanan: Kertas A0-A4, Laci Edit (khusus Mode Edit), Studio Penuh, Cetak */}
         <div className="flex items-center gap-1.5 flex-wrap">
           <div
             className={`flex items-center rounded-lg border p-0.5 gap-0.5 ${
@@ -5678,7 +5793,7 @@ export const InteractiveGridCanvasView: React.FC<
             <FileText className="w-3 h-3 text-amber-400 ml-1" />
             <select
               value={paperSize}
-              onChange={(e) => setPaperSize(e.target.value as GridPaperSize)}
+              onChange={(e) => applySmartLiveSetting({ paper: e.target.value as GridPaperSize })}
               className={`px-1 py-0.5 rounded text-[11px] font-bold outline-hidden cursor-pointer ${
                 isDark ? 'bg-slate-900 text-amber-300' : 'bg-stone-100 text-stone-800'
               }`}
@@ -5692,11 +5807,11 @@ export const InteractiveGridCanvasView: React.FC<
             </select>
             <button
               type="button"
-              onClick={() => {
-                setPaperOrientation((o) =>
-                  o === 'landscape' ? 'portrait' : 'landscape'
-                );
-              }}
+              onClick={() =>
+                applySmartLiveSetting({
+                  orient: paperOrientation === 'landscape' ? 'portrait' : 'landscape',
+                })
+              }
               className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
                 isDark
                   ? 'bg-slate-800 text-emerald-300 hover:bg-slate-700'
@@ -5708,19 +5823,21 @@ export const InteractiveGridCanvasView: React.FC<
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setIsPanelOpen((v) => !v)}
-            className={`px-2.5 py-1 rounded-lg border text-[11px] font-extrabold flex items-center gap-1 transition shadow-xs ${
-              isPanelOpen
-                ? 'bg-amber-400 text-slate-950 border-amber-300'
-                : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 border-emerald-400/50 text-white'
-            }`}
-            title="Buka panel Smart Tata Letak, Gaya Kartu/Garis PCB, Edit & Simpan Desain"
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            <span>Atur &amp; Desain ({savedDesigns.length})</span>
-          </button>
+          {studioWorkspaceMode === 'edit' && (
+            <button
+              type="button"
+              onClick={() => setIsPanelOpen((v) => !v)}
+              className={`px-2.5 py-1 rounded-lg border text-[11px] font-extrabold flex items-center gap-1 transition shadow-xs ${
+                isPanelOpen
+                  ? 'bg-amber-400 text-slate-950 border-amber-300'
+                  : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 border-emerald-400/50 text-white'
+              }`}
+              title="Buka panel Gaya Kartu/Garis PCB, Edit & Simpan Desain"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>Atur &amp; Desain ({savedDesigns.length})</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -5780,7 +5897,7 @@ export const InteractiveGridCanvasView: React.FC<
       {/* WORKSPACE: SIDEBAR EDIT / DESAIN + KANVAS A0-A4           */}
       {/* ========================================================= */}
       <div className="flex-1 flex overflow-hidden relative print-flow-unlock">
-        {isPanelOpen && (
+        {studioWorkspaceMode === 'edit' && isPanelOpen && (
           <aside
             className={`absolute ${
               isLandscapeHud
@@ -7663,7 +7780,9 @@ export const InteractiveGridCanvasView: React.FC<
           onWheel={handleViewportWheel}
           style={{ touchAction: 'none' }}
           className={`flex-1 relative overflow-hidden touch-none select-none print-flow-unlock ${
-            isPanMode ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+            isPanMode || studioWorkspaceMode === 'smart'
+              ? 'cursor-grab active:cursor-grabbing'
+              : 'cursor-default'
           }`}
         >
           <div
@@ -8058,8 +8177,8 @@ export const InteractiveGridCanvasView: React.FC<
                       )}
                     </svg>
 
-                    {/* Layer Dot Handle Interaktif */}
-                    {(showLineDots || activeEdgeIdx !== null) && (
+                    {/* Layer Dot Handle Interaktif (Hanya muncul di Mode Edit Manual) */}
+                    {studioWorkspaceMode === 'edit' && (showLineDots || activeEdgeIdx !== null) && (
                       <svg
                         width={boardWidth}
                         height={boardHeight}
@@ -8144,13 +8263,6 @@ export const InteractiveGridCanvasView: React.FC<
                 nodes.map((node) => {
                   const isSelected = selectedIds.includes(node.id);
                   const isUnlocked = moveUnlockedIds.includes(node.id);
-                  const showArrowsHere =
-                    isUnlocked &&
-                    (moveAnchorId === node.id ||
-                      (!moveAnchorId && moveUnlockedIds[0] === node.id));
-                  const moveTargets =
-                    moveUnlockedIds.length > 0 ? moveUnlockedIds : [node.id];
-                  const nudgeStep = snapToGrid ? SNAP_SIZE : 10;
 
                   return (
                     <GridCardItem
@@ -8160,9 +8272,6 @@ export const InteractiveGridCanvasView: React.FC<
                       isConnectSource={connectFromId === node.id}
                       isHolding={holdingNodeId === node.id}
                       isUnlocked={isUnlocked}
-                      showArrowsHere={showArrowsHere}
-                      moveTargets={moveTargets}
-                      nudgeStep={nudgeStep}
                       cardDisplayMode={cardDisplayMode}
                       photoFrameSize={photoFrameSize}
                       photoShape={photoShape}
@@ -8179,10 +8288,6 @@ export const InteractiveGridCanvasView: React.FC<
                       exportPhotoMap={exportPhotoMap}
                       registerNodeEl={registerNodeEl}
                       onStartInteraction={stableStartCardInteraction}
-                      onStartNudgeRepeat={stableStartNudgeRepeat}
-                      onStopNudgeRepeat={stableStopNudgeRepeat}
-                      onLockArrows={stableLockArrows}
-                      onUnmergeCard={stableUnmergeCard}
                     />
                   );
                 })}
@@ -8333,7 +8438,7 @@ export const InteractiveGridCanvasView: React.FC<
         {/* 1 & 2. HUD MODE LANSKAP ALA GAME (DOCK JEMPOL KIRI & KANAN VERTIKAL) */}
         {isFocusMode && !isHudHidden && isLandscapeHud && (
           <>
-            {/* Dock Vertikal Kiri (Layar Miring, Keluar, Pilih, Geser, Undo, Tambah, Garis) */}
+            {/* Dock Vertikal Kiri (Layar Miring, Keluar, Mode Smart/Edit, dan alat Edit bila di Mode Edit) */}
             <div className="absolute left-2 top-2 bottom-2 z-40 flex flex-col justify-between items-center gap-1.5 pointer-events-none print:hidden">
               <div className="pointer-events-auto flex flex-col items-center gap-1 p-1 rounded-2xl bg-stone-900/88 border border-stone-700/90 backdrop-blur-md shadow-xl">
                 <button
@@ -8360,84 +8465,120 @@ export const InteractiveGridCanvasView: React.FC<
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    const next = !isMultiSelectMode;
-                    setIsMultiSelectMode(next);
-                    if (next) cancelHoldTimer();
-                  }}
-                  className={`w-10 h-9 rounded-xl flex flex-col items-center justify-center text-[8.5px] font-bold transition ${
-                    isMultiSelectMode
-                      ? 'bg-sky-500 text-stone-950'
-                      : 'text-sky-300 hover:bg-stone-800'
+                  onClick={() =>
+                    switchWorkspaceMode(
+                      studioWorkspaceMode === 'smart' ? 'edit' : 'smart'
+                    )
+                  }
+                  className={`w-10 h-9 rounded-xl flex flex-col items-center justify-center text-[8px] font-black transition ${
+                    studioWorkspaceMode === 'smart'
+                      ? 'bg-emerald-500 text-slate-950'
+                      : 'bg-amber-500 text-slate-950'
                   }`}
-                  title="Mode Pilih Checklist Banyak Kartu"
+                  title={
+                    studioWorkspaceMode === 'smart'
+                      ? 'Pindah ke Edit Manual'
+                      : 'Kembali ke Mode Smart Bersih'
+                  }
                 >
-                  <CheckSquare className="w-3.5 h-3.5" />
-                  <span>Pilih</span>
+                  {studioWorkspaceMode === 'smart' ? (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Smart</span>
+                    </>
+                  ) : (
+                    <>
+                      <Move className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </>
+                  )}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsPanMode((v) => !v);
-                    showNotification(
-                      !isPanMode
-                        ? 'Mode Geser Kanvas Aktif'
-                        : 'Mode Edit Kartu Aktif'
-                    );
-                  }}
-                  className={`w-10 h-9 rounded-xl flex flex-col items-center justify-center text-[8.5px] font-bold transition ${
-                    isPanMode
-                      ? 'bg-sky-500 text-slate-950'
-                      : 'text-stone-300 hover:bg-stone-800'
-                  }`}
-                  title="Mode Geser Kanvas (Hand Tool)"
-                >
-                  <Hand className="w-3.5 h-3.5" />
-                  <span>Geser</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleUndo}
-                  disabled={undoCount === 0}
-                  className={`w-10 h-8 rounded-xl flex flex-col items-center justify-center text-[8.5px] font-bold ${
-                    undoCount === 0
-                      ? 'text-stone-600 cursor-not-allowed'
-                      : 'text-amber-300 hover:bg-stone-800'
-                  }`}
-                  title="Undo Perubahan Terakhir"
-                >
-                  <Undo2 className="w-3.5 h-3.5" />
-                  <span>Undo</span>
-                </button>
+                {studioWorkspaceMode === 'edit' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !isMultiSelectMode;
+                        setIsMultiSelectMode(next);
+                        if (next) cancelHoldTimer();
+                      }}
+                      className={`w-10 h-9 rounded-xl flex flex-col items-center justify-center text-[8.5px] font-bold transition ${
+                        isMultiSelectMode
+                          ? 'bg-sky-500 text-stone-950'
+                          : 'text-sky-300 hover:bg-stone-800'
+                      }`}
+                      title="Mode Pilih Checklist Banyak Kartu"
+                    >
+                      <CheckSquare className="w-3.5 h-3.5" />
+                      <span>Pilih</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsPanMode((v) => !v);
+                        showNotification(
+                          !isPanMode
+                            ? 'Mode Geser Kanvas Aktif'
+                            : 'Mode Edit Kartu Aktif'
+                        );
+                      }}
+                      className={`w-10 h-9 rounded-xl flex flex-col items-center justify-center text-[8.5px] font-bold transition ${
+                        isPanMode
+                          ? 'bg-sky-500 text-slate-950'
+                          : 'text-stone-300 hover:bg-stone-800'
+                      }`}
+                      title="Mode Geser Kanvas (Hand Tool)"
+                    >
+                      <Hand className="w-3.5 h-3.5" />
+                      <span>Geser</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleUndo}
+                      disabled={undoCount === 0}
+                      className={`w-10 h-8 rounded-xl flex flex-col items-center justify-center text-[8.5px] font-bold ${
+                        undoCount === 0
+                          ? 'text-stone-600 cursor-not-allowed'
+                          : 'text-amber-300 hover:bg-stone-800'
+                      }`}
+                      title="Undo Perubahan Terakhir"
+                    >
+                      <Undo2 className="w-3.5 h-3.5" />
+                      <span>Undo</span>
+                    </button>
+                  </>
+                )}
               </div>
 
-              <div className="pointer-events-auto flex flex-col items-center gap-1 p-1 rounded-2xl bg-stone-900/88 border border-stone-700/90 backdrop-blur-md shadow-xl">
-                <button
-                  type="button"
-                  onClick={addNewNode}
-                  className="w-10 h-9 rounded-xl bg-emerald-700/90 hover:bg-emerald-600 text-white flex flex-col items-center justify-center text-[8.5px] font-bold"
-                  title="Tambah Kartu Baru"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Kartu</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={startConnectMode}
-                  className={`w-10 h-9 rounded-xl flex flex-col items-center justify-center text-[8.5px] font-bold ${
-                    connectFromId
-                      ? 'bg-amber-400 text-stone-950 animate-pulse'
-                      : 'text-sky-300 hover:bg-stone-800'
-                  }`}
-                  title="Hubungkan Garis Silsilah"
-                >
-                  <Link2 className="w-3.5 h-3.5" />
-                  <span>{connectFromId ? 'Tuju' : 'Garis'}</span>
-                </button>
-              </div>
+              {studioWorkspaceMode === 'edit' && (
+                <div className="pointer-events-auto flex flex-col items-center gap-1 p-1 rounded-2xl bg-stone-900/88 border border-stone-700/90 backdrop-blur-md shadow-xl">
+                  <button
+                    type="button"
+                    onClick={addNewNode}
+                    className="w-10 h-9 rounded-xl bg-emerald-700/90 hover:bg-emerald-600 text-white flex flex-col items-center justify-center text-[8.5px] font-bold"
+                    title="Tambah Kartu Baru"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Kartu</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={startConnectMode}
+                    className={`w-10 h-9 rounded-xl flex flex-col items-center justify-center text-[8.5px] font-bold ${
+                      connectFromId
+                        ? 'bg-amber-400 text-stone-950 animate-pulse'
+                        : 'text-sky-300 hover:bg-stone-800'
+                    }`}
+                    title="Hubungkan Garis Silsilah"
+                  >
+                    <Link2 className="w-3.5 h-3.5" />
+                    <span>{connectFromId ? 'Tuju' : 'Garis'}</span>
+                  </button>
+                </div>
+              )}
             </div>
 
-            {/* Dock Vertikal Kanan (Eye, Panel Smart/Gaya/Edit, Simpan, PNG/Cetak + Minimap & Zoom) */}
+            {/* Dock Vertikal Kanan (Eye, Pilihan Smart / Alat Edit, Simpan, PNG/Cetak + Minimap & Zoom) */}
             <div className="absolute right-2 top-2 bottom-2 z-40 flex flex-col justify-between items-end gap-1.5 pointer-events-none print:hidden">
               <div className="pointer-events-auto flex items-center gap-1 p-1 rounded-2xl bg-stone-900/88 border border-stone-700/90 backdrop-blur-md shadow-xl">
                 <button
@@ -8448,51 +8589,69 @@ export const InteractiveGridCanvasView: React.FC<
                 >
                   <EyeOff className="w-3.5 h-3.5" />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPanelTab('smart');
-                    setIsPanelOpen((v) => (panelTab === 'smart' ? !v : true));
-                  }}
-                  className={`px-2 py-1.5 rounded-xl text-[10.5px] font-bold flex items-center gap-1 ${
-                    isPanelOpen && panelTab === 'smart'
-                      ? 'bg-emerald-400 text-stone-950'
-                      : 'text-amber-300 hover:bg-stone-800'
-                  }`}
-                  title="Smart Tata Letak"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPanelTab('style');
-                    setIsPanelOpen((v) => (panelTab === 'style' ? !v : true));
-                  }}
-                  className={`px-2 py-1.5 rounded-xl text-[10.5px] font-bold flex items-center gap-1 ${
-                    isPanelOpen && panelTab === 'style'
-                      ? 'bg-sky-500 text-stone-950'
-                      : 'text-sky-300 hover:bg-stone-800'
-                  }`}
-                  title="Gaya Kartu, Warna & Garis"
-                >
-                  <Palette className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPanelTab('edit');
-                    setIsPanelOpen((v) => (panelTab === 'edit' ? !v : true));
-                  }}
-                  className={`px-2 py-1.5 rounded-xl text-[10.5px] font-bold flex items-center gap-1 ${
-                    isPanelOpen && panelTab === 'edit'
-                      ? 'bg-amber-500 text-stone-950'
-                      : 'text-stone-200 hover:bg-stone-800'
-                  }`}
-                  title="Edit Kartu & Susunan"
-                >
-                  <SlidersHorizontal className="w-3.5 h-3.5" />
-                </button>
+                {studioWorkspaceMode === 'smart' ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsSmartGalleryOpen((v) => !v)}
+                    className={`px-2 py-1.5 rounded-xl text-[10.5px] font-bold flex items-center gap-1 ${
+                      isSmartGalleryOpen
+                        ? 'bg-emerald-400 text-stone-950'
+                        : 'text-emerald-300 hover:bg-stone-800'
+                    }`}
+                    title="Buka/Tutup Pilihan Tata Letak Smart"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Pilihan</span>
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPanelTab('smart');
+                        setIsPanelOpen((v) => (panelTab === 'smart' ? !v : true));
+                      }}
+                      className={`px-2 py-1.5 rounded-xl text-[10.5px] font-bold flex items-center gap-1 ${
+                        isPanelOpen && panelTab === 'smart'
+                          ? 'bg-emerald-400 text-stone-950'
+                          : 'text-amber-300 hover:bg-stone-800'
+                      }`}
+                      title="Smart Tata Letak"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPanelTab('style');
+                        setIsPanelOpen((v) => (panelTab === 'style' ? !v : true));
+                      }}
+                      className={`px-2 py-1.5 rounded-xl text-[10.5px] font-bold flex items-center gap-1 ${
+                        isPanelOpen && panelTab === 'style'
+                          ? 'bg-sky-500 text-stone-950'
+                          : 'text-sky-300 hover:bg-stone-800'
+                      }`}
+                      title="Gaya Kartu, Warna & Garis"
+                    >
+                      <Palette className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPanelTab('edit');
+                        setIsPanelOpen((v) => (panelTab === 'edit' ? !v : true));
+                      }}
+                      className={`px-2 py-1.5 rounded-xl text-[10.5px] font-bold flex items-center gap-1 ${
+                        isPanelOpen && panelTab === 'edit'
+                          ? 'bg-amber-500 text-stone-950'
+                          : 'text-stone-200 hover:bg-stone-800'
+                      }`}
+                      title="Edit Kartu & Susunan"
+                    >
+                      <SlidersHorizontal className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={handleSaveNamedDesign}
@@ -8543,7 +8702,7 @@ export const InteractiveGridCanvasView: React.FC<
                 <div className="flex items-center gap-1 rounded-2xl bg-stone-900/90 border border-stone-700/90 text-white p-1 backdrop-blur-md shadow-xl">
                   <select
                     value={paperSize}
-                    onChange={(e) => setPaperSize(e.target.value as GridPaperSize)}
+                    onChange={(e) => applySmartLiveSetting({ paper: e.target.value as GridPaperSize })}
                     className="bg-transparent text-amber-300 text-[10px] font-black px-1 py-0.5 outline-hidden cursor-pointer"
                     title="Ukuran Kertas A0-A4"
                   >
@@ -8556,9 +8715,9 @@ export const InteractiveGridCanvasView: React.FC<
                   <button
                     type="button"
                     onClick={() =>
-                      setPaperOrientation((o) =>
-                        o === 'landscape' ? 'portrait' : 'landscape'
-                      )
+                      applySmartLiveSetting({
+                        orient: paperOrientation === 'landscape' ? 'portrait' : 'landscape',
+                      })
                     }
                     className="px-1.5 py-0.5 rounded-lg bg-stone-800 text-emerald-300 text-[9.5px] font-bold"
                     title="Putar Kertas Potret / Lanskap"
@@ -8631,7 +8790,7 @@ export const InteractiveGridCanvasView: React.FC<
 
         {/* 1. Dock Melayang Kiri-Atas (Mode Studio Potret) */}
         {isFocusMode && !isHudHidden && !isLandscapeHud && (
-          <div className="absolute top-2.5 left-2.5 z-40 flex flex-wrap items-center gap-1 print:hidden max-w-[54vw]">
+          <div className="absolute top-2.5 left-2.5 z-40 flex flex-wrap items-center gap-1 print:hidden max-w-[60vw]">
             <button
               type="button"
               onClick={() => void handleExitFullscreenStudio()}
@@ -8642,10 +8801,39 @@ export const InteractiveGridCanvasView: React.FC<
               <span className="hidden sm:inline">Keluar</span>
             </button>
 
+            <div className="flex items-center rounded-xl bg-stone-900/90 border border-stone-700 backdrop-blur-md p-0.5 gap-0.5 shadow-lg">
+              <button
+                type="button"
+                onClick={() => switchWorkspaceMode('smart')}
+                className={`px-2 py-1 rounded-lg text-[10px] font-extrabold flex items-center gap-1 whitespace-nowrap shrink-0 transition ${
+                  studioWorkspaceMode === 'smart'
+                    ? 'bg-emerald-500 text-slate-950'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+                title="Mode Smart Instan (bersih tanpa alat edit)"
+              >
+                <Sparkles className="w-3 h-3" />
+                <span>Smart</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => switchWorkspaceMode('edit')}
+                className={`px-2 py-1 rounded-lg text-[10px] font-extrabold flex items-center gap-1 whitespace-nowrap shrink-0 transition ${
+                  studioWorkspaceMode === 'edit'
+                    ? 'bg-amber-500 text-slate-950'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+                title="Buka Mode Edit Manual"
+              >
+                <Move className="w-3 h-3" />
+                <span>Edit</span>
+              </button>
+            </div>
+
             <div className="flex items-center rounded-xl bg-stone-900/85 border border-stone-700 backdrop-blur-md p-0.5 gap-0.5 shadow-lg">
               <select
                 value={paperSize}
-                onChange={(e) => setPaperSize(e.target.value as GridPaperSize)}
+                onChange={(e) => applySmartLiveSetting({ paper: e.target.value as GridPaperSize })}
                 className="bg-transparent text-amber-300 text-[10.5px] font-black px-1 py-1 outline-hidden cursor-pointer"
                 title="Ukuran Kertas A0-A4"
               >
@@ -8657,11 +8845,11 @@ export const InteractiveGridCanvasView: React.FC<
               </select>
               <button
                 type="button"
-                onClick={() => {
-                  setPaperOrientation((o) =>
-                    o === 'landscape' ? 'portrait' : 'landscape'
-                  );
-                }}
+                onClick={() =>
+                  applySmartLiveSetting({
+                    orient: paperOrientation === 'landscape' ? 'portrait' : 'landscape',
+                  })
+                }
                 className="px-1.5 py-1 rounded-lg bg-stone-800 text-emerald-300 text-[9.5px] font-bold"
                 title="Putar Kertas Potret / Lanskap"
               >
@@ -8686,7 +8874,7 @@ export const InteractiveGridCanvasView: React.FC<
 
         {/* 2. Dock Melayang Kanan-Atas (Mode Studio Potret) */}
         {isFocusMode && !isHudHidden && !isLandscapeHud && (
-          <div className="absolute top-2.5 right-2.5 z-40 flex flex-wrap items-center justify-end gap-1 print:hidden max-w-[54vw]">
+          <div className="absolute top-2.5 right-2.5 z-40 flex flex-wrap items-center justify-end gap-1 print:hidden max-w-[44vw]">
             <button
               type="button"
               onClick={() => setIsHudHidden(true)}
@@ -8696,112 +8884,116 @@ export const InteractiveGridCanvasView: React.FC<
               <EyeOff className="w-3.5 h-3.5" />
             </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                const next = !isMultiSelectMode;
-                setIsMultiSelectMode(next);
-                if (next) cancelHoldTimer();
-              }}
-              className={`px-2 py-1.5 rounded-xl border backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg ${
-                isMultiSelectMode
-                  ? 'bg-sky-500 text-stone-950 border-sky-400'
-                  : 'bg-stone-900/85 text-sky-300 border-stone-700 hover:bg-stone-800'
-              }`}
-              title="Pilih Banyak Kartu Langsung"
-            >
-              <CheckSquare className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Pilih</span>
-            </button>
+            {studioWorkspaceMode === 'edit' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !isMultiSelectMode;
+                    setIsMultiSelectMode(next);
+                    if (next) cancelHoldTimer();
+                  }}
+                  className={`px-2 py-1.5 rounded-xl border backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg ${
+                    isMultiSelectMode
+                      ? 'bg-sky-500 text-stone-950 border-sky-400'
+                      : 'bg-stone-900/85 text-sky-300 border-stone-700 hover:bg-stone-800'
+                  }`}
+                  title="Pilih Banyak Kartu Langsung"
+                >
+                  <CheckSquare className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Pilih</span>
+                </button>
 
-            <button
-              type="button"
-              onClick={handleUndo}
-              disabled={undoCount === 0}
-              className={`px-2 py-1.5 rounded-xl border backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg ${
-                undoCount === 0
-                  ? 'bg-stone-900/50 text-stone-600 border-stone-800 cursor-not-allowed'
-                  : 'bg-stone-900/90 text-amber-300 border-amber-500/40 hover:bg-stone-800'
-              }`}
-              title="Undo Perubahan Terakhir (Ctrl+Z)"
-            >
-              <Undo2 className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Undo</span>
-            </button>
+                <button
+                  type="button"
+                  onClick={handleUndo}
+                  disabled={undoCount === 0}
+                  className={`px-2 py-1.5 rounded-xl border backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg ${
+                    undoCount === 0
+                      ? 'bg-stone-900/50 text-stone-600 border-stone-800 cursor-not-allowed'
+                      : 'bg-stone-900/90 text-amber-300 border-amber-500/40 hover:bg-stone-800'
+                  }`}
+                  title="Undo Perubahan Terakhir (Ctrl+Z)"
+                >
+                  <Undo2 className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Undo</span>
+                </button>
 
-            <button
-              type="button"
-              onClick={addNewNode}
-              className="px-2 py-1.5 rounded-xl bg-emerald-700/90 hover:bg-emerald-600 text-white border border-emerald-500/50 backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg"
-              title="Tambah Kartu Baru"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Kartu</span>
-            </button>
+                <button
+                  type="button"
+                  onClick={addNewNode}
+                  className="px-2 py-1.5 rounded-xl bg-emerald-700/90 hover:bg-emerald-600 text-white border border-emerald-500/50 backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg"
+                  title="Tambah Kartu Baru"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Kartu</span>
+                </button>
 
-            <button
-              type="button"
-              onClick={startConnectMode}
-              className={`px-2 py-1.5 rounded-xl border backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg ${
-                connectFromId
-                  ? 'bg-amber-400 text-stone-950 border-amber-300 animate-pulse'
-                  : 'bg-stone-900/85 text-sky-300 border-stone-700 hover:bg-stone-800'
-              }`}
-              title="Hubungkan Garis Silsilah"
-            >
-              <Link2 className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">{connectFromId ? 'Tujuan...' : 'Garis'}</span>
-            </button>
+                <button
+                  type="button"
+                  onClick={startConnectMode}
+                  className={`px-2 py-1.5 rounded-xl border backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg ${
+                    connectFromId
+                      ? 'bg-amber-400 text-stone-950 border-amber-300 animate-pulse'
+                      : 'bg-stone-900/85 text-sky-300 border-stone-700 hover:bg-stone-800'
+                  }`}
+                  title="Hubungkan Garis Silsilah"
+                >
+                  <Link2 className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">{connectFromId ? 'Tujuan...' : 'Garis'}</span>
+                </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setPanelTab('edit');
-                setIsPanelOpen((v) => (panelTab === 'edit' ? !v : true));
-              }}
-              className={`px-2 py-1.5 rounded-xl border backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg ${
-                isPanelOpen && panelTab === 'edit'
-                  ? 'bg-amber-500 text-stone-950 border-amber-400'
-                  : 'bg-stone-900/85 text-stone-200 border-stone-700 hover:bg-stone-800'
-              }`}
-              title="Panel Edit Kartu & Susunan"
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Edit</span>
-            </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPanelTab('edit');
+                    setIsPanelOpen((v) => (panelTab === 'edit' ? !v : true));
+                  }}
+                  className={`px-2 py-1.5 rounded-xl border backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg ${
+                    isPanelOpen && panelTab === 'edit'
+                      ? 'bg-amber-500 text-stone-950 border-amber-400'
+                      : 'bg-stone-900/85 text-stone-200 border-stone-700 hover:bg-stone-800'
+                  }`}
+                  title="Panel Edit Kartu & Susunan"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Edit</span>
+                </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setPanelTab('smart');
-                setIsPanelOpen((v) => (panelTab === 'smart' ? !v : true));
-              }}
-              className={`px-2 py-1.5 rounded-xl border backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg ${
-                isPanelOpen && panelTab === 'smart'
-                  ? 'bg-emerald-400 text-stone-950 border-emerald-300'
-                  : 'bg-stone-900/85 text-amber-300 border-stone-700 hover:bg-stone-800'
-              }`}
-              title="Rekomendasi Tata Letak & Desain"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span className="hidden lg:inline">Rekomendasi</span>
-            </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPanelTab('smart');
+                    setIsPanelOpen((v) => (panelTab === 'smart' ? !v : true));
+                  }}
+                  className={`px-2 py-1.5 rounded-xl border backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg ${
+                    isPanelOpen && panelTab === 'smart'
+                      ? 'bg-emerald-400 text-stone-950 border-emerald-300'
+                      : 'bg-stone-900/85 text-amber-300 border-stone-700 hover:bg-stone-800'
+                  }`}
+                  title="Rekomendasi Tata Letak & Desain"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span className="hidden lg:inline">Rekomendasi</span>
+                </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setPanelTab('style');
-                setIsPanelOpen((v) => (panelTab === 'style' ? !v : true));
-              }}
-              className={`px-2 py-1.5 rounded-xl border backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg ${
-                isPanelOpen && panelTab === 'style'
-                  ? 'bg-sky-500 text-stone-950 border-sky-400'
-                  : 'bg-stone-900/85 text-sky-300 border-stone-700 hover:bg-stone-800'
-              }`}
-              title="Warna Card, Garis PCB & Keterangan"
-            >
-              <Palette className="w-3.5 h-3.5" />
-            </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPanelTab('style');
+                    setIsPanelOpen((v) => (panelTab === 'style' ? !v : true));
+                  }}
+                  className={`px-2 py-1.5 rounded-xl border backdrop-blur-md text-[11px] font-bold flex items-center gap-1 shadow-lg ${
+                    isPanelOpen && panelTab === 'style'
+                      ? 'bg-sky-500 text-stone-950 border-sky-400'
+                      : 'bg-stone-900/85 text-sky-300 border-stone-700 hover:bg-stone-800'
+                  }`}
+                  title="Warna Card, Garis PCB & Keterangan"
+                >
+                  <Palette className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
 
             <button
               type="button"
@@ -8955,8 +9147,8 @@ export const InteractiveGridCanvasView: React.FC<
           </div>
         )}
 
-        {/* 3b. Kontrol Melayang Garis & Dot (Ubah Posisi Dot / Port Keluar-Masuk / Hapus Dot) */}
-        {activeEdgeIdx !== null && edges[activeEdgeIdx] && (
+        {/* 3b. Kontrol Melayang Garis & Dot (Hanya di Mode Edit Manual) */}
+        {studioWorkspaceMode === 'edit' && activeEdgeIdx !== null && edges[activeEdgeIdx] && (
           <div
             onClick={(e) => e.stopPropagation()}
             className={`absolute ${
@@ -9069,24 +9261,375 @@ export const InteractiveGridCanvasView: React.FC<
           </div>
         )}
 
-        {/* 4. Dock Kontekstual Melayang saat Kartu Dipilih (Normal & Studio Penuh) */}
-        {selectedIds.length > 0 && (
+        {/* 3c. Galeri Pilihan Smart Instan (Muncul di Mode Smart: Bersih, Tanpa Alat Edit) */}
+        {studioWorkspaceMode === 'smart' && !(isFocusMode && isHudHidden) && (
           <div
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
             className={`absolute ${
               isLandscapeHud
-                ? 'bottom-2.5 left-16 max-w-[54%]'
-                : 'bottom-2.5 left-2.5 max-w-[66%]'
-            } z-40 flex flex-col gap-1.5 print:hidden`}
+                ? 'bottom-2.5 left-14 max-w-[calc(100%-240px)]'
+                : 'bottom-2.5 left-2.5 max-w-[calc(100%-20px)] sm:max-w-[540px]'
+            } z-40 print:hidden`}
           >
-            <div className="flex flex-wrap items-center gap-1 rounded-2xl bg-stone-900/92 border border-amber-500/40 text-white p-1.5 backdrop-blur-md shadow-xl">
-              <span className="text-[10px] font-black text-amber-300 px-1.5">
-                {selectedIds.length} dipilih
-              </span>
+            {!isSmartGalleryOpen ? (
+              <button
+                type="button"
+                onClick={() => setIsSmartGalleryOpen(true)}
+                className="px-3 py-2 rounded-2xl bg-stone-900/92 hover:bg-stone-800 text-emerald-300 border border-emerald-500/40 backdrop-blur-md shadow-xl text-[11px] font-extrabold flex items-center gap-2 whitespace-nowrap"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                <span>Pilihan Smart ({smartGalleryOptions.length})</span>
+                <span className="text-stone-400 font-normal">·</span>
+                <span className="text-[10px] font-mono tabular-nums text-stone-200">
+                  {currentLayoutQuality.overlapCount === 0
+                    ? '0 Tumpuk'
+                    : `${currentLayoutQuality.overlapCount} Tumpuk`}
+                </span>
+              </button>
+            ) : (
+              <div className="rounded-2xl bg-stone-900/92 border border-stone-700/90 text-slate-100 p-2.5 backdrop-blur-md shadow-2xl space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-extrabold text-emerald-300 flex items-center gap-1 whitespace-nowrap">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                      <span>Pilihan Tata Letak Smart</span>
+                    </span>
+                    <span className="text-[10px] text-stone-400 font-mono tabular-nums whitespace-nowrap">
+                      {smartAnalysis.totalPeopleWithSpouses} org · {smartAnalysis.generationCount} gen ·{' '}
+                      <span
+                        className={
+                          currentLayoutQuality.overlapCount === 0
+                            ? 'text-emerald-300 font-bold'
+                            : 'text-amber-300 font-bold'
+                        }
+                      >
+                        {currentLayoutQuality.overlapCount === 0
+                          ? '0 Tumpuk'
+                          : `${currentLayoutQuality.overlapCount} Tumpuk`}
+                      </span>
+                    </span>
+                  </div>
 
-              {layoutMode === 'manual' && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    {smartAnalysis.recommendedPaper !== paperSize && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          applySmartLiveSetting({ paper: smartAnalysis.recommendedPaper })
+                        }
+                        className="px-2 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-[9.5px] font-black whitespace-nowrap"
+                        title={`Ubah ke kertas ideal ${smartAnalysis.recommendedPaper.toUpperCase()}`}
+                      >
+                        Pas {smartAnalysis.recommendedPaper.toUpperCase()}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+                      className="p-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-amber-300"
+                      title="Ganti Tema Gelap / Terang"
+                    >
+                      {isDark ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => switchWorkspaceMode('edit')}
+                      className="px-2 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 text-[10px] font-bold whitespace-nowrap"
+                      title="Masuk ke Mode Edit Manual jika ingin menggeser manual"
+                    >
+                      Edit Manual
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsSmartGalleryOpen(false)}
+                      className="p-1 rounded-lg text-stone-400 hover:text-white hover:bg-stone-800"
+                      title="Perkecil Pilihan Smart"
+                    >
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Pilihan Gaya Kartu Ringkas + Ukuran Foto */}
+                <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                  <div className="flex items-center bg-stone-800/90 rounded-lg p-0.5 gap-0.5">
+                    {(
+                      [
+                        { id: 'name_only' as const, label: 'Nama' },
+                        { id: 'photo_name' as const, label: 'Foto+Nama' },
+                        { id: 'full' as const, label: 'Lengkap' },
+                      ] as const
+                    ).map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => applySmartLiveSetting({ cardMode: m.id })}
+                        className={`px-2 py-0.5 rounded-md font-bold whitespace-nowrap transition ${
+                          cardDisplayMode === m.id
+                            ? 'bg-emerald-500 text-slate-950'
+                            : 'text-stone-300 hover:text-white'
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                  {cardDisplayMode !== 'name_only' && (
+                    <select
+                      value={photoFrameSize}
+                      onChange={(e) =>
+                        applySmartLiveSetting({
+                          photoSize: e.target.value as PhotoFrameSize,
+                        })
+                      }
+                      className="bg-stone-800 border border-stone-700 text-emerald-300 rounded-lg px-1.5 py-0.5 text-[10px] font-bold outline-hidden cursor-pointer"
+                      title="Rasio Pas Foto"
+                    >
+                      <option value="kotak">Foto 1:1</option>
+                      <option value="bulat">Bulat</option>
+                      <option value="2x3">2×3</option>
+                      <option value="3x4">3×4</option>
+                      <option value="4x6">4×6</option>
+                    </select>
+                  )}
+                </div>
+
+                {/* Daftar Pilihan Tata Letak Smart (1 Klik Siap Cetak) */}
+                <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                  {smartGalleryOptions.map((opt) => {
+                    const isActive = activePresetId === opt.preset.id;
+                    const isClean = opt.quality.overlapCount === 0 && opt.quality.outOfBoundsCount === 0;
+                    return (
+                      <button
+                        key={opt.preset.id}
+                        type="button"
+                        onClick={() =>
+                          handleApplySmartPreset(
+                            opt.preset.id,
+                            true,
+                            undefined,
+                            undefined,
+                            undefined,
+                            true
+                          )
+                        }
+                        className={`min-w-[132px] max-w-[154px] shrink-0 text-left px-2.5 py-2 rounded-xl border transition ${
+                          isActive
+                            ? 'bg-emerald-500/20 border-emerald-400 text-white shadow-xs'
+                            : opt.isTopPick
+                            ? 'bg-stone-800/95 border-amber-400/50 text-stone-100 hover:border-amber-300'
+                            : 'bg-stone-800/75 border-stone-700 text-stone-200 hover:border-emerald-400/60'
+                        }`}
+                      >
+                        <div className="text-[11px] font-extrabold truncate">
+                          {opt.preset.badge}
+                        </div>
+                        <div className="text-[9.5px] font-mono tabular-nums text-stone-300 mt-0.5 truncate">
+                          <span className={isClean ? 'text-emerald-300 font-bold' : 'text-amber-300 font-bold'}>
+                            {isClean ? '0 Tumpuk' : `${opt.quality.overlapCount} Tumpuk`}
+                          </span>
+                          {' · '}
+                          <span>{Math.round(opt.optimalScale * 100)}%</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 4. Dock Kontekstual Terpisah + Popup Pindah Interaktif (Khusus Mode Edit Manual) */}
+        {studioWorkspaceMode === 'edit' && (selectedIds.length > 0 || moveUnlockedIds.length > 0) && (
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            className={`absolute ${
+              isLandscapeHud
+                ? 'bottom-2.5 left-16 max-w-[58%]'
+                : 'bottom-2.5 left-2.5 max-w-[74%]'
+            } z-40 flex flex-col items-start gap-1.5 print:hidden`}
+          >
+            {/* Popup Interaktif Terpisah untuk Panah Pindah ▲▼◀▶ */}
+            {moveUnlockedIds.length > 0 && (() => {
+              const activeTargets = moveUnlockedIds.filter((id) => nodeMap.has(id));
+              if (activeTargets.length === 0) return null;
+              const anchorNode =
+                (moveAnchorId && nodeMap.get(moveAnchorId)) ||
+                nodeMap.get(activeTargets[0]);
+              const activeStep = moveStepPx;
+
+              return (
+                <div className="rounded-2xl bg-stone-900/95 border border-emerald-400/50 text-white p-2.5 backdrop-blur-md shadow-2xl w-[224px] space-y-2 animate-in fade-in slide-in-from-bottom-2 duration-150">
+                  <div className="flex items-center justify-between gap-2 border-b border-stone-800 pb-1.5">
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-black text-emerald-300 flex items-center gap-1 truncate">
+                        <Move className="w-3 h-3 shrink-0" />
+                        <span className="truncate">
+                          {activeTargets.length > 1
+                            ? `Pindah ${activeTargets.length} Kartu`
+                            : `Pindah: ${anchorNode?.name || 'Kartu'}`}
+                        </span>
+                      </div>
+                      {anchorNode && (
+                        <div className="text-[9px] font-mono text-stone-400">
+                          X:{Math.round(anchorNode.x)} • Y:{Math.round(anchorNode.y)}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMoveUnlockedIds([]);
+                        setMoveAnchorId(null);
+                      }}
+                      className="px-2 py-0.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-400/50 text-emerald-300 text-[9.5px] font-black shrink-0"
+                      title="Kunci kembali posisi kartu"
+                    >
+                      Kunci ✓
+                    </button>
+                  </div>
+
+                  {/* Kontrol Panah Interaktif 4 Arah + Langkah Geser */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="grid grid-cols-3 gap-1 w-[114px] shrink-0">
+                      <span />
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          startNudgeRepeat(activeTargets, 0, -activeStep);
+                        }}
+                        onTouchStart={(e) => {
+                          e.stopPropagation();
+                          startNudgeRepeat(activeTargets, 0, -activeStep);
+                        }}
+                        onMouseUp={stopNudgeRepeat}
+                        onMouseLeave={stopNudgeRepeat}
+                        onTouchEnd={stopNudgeRepeat}
+                        onTouchCancel={stopNudgeRepeat}
+                        className="h-8 rounded-lg bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 flex items-center justify-center shadow"
+                        title="Geser ke Atas"
+                      >
+                        <ChevronUp className="w-4 h-4" />
+                      </button>
+                      <span />
+
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          startNudgeRepeat(activeTargets, -activeStep, 0);
+                        }}
+                        onTouchStart={(e) => {
+                          e.stopPropagation();
+                          startNudgeRepeat(activeTargets, -activeStep, 0);
+                        }}
+                        onMouseUp={stopNudgeRepeat}
+                        onMouseLeave={stopNudgeRepeat}
+                        onTouchEnd={stopNudgeRepeat}
+                        onTouchCancel={stopNudgeRepeat}
+                        className="h-8 rounded-lg bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 flex items-center justify-center shadow"
+                        title="Geser ke Kiri"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setMoveStepPx((prev) =>
+                            prev === 5 ? 20 : prev === 20 ? 40 : 5
+                          )
+                        }
+                        className="h-8 rounded-lg bg-stone-800 hover:bg-stone-700 border border-stone-600 text-[9.5px] font-mono font-black text-amber-300 flex items-center justify-center"
+                        title="Ketuk untuk ubah jarak langkah geser (5px / 20px / 40px)"
+                      >
+                        {activeStep}px
+                      </button>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          startNudgeRepeat(activeTargets, activeStep, 0);
+                        }}
+                        onTouchStart={(e) => {
+                          e.stopPropagation();
+                          startNudgeRepeat(activeTargets, activeStep, 0);
+                        }}
+                        onMouseUp={stopNudgeRepeat}
+                        onMouseLeave={stopNudgeRepeat}
+                        onTouchEnd={stopNudgeRepeat}
+                        onTouchCancel={stopNudgeRepeat}
+                        className="h-8 rounded-lg bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 flex items-center justify-center shadow"
+                        title="Geser ke Kanan"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+
+                      <span />
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          startNudgeRepeat(activeTargets, 0, activeStep);
+                        }}
+                        onTouchStart={(e) => {
+                          e.stopPropagation();
+                          startNudgeRepeat(activeTargets, 0, activeStep);
+                        }}
+                        onMouseUp={stopNudgeRepeat}
+                        onMouseLeave={stopNudgeRepeat}
+                        onTouchEnd={stopNudgeRepeat}
+                        onTouchCancel={stopNudgeRepeat}
+                        className="h-8 rounded-lg bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 flex items-center justify-center shadow"
+                        title="Geser ke Bawah"
+                      >
+                        <ChevronDown className="w-4 h-4" />
+                      </button>
+                      <span />
+                    </div>
+
+                    <div className="flex-1 min-w-0 flex flex-col gap-1 text-[9.5px]">
+                      <div className="text-stone-300 leading-tight">
+                        Tekan / tahan panah atau seret kartu langsung di kanvas.
+                      </div>
+                      <div className="flex items-center gap-1 pt-0.5">
+                        {([5, 20, 40] as const).map((step) => (
+                          <button
+                            key={step}
+                            type="button"
+                            onClick={() => setMoveStepPx(step)}
+                            className={`flex-1 py-1 rounded-md font-bold text-[9px] border ${
+                              moveStepPx === step
+                                ? 'bg-amber-500 text-slate-950 border-amber-400'
+                                : 'bg-stone-800 text-stone-300 border-stone-700 hover:bg-stone-700'
+                            }`}
+                          >
+                            {step}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {selectedIds.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1 rounded-2xl bg-stone-900/92 border border-amber-500/40 text-white p-1.5 backdrop-blur-md shadow-xl">
+                <span className="text-[10px] font-black text-amber-300 px-1.5">
+                  {selectedIds.length} dipilih
+                </span>
+
                 <button
                   type="button"
                   onClick={() => {
+                    if (layoutMode !== 'manual') {
+                      setLayoutMode('manual');
+                    }
                     const isAlready = selectedIds.every((id) =>
                       moveUnlockedIds.includes(id)
                     );
@@ -9103,7 +9646,7 @@ export const InteractiveGridCanvasView: React.FC<
                       ? 'bg-emerald-500 text-slate-950'
                       : 'bg-stone-800 text-emerald-300'
                   }`}
-                  title="Tampilkan panah geser ▲▼◀▶ atau buka kunci geser kartu terpilih"
+                  title="Buka popup kontrol panah pindah ▲▼◀▶ atau kunci posisi kartu"
                 >
                   {selectedIds.some((id) => moveUnlockedIds.includes(id)) ? (
                     <Unlock className="w-3 h-3" />
@@ -9113,101 +9656,101 @@ export const InteractiveGridCanvasView: React.FC<
                   <span>
                     {selectedIds.some((id) => moveUnlockedIds.includes(id))
                       ? 'Kunci'
-                      : 'Panah Geser'}
+                      : 'Pindah'}
                   </span>
                 </button>
-              )}
 
-              {selectedIds.length === 1 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPanelTab('edit');
-                      setIsPanelOpen(true);
-                    }}
-                    className="px-2 py-1 rounded-xl bg-amber-500 text-stone-950 text-[10px] font-black"
-                  >
-                    {primarySelectedNode?.mergedMembers?.length
-                      ? 'Edit Gabungan'
-                      : 'Ubah Nama/Foto'}
-                  </button>
-                  {primarySelectedNode?.mergedMembers &&
-                    primarySelectedNode.mergedMembers.length >= 2 && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleUnmergeSelectedCard(primarySelectedNode.id)
-                        }
-                        className="px-2 py-1 rounded-xl bg-sky-500 text-stone-950 text-[10px] font-black flex items-center gap-1"
-                        title="Pisahkan kembali menjadi kartu satuan di posisi saat ini"
-                      >
-                        <Split className="w-3 h-3" />
-                        <span>Pisah Card</span>
-                      </button>
-                    )}
-                  <button
-                    type="button"
-                    onClick={startConnectMode}
-                    className="px-2 py-1 rounded-xl bg-stone-800 text-sky-300 text-[10px] font-bold"
-                  >
-                    Garis
-                  </button>
-                </>
-              )}
+                {selectedIds.length === 1 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPanelTab('edit');
+                        setIsPanelOpen(true);
+                      }}
+                      className="px-2 py-1 rounded-xl bg-amber-500 text-stone-950 text-[10px] font-black"
+                    >
+                      {primarySelectedNode?.mergedMembers?.length
+                        ? 'Edit Gabungan'
+                        : 'Ubah Nama/Foto'}
+                    </button>
+                    {primarySelectedNode?.mergedMembers &&
+                      primarySelectedNode.mergedMembers.length >= 2 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleUnmergeSelectedCard(primarySelectedNode.id)
+                          }
+                          className="px-2 py-1 rounded-xl bg-sky-500 text-stone-950 text-[10px] font-black flex items-center gap-1"
+                          title="Pisahkan kembali menjadi kartu satuan di posisi saat ini"
+                        >
+                          <Split className="w-3 h-3" />
+                          <span>Pisah Card</span>
+                        </button>
+                      )}
+                    <button
+                      type="button"
+                      onClick={startConnectMode}
+                      className="px-2 py-1 rounded-xl bg-stone-800 text-sky-300 text-[10px] font-bold"
+                    >
+                      Garis
+                    </button>
+                  </>
+                )}
 
-              {selectedIds.length >= 2 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleMergeSelectedIntoBigCard}
-                    className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-500 to-emerald-500 text-stone-950 text-[10px] font-black flex items-center gap-1 shadow-xs"
-                    title="Gabung kartu/foto terpilih jadi 1 Card Besar dengan 1 garis (kartu lain tetap di posisinya)"
-                  >
-                    <Layers className="w-3 h-3" />
-                    <span>Gabung 1 Card Besar</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleGroupSelected}
-                    className="px-2 py-1 rounded-xl bg-purple-600 text-white text-[10px] font-bold"
-                  >
-                    Group
-                  </button>
-                </>
-              )}
+                {selectedIds.length >= 2 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleMergeSelectedIntoBigCard}
+                      className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-500 to-emerald-500 text-stone-950 text-[10px] font-black flex items-center gap-1 shadow-xs"
+                      title="Gabung kartu/foto terpilih jadi 1 Card Besar dengan 1 garis (kartu lain tetap di posisinya)"
+                    >
+                      <Layers className="w-3 h-3" />
+                      <span>Gabung 1 Card Besar</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleGroupSelected}
+                      className="px-2 py-1 rounded-xl bg-purple-600 text-white text-[10px] font-bold"
+                    >
+                      Group
+                    </button>
+                  </>
+                )}
 
-              {hasGroupInSelection && (
+                {hasGroupInSelection && (
+                  <button
+                    type="button"
+                    onClick={handleUngroupSelected}
+                    className="px-2 py-1 rounded-xl bg-stone-800 text-rose-300 text-[10px] font-bold"
+                  >
+                    Lepas
+                  </button>
+                )}
+
                 <button
                   type="button"
-                  onClick={handleUngroupSelected}
-                  className="px-2 py-1 rounded-xl bg-stone-800 text-rose-300 text-[10px] font-bold"
+                  onClick={deleteSelectedNodes}
+                  className="p-1.5 rounded-xl bg-rose-600/20 text-rose-400 hover:bg-rose-600/30"
+                  title="Hapus Terpilih"
                 >
-                  Lepas
+                  <Trash2 className="w-3.5 h-3.5" />
                 </button>
-              )}
-
-              <button
-                type="button"
-                onClick={deleteSelectedNodes}
-                className="p-1.5 rounded-xl bg-rose-600/20 text-rose-400 hover:bg-rose-600/30"
-                title="Hapus Terpilih"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedIds([]);
-                  setMoveUnlockedIds([]);
-                  setMoveAnchorId(null);
-                }}
-                className="p-1.5 rounded-xl bg-stone-800 text-stone-400 hover:text-white"
-                title="Batal Pilih"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedIds([]);
+                    setMoveUnlockedIds([]);
+                    setMoveAnchorId(null);
+                  }}
+                  className="p-1.5 rounded-xl bg-stone-800 text-stone-400 hover:text-white"
+                  title="Batal Pilih"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

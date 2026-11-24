@@ -1,12 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import {
-  Check,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ChevronUp,
-  Split,
-} from 'lucide-react';
+import { Check } from 'lucide-react';
 import type {
   CardDisplayMode,
   GenGradientPaletteId,
@@ -37,9 +30,6 @@ export interface GridCardItemProps {
   isConnectSource: boolean;
   isHolding: boolean;
   isUnlocked: boolean;
-  showArrowsHere: boolean;
-  moveTargets: string[];
-  nudgeStep: number;
   cardDisplayMode: CardDisplayMode;
   photoFrameSize: PhotoFrameSize;
   photoShape: GridPhotoShape;
@@ -59,10 +49,6 @@ export interface GridCardItemProps {
     e: React.MouseEvent | React.TouchEvent,
     id: string
   ) => void;
-  onStartNudgeRepeat: (targets: string[], dx: number, dy: number) => void;
-  onStopNudgeRepeat: () => void;
-  onLockArrows: () => void;
-  onUnmergeCard: (id: string) => void;
 }
 
 const GridCardItemInner: React.FC<GridCardItemProps> = ({
@@ -71,9 +57,6 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
   isConnectSource,
   isHolding,
   isUnlocked,
-  showArrowsHere,
-  moveTargets,
-  nudgeStep,
   cardDisplayMode,
   photoFrameSize,
   photoShape,
@@ -90,10 +73,6 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
   exportPhotoMap,
   registerNodeEl,
   onStartInteraction,
-  onStartNudgeRepeat,
-  onStopNudgeRepeat,
-  onLockArrows,
-  onUnmergeCard,
 }) => {
   const holdFillRef = useRef<HTMLSpanElement | null>(null);
 
@@ -275,7 +254,7 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
       }`}
       title={
         safeHoldMove && layoutMode === 'manual' && !isUnlocked
-          ? `${node.name} • Tahan 2 detik untuk tampilkan panah geser ▲▼◀▶`
+          ? `${node.name} • Tahan 2 detik atau pakai tombol Pindah di panel bawah`
           : node.name
       }
     >
@@ -291,100 +270,6 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
           </span>
           <span>Tahan...</span>
         </div>
-      )}
-
-      {/* 4 Panah Interaktif Atas / Bawah / Kiri / Kanan setelah Hold 2 Detik */}
-      {showArrowsHere && (
-        <>
-          <button
-            type="button"
-            onMouseDown={(e) => {
-              e.stopPropagation();
-              onStartNudgeRepeat(moveTargets, 0, -nudgeStep);
-            }}
-            onTouchStart={(e) => {
-              e.stopPropagation();
-              onStartNudgeRepeat(moveTargets, 0, -nudgeStep);
-            }}
-            onMouseUp={onStopNudgeRepeat}
-            onMouseLeave={onStopNudgeRepeat}
-            onTouchEnd={onStopNudgeRepeat}
-            onTouchCancel={onStopNudgeRepeat}
-            className="absolute -top-8 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg border-2 border-white flex items-center justify-center z-50 print:hidden"
-            title="Geser ke Atas"
-          >
-            <ChevronUp className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => {
-              e.stopPropagation();
-              onStartNudgeRepeat(moveTargets, 0, nudgeStep);
-            }}
-            onTouchStart={(e) => {
-              e.stopPropagation();
-              onStartNudgeRepeat(moveTargets, 0, nudgeStep);
-            }}
-            onMouseUp={onStopNudgeRepeat}
-            onMouseLeave={onStopNudgeRepeat}
-            onTouchEnd={onStopNudgeRepeat}
-            onTouchCancel={onStopNudgeRepeat}
-            className="absolute -bottom-8 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg border-2 border-white flex items-center justify-center z-50 print:hidden"
-            title="Geser ke Bawah"
-          >
-            <ChevronDown className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => {
-              e.stopPropagation();
-              onStartNudgeRepeat(moveTargets, -nudgeStep, 0);
-            }}
-            onTouchStart={(e) => {
-              e.stopPropagation();
-              onStartNudgeRepeat(moveTargets, -nudgeStep, 0);
-            }}
-            onMouseUp={onStopNudgeRepeat}
-            onMouseLeave={onStopNudgeRepeat}
-            onTouchEnd={onStopNudgeRepeat}
-            onTouchCancel={onStopNudgeRepeat}
-            className="absolute top-1/2 -translate-y-1/2 -left-8 w-7 h-7 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg border-2 border-white flex items-center justify-center z-50 print:hidden"
-            title="Geser ke Kiri"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => {
-              e.stopPropagation();
-              onStartNudgeRepeat(moveTargets, nudgeStep, 0);
-            }}
-            onTouchStart={(e) => {
-              e.stopPropagation();
-              onStartNudgeRepeat(moveTargets, nudgeStep, 0);
-            }}
-            onMouseUp={onStopNudgeRepeat}
-            onMouseLeave={onStopNudgeRepeat}
-            onTouchEnd={onStopNudgeRepeat}
-            onTouchCancel={onStopNudgeRepeat}
-            className="absolute top-1/2 -translate-y-1/2 -right-8 w-7 h-7 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg border-2 border-white flex items-center justify-center z-50 print:hidden"
-            title="Geser ke Kanan"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              onLockArrows();
-            }}
-            className="absolute -top-3 -right-3 px-1.5 py-0.5 rounded-full bg-slate-950 border border-emerald-400 text-emerald-300 text-[8.5px] font-black shadow z-50 print:hidden"
-            title="Kunci kembali posisi kartu"
-          >
-            Kunci ✓
-          </button>
-        </>
       )}
 
       {/* Badge Checklist Mode Pilih Banyak */}
@@ -599,22 +484,6 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
 
           return (
             <div className="w-full h-full flex flex-col items-center justify-start">
-              {isSelected && (
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onTouchStart={(e) => e.stopPropagation()}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onUnmergeCard(node.id);
-                  }}
-                  className="absolute -top-2.5 right-1.5 px-1.5 py-0.5 rounded-full bg-sky-500 hover:bg-sky-400 text-slate-950 text-[8.5px] font-black shadow z-30 flex items-center gap-0.5 print:hidden"
-                  title="Pisah kembali ke kartu satuan"
-                >
-                  <Split className="w-2.5 h-2.5" />
-                  <span>Pisah</span>
-                </button>
-              )}
 
               <div
                 style={{
