@@ -93,7 +93,7 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "revision": "3649812790a8dbd835813340e87aac07"
   }, {
     "url": "index.html",
-    "revision": "e77fbc5f403498be5816738772718ec8"
+    "revision": "99a187d0455c62a4ff8b5a78e0912016"
   }, {
     "url": "icon.svg",
     "revision": "f8c11ed66fb69e7c38afb09669dc2436"
@@ -107,7 +107,7 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "url": "assets/workbox-window.prod.es5-Bd17z0YL.js",
     "revision": null
   }, {
-    "url": "assets/web-6DQC8C6k.js",
+    "url": "assets/web-DyMGdMxh.js",
     "revision": null
   }, {
     "url": "assets/rolldown-runtime-hePW80VL.js",
@@ -116,16 +116,16 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "url": "assets/purify.es-B7SQ8EAD.js",
     "revision": null
   }, {
-    "url": "assets/jspdf.es.min-VI2cFDow.js",
+    "url": "assets/jspdf.es.min-DBSCIGnZ.js",
     "revision": null
   }, {
-    "url": "assets/index.es-CaN3Rqql.js",
-    "revision": null
-  }, {
-    "url": "assets/index-CuaKm8sj.js",
+    "url": "assets/index.es-BUxTACcv.js",
     "revision": null
   }, {
     "url": "assets/index-BcTf1F5Y.css",
+    "revision": null
+  }, {
+    "url": "assets/index-BBK4hxWX.js",
     "revision": null
   }, {
     "url": "assets/html2canvas-Dn6bw578.js",
@@ -134,26 +134,11 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "url": "assets/firebase-CA98DPK0.js",
     "revision": null
   }, {
-    "url": "assets/esm-BoUPO8ME.js",
+    "url": "assets/esm-Cjd4igEI.js",
     "revision": null
   }, {
     "url": "assets/es-Ct67x-Wl.js",
     "revision": null
-  }, {
-    "url": "assets/aistudio/image_627ae8b5.png",
-    "revision": null
-  }, {
-    "url": "assets/aistudio/1794735661576101018162626791405_c0061512.jpg",
-    "revision": null
-  }, {
-    "url": "apple-touch-icon.png",
-    "revision": "1ed7c035a56a06a72115e9e49706c837"
-  }, {
-    "url": "favicon.ico",
-    "revision": "9372f9290b6206d72cc73543904981be"
-  }, {
-    "url": "icon.svg",
-    "revision": "f8c11ed66fb69e7c38afb09669dc2436"
   }, {
     "url": "pwa-192x192.png",
     "revision": "3649812790a8dbd835813340e87aac07"
@@ -164,18 +149,12 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "url": "pwa-maskable-512x512.png",
     "revision": "efc84a5d7b1e7ecda758aac45ce67738"
   }, {
-    "url": "store.html",
-    "revision": "ffa3697570ffeb1a5e5701f5dad874f8"
-  }, {
-    "url": "wargaqu-share.jpg",
-    "revision": "217235eef8b45adc0603865973e8016d"
-  }, {
     "url": "manifest.webmanifest",
-    "revision": "734e44c6f0a24552928572b1de3e6c73"
+    "revision": "e3e89f7505f1fda683bf82d0fa6771cc"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html"), {
-    denylist: [/^\/api\//, /^\/ws-relay/, /store\.html/]
+    denylist: [/^\/api\//, /^\/ws-relay/, /store\.html/, /manifest\.webmanifest$/]
   }));
   workbox.registerRoute(/^https:\/\/fonts\.googleapis\.com\/.*/i, new workbox.CacheFirst({
     "cacheName": "google-fonts-cache",

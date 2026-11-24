@@ -12,22 +12,13 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: [
-          'favicon.ico',
-          'apple-touch-icon.png',
-          'icon.svg',
-          'pwa-192x192.png',
-          'pwa-512x512.png',
-          'pwa-maskable-512x512.png',
-          'wargaqu-share.jpg',
-          'store.html',
-        ],
         manifest: {
           id: './',
           name: 'WargaQu - Ekosistem Cerdas Warga & UMKM',
           short_name: 'WargaQu',
           description:
-            'Aplikasi Terpadu Warga: RtQu, SiagaQu SOS, AreaQu Pedagang Keliling, UsahaQu POS Kasir & ModularQu, MuamalahQu, DompetQu, dan LeluhurQu.',
+            'Aplikasi Terpadu Warga: RTQu, SiagaQu SOS, AreaQu Pedagang Keliling, UsahaQu POS Kasir & ModularQu, MuamalahQu, DompetQu, dan NasabQu.',
+          lang: 'id',
           theme_color: '#047857',
           background_color: '#f0fdf4',
           display: 'standalone',
@@ -56,9 +47,11 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          cleanupOutdatedCaches: true,
           maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
-          navigateFallbackDenylist: [/^\/api\//, /^\/ws-relay/, /store\.html/],
+          navigateFallbackDenylist: [/^\/api\//, /^\/ws-relay/, /store\.html/, /manifest\.webmanifest$/],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg,woff,woff2}'],
+          globIgnores: ['**/assets/aistudio/**'],
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

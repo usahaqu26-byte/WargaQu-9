@@ -41,6 +41,9 @@ jobs:
           VITE_GITHUB_REPO: ${{ github.repository }}
         run: |
           npm run build
+          rm -rf dist/assets/aistudio
+          touch dist/.nojekyll
+          cp dist/index.html dist/404.html
 
       - name: 5. Configure GitHub Pages
         uses: actions/configure-pages@v5

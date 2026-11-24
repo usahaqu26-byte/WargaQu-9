@@ -2444,8 +2444,40 @@ Tuliskan draf balasan langsung yang siap dikirim Admin ke pelapor di field "repl
     app.use(vite.middlewares);
   } else {
     const distDir = path.resolve(__dirname, 'dist');
-    app.use(express.static(distDir));
-    app.get('*', (_req, res) => {
+    if (!fs.existsSync(path.join(distDir, 'index.html'))) {
+      console.warn('[WargaQu Relay] Peringatan: dist/index.html tidak ditemukan. Jalankan npm run build terlebih dahulu.');
+    }
+    app.use(
+      express.static(distDir, {
+        setHeaders(res, filePath) {
+          const baseName = path.basename(filePath);
+          if (
+            baseName === 'sw.js' ||
+            baseName === 'registerSW.js' ||
+            baseName === 'index.html' ||
+            baseName === 'store.html' ||
+            baseName === 'manifest.webmanifest'
+          ) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          }
+          if (baseName.endsWith('.webmanifest')) {
+            res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+          }
+        },
+      })
+    );
+    app.get('*', (req, res) => {
+      if (req.path.startsWith('/api/')) {
+        res.status(404).json({ error: 'Endpoint API tidak ditemukan.' });
+        return;
+      }
+      if (/\.(?:js|mjs|css|map|png|jpe?g|svg|ico|webp|woff2?|webmanifest|json)$/i.test(req.path)) {
+        res.status(404).end();
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.sendFile(path.join(distDir, 'index.html'));
     });
   }
