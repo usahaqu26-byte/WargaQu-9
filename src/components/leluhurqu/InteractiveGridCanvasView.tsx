@@ -117,6 +117,7 @@ export type GenGradientPaletteId =
   | 'amber_earth'
   | 'violet_dusk';
 export type ConnectorLineStyle = 'pcb90' | 'pcb45' | 'straight' | 'curved' | 'none';
+export type LineRoutingTopology = 'direct' | 'sibling_chain_all' | 'sibling_chain_g3plus';
 export type EdgePortSide = 'auto' | 'top' | 'bottom' | 'left' | 'right';
 export type CaptionPosition =
   | 'bottom-bar'
@@ -213,9 +214,11 @@ export interface SavedGridDesign {
   theme: CanvasTheme;
   bgStyle: CanvasBackground;
   lineStyle?: ConnectorLineStyle;
+  lineRoutingTopology?: LineRoutingTopology;
   lineThickness?: number;
   childLineColor?: string;
   coupleLineColor?: string;
+  siblingLineColor?: string;
   cardBgColor?: string;
   cardBorderColor?: string;
   captionInfo?: CanvasCaptionInfo;
@@ -695,15 +698,215 @@ function buildCanvasFromTrah(
   return { nodes, edges };
 }
 
+interface DisplayCanvasEdge {
+  origIdx: number;
+  edge: InteractiveEdge;
+  edgeKind: 'couple' | 'child' | 'sibling';
+}
+
+function segmentCrossesBoxApprox(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  box: { x: number; y: number; w: number; h: number },
+  pad = 4
+): boolean {
+  const minX = Math.min(x1, x2);
+  const maxX = Math.max(x1, x2);
+  const minY = Math.min(y1, y2);
+  const maxY = Math.max(y1, y2);
+  if (
+    maxX < box.x - pad ||
+    minX > box.x + box.w + pad ||
+    maxY < box.y - pad ||
+    minY > box.y + box.h + pad
+  ) {
+    return false;
+  }
+  for (let s = 1; s <= 5; s++) {
+    const t = s / 6;
+    const px = x1 + (x2 - x1) * t;
+    const py = y1 + (y2 - y1) * t;
+    if (
+      px >= box.x - pad &&
+      px <= box.x + box.w + pad &&
+      py >= box.y - pad &&
+      py <= box.y + box.h + pad
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function buildDisplayEdgesWithSiblingChain(
+  nodes: InteractiveNode[],
+  edges: InteractiveEdge[],
+  topology: LineRoutingTopology,
+  displayMode: CardDisplayMode,
+  photoSize: PhotoFrameSize,
+  cardScale: number
+): DisplayCanvasEdge[] {
+  if (topology === 'direct' || edges.length === 0) {
+    return edges.map((edge, origIdx) => ({
+      origIdx,
+      edge,
+      edgeKind: edge.type === 'couple' ? 'couple' : 'child',
+    }));
+  }
+
+  const nodeMapLocal = new Map<string, InteractiveNode>();
+  const boxMap = new Map<string, { x: number; y: number; w: number; h: number; cx: number; cy: number }>();
+  nodes.forEach((n) => {
+    nodeMapLocal.set(n.id, n);
+    const sz = getNodeSize(n, displayMode, photoSize, cardScale);
+    boxMap.set(n.id, {
+      x: n.x,
+      y: n.y,
+      w: sz.w,
+      h: sz.h,
+      cx: n.x + sz.w / 2,
+      cy: n.y + sz.h / 2,
+    });
+  });
+
+  const result: DisplayCanvasEdge[] = [];
+  const childGroups = new Map<string, { origIdx: number; edge: InteractiveEdge; child: InteractiveNode }[]>();
+
+  edges.forEach((edge, origIdx) => {
+    if (edge.type === 'couple') {
+      result.push({ origIdx, edge, edgeKind: 'couple' });
+      return;
+    }
+    const parentNode = nodeMapLocal.get(edge.from);
+    const childNode = nodeMapLocal.get(edge.to);
+    if (!parentNode || !childNode) return;
+    if (!childGroups.has(edge.from)) childGroups.set(edge.from, []);
+    childGroups.get(edge.from)!.push({ origIdx, edge, child: childNode });
+  });
+
+  const allBoxes = Array.from(boxMap.entries()).map(([id, b]) => ({ id, ...b }));
+
+  childGroups.forEach((group, parentId) => {
+    const parentNode = nodeMapLocal.get(parentId);
+    const parentBox = boxMap.get(parentId);
+    if (!parentNode || !parentBox || group.length <= 1) {
+      group.forEach((g) =>
+        result.push({ origIdx: g.origIdx, edge: g.edge, edgeKind: 'child' })
+      );
+      return;
+    }
+
+    // Mode Hibrid: G1-G2 (anak dari G1, genLevel <= 1) tetap langsung ke ortu agar struktur inti super tegas
+    if (topology === 'sibling_chain_g3plus') {
+      const parentGen = parentNode.genLevel ?? 0;
+      const minChildGen = Math.min(
+        ...group.map((g) => g.child.genLevel ?? parentGen + 1)
+      );
+      if (minChildGen < 2) {
+        group.forEach((g) =>
+          result.push({ origIdx: g.origIdx, edge: g.edge, edgeKind: 'child' })
+        );
+        return;
+      }
+    }
+
+    // 1. Pilih 1 anak pintu masuk paling dekat dengan orang tua
+    let anchorIdx = 0;
+    let bestAnchorDist = Infinity;
+    group.forEach((g, idx) => {
+      const cb = boxMap.get(g.child.id);
+      if (!cb) return;
+      let dist = Math.hypot(cb.cx - parentBox.cx, cb.cy - parentBox.cy);
+      const blocked = allBoxes.some(
+        (ob) =>
+          ob.id !== parentId &&
+          ob.id !== g.child.id &&
+          segmentCrossesBoxApprox(parentBox.cx, parentBox.cy, cb.cx, cb.cy, ob, 2)
+      );
+      if (blocked) dist += 180;
+      if (dist < bestAnchorDist) {
+        bestAnchorDist = dist;
+        anchorIdx = idx;
+      }
+    });
+
+    const anchor = group[anchorIdx];
+    result.push({ origIdx: anchor.origIdx, edge: anchor.edge, edgeKind: 'child' });
+
+    // 2. Hubungkan sisa saudara sekandung dengan Nearest-Neighbor Spanning Tree (jarak terdekat)
+    const connected = [anchor];
+    const remaining = group.filter((_, idx) => idx !== anchorIdx);
+
+    while (remaining.length > 0) {
+      let bestU = connected[0];
+      let bestRemIdx = 0;
+      let bestScore = Infinity;
+
+      for (let ci = 0; ci < connected.length; ci++) {
+        const u = connected[ci];
+        const ub = boxMap.get(u.child.id);
+        if (!ub) continue;
+
+        for (let ri = 0; ri < remaining.length; ri++) {
+          const v = remaining[ri];
+          const vb = boxMap.get(v.child.id);
+          if (!vb) continue;
+
+          const dx = Math.abs(ub.cx - vb.cx);
+          const dy = Math.abs(ub.cy - vb.cy);
+          // Jarak tepi-ke-tepi perkiraan + sedikit bonus keselarasan baris/kolom
+          const gapX = Math.max(0, dx - (ub.w + vb.w) / 2);
+          const gapY = Math.max(0, dy - (ub.h + vb.h) / 2);
+          let score = Math.hypot(gapX, gapY) + Math.hypot(dx, dy) * 0.25;
+
+          const crossesObstacle = allBoxes.some(
+            (ob) =>
+              ob.id !== u.child.id &&
+              ob.id !== v.child.id &&
+              segmentCrossesBoxApprox(ub.cx, ub.cy, vb.cx, vb.cy, ob, 2)
+          );
+          if (crossesObstacle) score += 320;
+
+          if (score < bestScore) {
+            bestScore = score;
+            bestU = u;
+            bestRemIdx = ri;
+          }
+        }
+      }
+
+      const nextSib = remaining.splice(bestRemIdx, 1)[0];
+      result.push({
+        origIdx: nextSib.origIdx,
+        edge: {
+          ...nextSib.edge,
+          from: bestU.child.id,
+          to: nextSib.child.id,
+          type: 'child',
+          fromPort: undefined,
+          toPort: undefined,
+        },
+        edgeKind: 'sibling',
+      });
+      connected.push(nextSib);
+    }
+  });
+
+  return result;
+}
+
 function getSmartPorts(
   n1: InteractiveNode,
   n2: InteractiveNode,
-  edgeType: 'couple' | 'child',
+  edgeType: 'couple' | 'child' | 'sibling',
   displayMode: CardDisplayMode,
   photoSize: PhotoFrameSize,
   cardScale = 1,
   fromPortOverride?: EdgePortSide,
-  toPortOverride?: EdgePortSide
+  toPortOverride?: EdgePortSide,
+  obstacles?: NodeObstacleBox[]
 ) {
   const s1 = getNodeSize(n1, displayMode, photoSize, cardScale);
   const s2 = getNodeSize(n2, displayMode, photoSize, cardScale);
@@ -743,6 +946,38 @@ function getSmartPorts(
     } else {
       autoPair = { a: p1.left, b: p2.right, dir1: 'left', dir2: 'right' };
     }
+  } else if (edgeType === 'sibling') {
+    // Rantai Saudara: pilih sisi terdekat yang bebas menabrak kartu pasangan / kartu tengah
+    const otherObs = (obstacles || []).filter((ob) => ob.id !== n1.id && ob.id !== n2.id);
+    const sameRow = Math.abs(cy1 - cy2) < Math.max(s1.h, s2.h) * 0.75;
+    const sameCol =
+      Math.abs(n1.x + s1.w / 2 - (n2.x + s2.w / 2)) < Math.max(s1.w, s2.w) * 0.75;
+
+    let minScore = Infinity;
+    autoPair = { a: p1.right, b: p2.left, dir1: 'right', dir2: 'left' };
+
+    (Object.keys(p1) as PortKey[]).forEach((k1) => {
+      (Object.keys(p2) as PortKey[]).forEach((k2) => {
+        const pt1 = p1[k1];
+        const pt2 = p2[k2];
+        let score = Math.hypot(pt1.x - pt2.x, pt1.y - pt2.y);
+
+        if (otherObs.length > 0) {
+          const blocked = otherObs.some((ob) =>
+            segmentCrossesBoxApprox(pt1.x, pt1.y, pt2.x, pt2.y, ob, 3)
+          );
+          if (blocked) score += 220;
+        }
+        if (sameRow && k1 === 'bottom' && k2 === 'bottom') score -= 12;
+        if (sameRow && k1 === 'top' && k2 === 'top') score -= 8;
+        if (sameCol && k1 === 'right' && k2 === 'right') score -= 8;
+
+        if (score < minScore) {
+          minScore = score;
+          autoPair = { a: pt1, b: pt2, dir1: k1, dir2: k2 };
+        }
+      });
+    });
   } else if (edgeType === 'child' && n2.y >= n1.y + s1.h * 0.6) {
     // Keturunan ke bawah -> jalur PCB keluar dari port bawah ke port atas anak
     autoPair = { a: p1.bottom, b: p2.top, dir1: 'bottom', dir2: 'top' };
@@ -1563,9 +1798,12 @@ export const InteractiveGridCanvasView: React.FC<
 
   // Gaya Garis PCB / Dot Jalur & Ujung / Warna Garis & Card / Keterangan Poster
   const [lineStyle, setLineStyle] = useState<ConnectorLineStyle>('pcb90');
+  const [lineRoutingTopology, setLineRoutingTopology] =
+    useState<LineRoutingTopology>('sibling_chain_all');
   const [lineThickness, setLineThickness] = useState<number>(2.5);
   const [childLineColor, setChildLineColor] = useState<string>('');
   const [coupleLineColor, setCoupleLineColor] = useState<string>('#f59e0b');
+  const [siblingLineColor, setSiblingLineColor] = useState<string>('');
   const [linesOnTop, setLinesOnTop] = useState<boolean>(false);
   const [showLineDots, setShowLineDots] = useState<boolean>(true);
   const [showEndpointDots, setShowEndpointDots] = useState<boolean>(true);
@@ -2292,9 +2530,11 @@ export const InteractiveGridCanvasView: React.FC<
       setTheme(target.theme || 'dark');
       setBgStyle(target.bgStyle || '');
       setLineStyle(target.lineStyle || 'pcb90');
+      setLineRoutingTopology(target.lineRoutingTopology || 'sibling_chain_all');
       setLineThickness(target.lineThickness || 2.5);
       setChildLineColor(target.childLineColor ?? '');
       setCoupleLineColor(target.coupleLineColor ?? '#f59e0b');
+      setSiblingLineColor(target.siblingLineColor ?? '');
       setCardBgColor(target.cardBgColor ?? '');
       setCardBorderColor(target.cardBorderColor ?? '');
       setCaptionInfo(
@@ -2366,9 +2606,11 @@ export const InteractiveGridCanvasView: React.FC<
       theme: 'dark',
       bgStyle: '',
       lineStyle: 'pcb90',
+      lineRoutingTopology: 'sibling_chain_all',
       lineThickness: 2.5,
       childLineColor: '',
       coupleLineColor: '#f59e0b',
+      siblingLineColor: '',
       cardBgColor: '',
       cardBorderColor: '',
       captionInfo: defaultCap,
@@ -2394,9 +2636,11 @@ export const InteractiveGridCanvasView: React.FC<
     setEdges(initialDesign.edges);
     setQuickText(initialDesign.quickText);
     setLineStyle('pcb90');
+    setLineRoutingTopology('sibling_chain_all');
     setLineThickness(2.5);
     setChildLineColor('');
     setCoupleLineColor('#f59e0b');
+    setSiblingLineColor('');
     setCardBgColor('');
     setCardBorderColor('');
     setCaptionInfo(defaultCap);
@@ -2505,9 +2749,11 @@ export const InteractiveGridCanvasView: React.FC<
                 theme,
                 bgStyle,
                 lineStyle,
+                lineRoutingTopology,
                 lineThickness,
                 childLineColor,
                 coupleLineColor,
+                siblingLineColor,
                 cardBgColor,
                 cardBorderColor,
                 captionInfo,
@@ -2550,9 +2796,11 @@ export const InteractiveGridCanvasView: React.FC<
       theme,
       bgStyle,
       lineStyle,
+      lineRoutingTopology,
       lineThickness,
       childLineColor,
       coupleLineColor,
+      siblingLineColor,
       cardBgColor,
       cardBorderColor,
       captionInfo,
@@ -2661,9 +2909,11 @@ export const InteractiveGridCanvasView: React.FC<
     theme,
     bgStyle,
     lineStyle,
+    lineRoutingTopology,
     lineThickness,
     childLineColor,
     coupleLineColor,
+    siblingLineColor,
     cardBgColor,
     cardBorderColor,
     captionInfo,
@@ -3096,9 +3346,11 @@ export const InteractiveGridCanvasView: React.FC<
               theme,
               bgStyle,
               lineStyle,
+              lineRoutingTopology,
               lineThickness,
               childLineColor,
               coupleLineColor,
+              siblingLineColor,
               cardBgColor,
               cardBorderColor,
               captionInfo,
@@ -3133,9 +3385,11 @@ export const InteractiveGridCanvasView: React.FC<
         theme,
         bgStyle,
         lineStyle,
+        lineRoutingTopology,
         lineThickness,
         childLineColor,
         coupleLineColor,
+        siblingLineColor,
         cardBgColor,
         cardBorderColor,
         captionInfo,
@@ -3193,9 +3447,11 @@ export const InteractiveGridCanvasView: React.FC<
       theme,
       bgStyle,
       lineStyle,
+      lineRoutingTopology,
       lineThickness,
       childLineColor,
       coupleLineColor,
+      siblingLineColor,
       cardBgColor,
       cardBorderColor,
       captionInfo,
@@ -3247,9 +3503,11 @@ export const InteractiveGridCanvasView: React.FC<
     setTheme(design.theme || 'dark');
     setBgStyle(design.bgStyle || '');
     setLineStyle(design.lineStyle || 'pcb90');
+    setLineRoutingTopology(design.lineRoutingTopology || 'sibling_chain_all');
     setLineThickness(design.lineThickness || 2.5);
     setChildLineColor(design.childLineColor ?? '');
     setCoupleLineColor(design.coupleLineColor ?? '#f59e0b');
+    setSiblingLineColor(design.siblingLineColor ?? '');
     setCardBgColor(design.cardBgColor ?? '');
     setCardBorderColor(design.cardBorderColor ?? '');
     setCaptionInfo(
@@ -5457,7 +5715,7 @@ export const InteractiveGridCanvasView: React.FC<
     []
   );
 
-  // Memoized Rute Garis Silsilah (tidak dihitung ulang saat zoom, select, panel, atau drag!)
+  // Memoized Rute Garis Silsilah (mendukung Rantai Saudara Terdekat G1-G5 / Hibrid G3+ anti-silang)
   const computedEdges = useMemo<ComputedCanvasEdgeItem[]>(() => {
     if (lineStyle === 'none') return [];
     const obstacleBoxes: NodeObstacleBox[] = nodes.map((n) => {
@@ -5465,8 +5723,17 @@ export const InteractiveGridCanvasView: React.FC<
       return { id: n.id, x: n.x, y: n.y, w: sz.w, h: sz.h };
     });
 
-    return edges
-      .map((edge, idx) => {
+    const displayEdges = buildDisplayEdgesWithSiblingChain(
+      nodes,
+      edges,
+      lineRoutingTopology,
+      cardDisplayMode,
+      photoFrameSize,
+      cardScale
+    );
+
+    return displayEdges
+      .map(({ origIdx, edge, edgeKind }) => {
         const n1 = nodeMap.get(edge.from);
         const n2 = nodeMap.get(edge.to);
         if (!n1 || !n2) return null;
@@ -5474,12 +5741,13 @@ export const InteractiveGridCanvasView: React.FC<
         const pts = getSmartPorts(
           n1,
           n2,
-          edge.type,
+          edgeKind,
           cardDisplayMode,
           photoFrameSize,
           cardScale,
           edge.fromPort,
-          edge.toPort
+          edge.toPort,
+          edgeKind === 'sibling' ? obstacleBoxes : undefined
         );
         const route = buildConnectorRoute(
           pts,
@@ -5500,23 +5768,31 @@ export const InteractiveGridCanvasView: React.FC<
           g1Style?.line ||
           (theme === 'dark' || bgStyle !== '' ? '#38bdf8' : '#0284c7');
         const resolvedCoupleColor = coupleLineColor || '#f59e0b';
+        const resolvedSiblingColor =
+          siblingLineColor ||
+          (theme === 'dark' || bgStyle !== '' ? '#a78bfa' : '#7c3aed');
         const lineColor =
-          edge.type === 'couple' ? resolvedCoupleColor : resolvedChildColor;
+          edgeKind === 'couple'
+            ? resolvedCoupleColor
+            : edgeKind === 'sibling'
+            ? resolvedSiblingColor
+            : resolvedChildColor;
         const canUseGrad =
-          edge.type === 'child' &&
+          edgeKind === 'child' &&
           genGradientPalette !== 'none' &&
           !childLineColor &&
           !!g1Style &&
           !!g2Style &&
           (Math.abs(pts.a.x - pts.b.x) > 1 ||
             Math.abs(pts.a.y - pts.b.y) > 1);
-        const gradId = `edge-grad-${idx}`;
+        const gradId = `edge-grad-${origIdx}`;
 
         return {
-          idx,
+          idx: origIdx,
           edge,
           pts,
           route,
+          edgeKind,
           lineColor,
           gradFrom: g1Style?.line || lineColor,
           gradTo: g2Style?.line || lineColor,
@@ -5530,12 +5806,14 @@ export const InteractiveGridCanvasView: React.FC<
     edges,
     nodeMap,
     lineStyle,
+    lineRoutingTopology,
     cardDisplayMode,
     photoFrameSize,
     cardScale,
     genGradientPalette,
     childLineColor,
     coupleLineColor,
+    siblingLineColor,
     theme,
     bgStyle,
   ]);
@@ -6351,6 +6629,64 @@ export const InteractiveGridCanvasView: React.FC<
                     })}
                   </div>
 
+                  {/* Topologi Sambungan Garis Pintar (Anti-Silang) */}
+                  {lineStyle !== 'none' && (
+                    <div className="p-2 rounded-xl border border-violet-500/35 bg-violet-500/10 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10.5px] font-extrabold text-violet-300">
+                          Sambungan Saudara (Anti-Silang):
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1">
+                        {(
+                          [
+                            {
+                              id: 'sibling_chain_all' as const,
+                              label: 'Rantai G1–G5',
+                              desc: 'Ortu ke 1 anak, saudara sambung terdekat',
+                            },
+                            {
+                              id: 'sibling_chain_g3plus' as const,
+                              label: 'Hibrid G3–G5',
+                              desc: 'G1–G2 langsung ortu, G3–G5 rantai',
+                            },
+                            {
+                              id: 'direct' as const,
+                              label: 'Langsung Ortu',
+                              desc: 'Semua anak tarik garis ke ortu',
+                            },
+                          ] as const
+                        ).map((tp) => {
+                          const active = lineRoutingTopology === tp.id;
+                          return (
+                            <button
+                              key={tp.id}
+                              type="button"
+                              onClick={() => setLineRoutingTopology(tp.id)}
+                              title={tp.desc}
+                              className={`px-1.5 py-1.5 rounded-lg border text-[9.5px] font-bold transition whitespace-nowrap ${
+                                active
+                                  ? 'bg-violet-500 text-slate-950 border-violet-300 shadow-xs'
+                                  : isDark
+                                  ? 'bg-slate-900/70 border-slate-700 text-slate-200 hover:border-violet-400'
+                                  : 'bg-white border-stone-300 text-slate-800 hover:border-violet-500'
+                              }`}
+                            >
+                              {tp.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[9.5px] opacity-80 leading-snug">
+                        {lineRoutingTopology === 'sibling_chain_all'
+                          ? 'Ortu hanya terhubung ke 1 anak terdekat; adik-kakak menyambung berantai warna beda agar bebas garis silang.'
+                          : lineRoutingTopology === 'sibling_chain_g3plus'
+                          ? 'G1–G2 langsung ke ortu agar hierarki utama tegas, lalu G3–G5 padat disambung antar saudara terdekat.'
+                          : 'Mode klasik: setiap anak menarik garis langsung ke kartu orang tuanya.'}
+                      </p>
+                    </div>
+                  )}
+
                   {lineStyle === 'none' && (
                     <div className="p-2 rounded-xl border border-amber-500/35 bg-amber-500/10 text-[10px] leading-snug text-amber-200">
                       <b>Tanpa Garis (Off):</b> Garis penghubung &amp; panah disembunyikan. Hierarki dibaca lewat gradasi warna (tua ➔ muda) &amp; kedekatan posisi kelompok keluarga inti.
@@ -6528,6 +6864,50 @@ export const InteractiveGridCanvasView: React.FC<
                       })}
                     </div>
                   </div>
+
+                  {lineRoutingTopology !== 'direct' && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] opacity-80 font-semibold text-violet-300">
+                          Garis Saudara (Kakak–Adik):
+                        </span>
+                        <input
+                          type="color"
+                          value={siblingLineColor || (isDark ? '#a78bfa' : '#7c3aed')}
+                          onChange={(e) => setSiblingLineColor(e.target.value)}
+                          className="w-6 h-5 rounded cursor-pointer border-0 bg-transparent"
+                          title="Pilih Warna Kustom Garis Saudara"
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {LINE_COLOR_SWATCHES.map((sw) => {
+                          const isAct = siblingLineColor === sw.color;
+                          return (
+                            <button
+                              key={`sb-${sw.label}`}
+                              type="button"
+                              onClick={() => setSiblingLineColor(sw.color)}
+                              title={sw.label}
+                              className={`h-5 px-1.5 rounded-md border text-[9px] font-bold flex items-center gap-1 ${
+                                isAct
+                                  ? 'border-violet-400 ring-1 ring-violet-400'
+                                  : 'border-slate-600/60'
+                              }`}
+                            >
+                              <span
+                                className="w-2.5 h-2.5 rounded-full border border-white/30"
+                                style={{
+                                  backgroundColor:
+                                    sw.color || (isDark ? '#a78bfa' : '#7c3aed'),
+                                }}
+                              />
+                              {sw.color === '' && <span>Auto</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* 3. Pilihan Warna Card / Kartu */}
@@ -8062,6 +8442,7 @@ export const InteractiveGridCanvasView: React.FC<
                           edge,
                           pts,
                           route,
+                          edgeKind,
                           lineColor,
                           gradFrom,
                           gradTo,
@@ -8069,13 +8450,17 @@ export const InteractiveGridCanvasView: React.FC<
                           gradId,
                         }) => {
                           const isActiveEdge = activeEdgeIdx === idx;
+                          const isSiblingEdge = edgeKind === 'sibling';
+                          const baseStrokeWidth = isSiblingEdge
+                            ? Math.max(1.3, lineThickness * 0.85)
+                            : lineThickness;
                           const strokePaint = isActiveEdge
                             ? '#f59e0b'
                             : canUseGrad && !skipEdgeGradients
                             ? `url(#${gradId})`
                             : lineColor;
                           return (
-                            <g key={`edge-${idx}`}>
+                            <g key={`edge-${idx}-${edge.from}-${edge.to}`}>
                               {linesOnTop && (
                                 <path
                                   d={route.d}
@@ -8084,7 +8469,7 @@ export const InteractiveGridCanvasView: React.FC<
                                       ? 'rgba(15,23,42,0.75)'
                                       : 'rgba(255,255,255,0.8)'
                                   }
-                                  strokeWidth={lineThickness + 3}
+                                  strokeWidth={baseStrokeWidth + 3}
                                   strokeLinecap="round"
                                   strokeLinejoin={
                                     lineStyle === 'pcb90' ? 'miter' : 'round'
@@ -8096,7 +8481,7 @@ export const InteractiveGridCanvasView: React.FC<
                                 d={route.d}
                                 stroke={strokePaint}
                                 strokeWidth={
-                                  isActiveEdge ? lineThickness + 1.2 : lineThickness
+                                  isActiveEdge ? baseStrokeWidth + 1.2 : baseStrokeWidth
                                 }
                                 strokeDasharray={
                                   edge.type === 'couple' ? '6,4' : undefined
@@ -8365,6 +8750,19 @@ export const InteractiveGridCanvasView: React.FC<
                             />
                             <span>Keturunan</span>
                           </div>
+                          {lineRoutingTopology !== 'direct' && (
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className="inline-block w-6 h-0.5 rounded-full"
+                                style={{
+                                  backgroundColor:
+                                    siblingLineColor ||
+                                    (isDark || bgStyle !== '' ? '#a78bfa' : '#7c3aed'),
+                                }}
+                              />
+                              <span>Saudara</span>
+                            </div>
+                          )}
                           <div className="flex items-center gap-1.5">
                             <span
                               className="inline-block w-6 border-t-2 border-dashed"
@@ -9351,7 +9749,7 @@ export const InteractiveGridCanvasView: React.FC<
                   </div>
                 </div>
 
-                {/* Pilihan Gaya Kartu Ringkas + Ukuran Foto */}
+                {/* Pilihan Gaya Kartu Ringkas + Ukuran Foto + Mode Garis Anti-Silang */}
                 <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
                   <div className="flex items-center bg-stone-800/90 rounded-lg p-0.5 gap-0.5">
                     {(
@@ -9393,6 +9791,47 @@ export const InteractiveGridCanvasView: React.FC<
                       <option value="4x6">4×6</option>
                     </select>
                   )}
+                  <div
+                    className="flex items-center bg-stone-800/90 rounded-lg p-0.5 gap-0.5"
+                    title="Pola Garis: Rantai Saudara mengurangi garis saling silang"
+                  >
+                    {(
+                      [
+                        {
+                          id: 'sibling_chain_all' as const,
+                          label: 'Rantai G1–G5',
+                          tip: 'Ortu ke 1 anak, adik sambung ke saudara terdekat',
+                        },
+                        {
+                          id: 'sibling_chain_g3plus' as const,
+                          label: 'Hibrid G3+',
+                          tip: 'G1–G2 langsung ortu, G3–G5 rantai saudara',
+                        },
+                        {
+                          id: 'direct' as const,
+                          label: 'Langsung',
+                          tip: 'Semua anak langsung ke kartu ortu',
+                        },
+                      ] as const
+                    ).map((tp) => (
+                      <button
+                        key={tp.id}
+                        type="button"
+                        onClick={() => {
+                          setLineRoutingTopology(tp.id);
+                          showNotification(`Mode garis: ${tp.label}`);
+                        }}
+                        title={tp.tip}
+                        className={`px-2 py-0.5 rounded-md font-bold whitespace-nowrap transition ${
+                          lineRoutingTopology === tp.id
+                            ? 'bg-violet-500 text-slate-950'
+                            : 'text-stone-300 hover:text-white'
+                        }`}
+                      >
+                        {tp.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Daftar Pilihan Tata Letak Smart (1 Klik Siap Cetak) */}

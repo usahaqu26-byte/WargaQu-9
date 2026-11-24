@@ -29,6 +29,7 @@ export interface ComputedCanvasEdgeItem {
     dir2: 'top' | 'bottom' | 'left' | 'right';
   };
   route: { d: string; handle: { x: number; y: number }; isCustomOffset: boolean };
+  edgeKind?: 'couple' | 'child' | 'sibling';
   lineColor: string;
   gradFrom: string;
   gradTo: string;
@@ -123,7 +124,10 @@ export const GridHybridSnapshotCanvas: React.FC<
               const p2d = new Path2D(ce.route.d);
               ctx.save();
               ctx.strokeStyle = ce.lineColor;
-              ctx.lineWidth = Math.max(1.5, lineThickness);
+              const isSiblingEdge = ce.edgeKind === 'sibling';
+              ctx.lineWidth = isSiblingEdge
+                ? Math.max(1.3, lineThickness * 0.85)
+                : Math.max(1.5, lineThickness);
               if (ce.edge.type === 'couple') {
                 ctx.setLineDash([6, 4]);
               }
