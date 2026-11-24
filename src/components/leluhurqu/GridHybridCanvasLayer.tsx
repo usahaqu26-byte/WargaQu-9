@@ -30,6 +30,16 @@ export interface ComputedCanvasEdgeItem {
   };
   route: { d: string; handle: { x: number; y: number }; isCustomOffset: boolean };
   edgeKind?: 'couple' | 'child' | 'sibling';
+  strokeWidth?: number;
+  taperedPathD?: string;
+  arrowMeta?: {
+    tipX: number;
+    tipY: number;
+    angleRad: number;
+    size: number;
+    color: string;
+    kind: 'child' | 'sibling';
+  };
   lineColor: string;
   gradFrom: string;
   gradTo: string;
@@ -121,17 +131,54 @@ export const GridHybridSnapshotCanvas: React.FC<
           ctx.lineJoin = lineStyle === 'pcb90' ? 'miter' : 'round';
           computedEdges.forEach((ce) => {
             try {
-              const p2d = new Path2D(ce.route.d);
               ctx.save();
-              ctx.strokeStyle = ce.lineColor;
-              const isSiblingEdge = ce.edgeKind === 'sibling';
-              ctx.lineWidth = isSiblingEdge
-                ? Math.max(1.3, lineThickness * 0.85)
-                : Math.max(1.5, lineThickness);
-              if (ce.edge.type === 'couple') {
-                ctx.setLineDash([6, 4]);
+              if (ce.taperedPathD && ce.edge.type !== 'couple') {
+                const taperPath = new Path2D(ce.taperedPathD);
+                if (ce.canUseGrad) {
+                  const grad = ctx.createLinearGradient(
+                    ce.pts.a.x,
+                    ce.pts.a.y,
+                    ce.pts.b.x,
+                    ce.pts.b.y
+                  );
+                  grad.addColorStop(0, ce.gradFrom);
+                  grad.addColorStop(1, ce.gradTo);
+                  ctx.fillStyle = grad;
+                } else {
+                  ctx.fillStyle = ce.lineColor;
+                }
+                ctx.fill(taperPath);
+              } else {
+                const p2d = new Path2D(ce.route.d);
+                ctx.strokeStyle = ce.lineColor;
+                const isSiblingEdge = ce.edgeKind === 'sibling';
+                ctx.lineWidth =
+                  ce.strokeWidth ??
+                  (isSiblingEdge
+                    ? Math.max(1.3, lineThickness * 0.85)
+                    : Math.max(1.5, lineThickness));
+                if (ce.edge.type === 'couple') {
+                  ctx.setLineDash([6, 4]);
+                }
+                ctx.stroke(p2d);
               }
-              ctx.stroke(p2d);
+              if (ce.arrowMeta) {
+                const am = ce.arrowMeta;
+                ctx.save();
+                ctx.translate(am.tipX, am.tipY);
+                ctx.rotate(am.angleRad);
+                ctx.beginPath();
+                const hw = am.kind === 'sibling' ? am.size * 0.48 : am.size * 0.56;
+                const notch = am.kind === 'sibling' ? am.size * 0.58 : am.size * 0.72;
+                ctx.moveTo(0, 0);
+                ctx.lineTo(-am.size, -hw);
+                ctx.lineTo(-notch, 0);
+                ctx.lineTo(-am.size, hw);
+                ctx.closePath();
+                ctx.fillStyle = am.color;
+                ctx.fill();
+                ctx.restore();
+              }
               ctx.restore();
             } catch {
               // Abaikan jika Path2D gagal parse

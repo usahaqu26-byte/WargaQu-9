@@ -91,6 +91,17 @@ export const GEN_GRADIENT_PALETTES: Record<
       { bg: '#faf5ff', border: '#9333ea', line: '#e9d5ff' },
     ],
   },
+  wood_leaf: {
+    label: 'Coklat Kayu (G1) ➔ Hijau Daun (G5+)',
+    stops: [
+      { bg: '#3f1d0b', border: '#b45309', line: '#78350f' },
+      { bg: '#6b3410', border: '#d97706', line: '#92400e' },
+      { bg: '#4d5e18', border: '#84cc16', line: '#65a30d' },
+      { bg: '#166534', border: '#22c55e', line: '#22c55e' },
+      { bg: '#15803d', border: '#4ade80', line: '#4ade80' },
+      { bg: '#86efac', border: '#16a34a', line: '#86efac' },
+    ],
+  },
 };
 
 export function getGenGradientStyle(

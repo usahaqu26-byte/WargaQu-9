@@ -21,6 +21,7 @@ export type SmartPresetId =
   | 'modular_g3_L'
   | 'hierarchy_grid_fill'
   | 'subtree_vertical'
+  | 'pohon_hayat_besar'
   | 'subtree_horizontal'
   | 'family_cluster'
   | 'heritage_showcase';
@@ -68,6 +69,7 @@ export interface SmartLayoutPreset {
   recommendedCardMode: CardDisplayMode;
   recommendedPhotoSize: PhotoFrameSize;
   recommendedLineStyle?: ConnectorLineStyle;
+  recommendedLineThicknessMode?: 'uniform' | 'tree_taper';
   recommendedGuideMode?: GuideOverlayMode;
   recommendedGenGradient?: string;
 }
@@ -937,12 +939,14 @@ export function buildSmartGalleryOptions(
     ? [
         'modular_g3_I',
         'modular_g3_L',
+        'pohon_hayat_besar',
         'kotak_9_baris_g45_gabung',
         'kotak_9_baris',
         'orbit_elips_gabung',
         'hierarchy_grid_fill',
       ]
     : [
+        'pohon_hayat_besar',
         'subtree_vertical',
         'kotak_9_baris',
         'orbit_elips_1_5',
@@ -1155,6 +1159,24 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedPhotoSize: '3x4',
     recommendedLineStyle: 'pcb45',
     recommendedGuideMode: 'gen_bands',
+  },
+  {
+    id: 'pohon_hayat_besar',
+    title: 'Pohon Besar (G1 Batang Bawah ➔ Kanopi G5)',
+    subtitle: 'Batang 20px Coklat Kayu ➔ Ranting 1px Hijau Daun • Rantai & Panah',
+    badge: 'Pohon Besar',
+    category: 'klasik',
+    description:
+      'G1 menjadi pangkal batang tebal 20px di bawah tengah, bercabang naik menjadi dahan 15px (G2), cabang 10px (G3), hingga ranting tipis 5–1px (G4–G5) di mahkota daun hijau.',
+    recommendedTheme: 'dark',
+    recommendedBg: '',
+    recommendedOrientation: 'landscape',
+    recommendedCardMode: 'photo_name',
+    recommendedPhotoSize: '2x3',
+    recommendedLineStyle: 'curved',
+    recommendedLineThicknessMode: 'tree_taper',
+    recommendedGuideMode: 'gen_bands',
+    recommendedGenGradient: 'wood_leaf',
   },
   {
     id: 'subtree_horizontal',
@@ -1607,6 +1629,110 @@ export function generateSmartLayoutFromTable(
       leftLabelMargin,
       solverCommonOpts
     );
+  }
+
+  // -------------------------------------------------------------------------
+  // MODE POHON BESAR (G1 DI BAWAH = BATANG 20px ➔ G5 DI ATAS = RANTING 1px)
+  // -------------------------------------------------------------------------
+  if (presetId === 'pohon_hayat_besar') {
+    const maxLeafCols = Math.max(
+      3,
+      Math.min(5, Math.floor((boardWidth - 96) / (cardW + compactSiblingGap)))
+    );
+    const treeRowGap = Math.max(compactRowGap + 18, Math.round(cardH * 0.56));
+    runCompactTreeLayout({
+      wrapLeafSiblingsMaxCols: maxLeafCols,
+      leftMargin: 36,
+      rightMargin: 36,
+      rowStepY: treeRowGap,
+      rootGapX: Math.max(30, Math.round(cardW * 0.34)),
+    });
+
+    if (nodes.length > 0) {
+      const minX = Math.min(...nodes.map((n) => n.x));
+      const maxX = Math.max(...nodes.map((n) => n.x + cardW));
+      const minY = Math.min(...nodes.map((n) => n.y));
+      const maxY = Math.max(...nodes.map((n) => n.y + cardH));
+
+      const minBoundX = 28;
+      const maxBoundX = Math.max(minBoundX + 40, boardWidth - 28 - cardW);
+      const minBoundY = 66;
+      const maxBoundY = Math.max(minBoundY + 40, boardHeight - 36 - cardH);
+
+      const curSpanX = Math.max(1, maxX - minX - cardW);
+      const availW = Math.max(80, boardWidth - 56 - cardW);
+      const scaleX = curSpanX > availW ? availW / curSpanX : 1;
+      const renderedSpanX = curSpanX * scaleX + cardW;
+      const offsetX =
+        scaleX === 1
+          ? Math.max(minBoundX, (boardWidth - renderedSpanX) / 2)
+          : minBoundX;
+
+      const curSpanY = Math.max(1, maxY - minY - cardH);
+      const availH = Math.max(140, maxBoundY - minBoundY);
+      const scaleY = curSpanY > availH ? availH / curSpanY : 1;
+
+      const boardCenterX = boardWidth / 2;
+      const halfBoardW = Math.max(120, boardWidth * 0.48);
+
+      const rootLockedIds = new Set<string>();
+      const rootMemberIds = new Set(roots.map((r) => r.id));
+
+      const mirrored = nodes.map((n) => {
+        const mappedX =
+          scaleX === 1
+            ? offsetX + (n.x - minX)
+            : minBoundX + (n.x - minX) * scaleX;
+        const normFromTop = (n.y - minY) * scaleY;
+        // Balik vertikal: G1 (y awal paling atas) dipindah ke paling bawah (pangkal batang)!
+        let flippedY = maxBoundY - normFromTop;
+
+        const gen = n.genLevel ?? 0;
+        if (gen >= 2) {
+          // Lengkungan kanopi lembut di bagian atas tengah agar menyerupai mahkota pohon
+          const normDx = Math.min(
+            1,
+            Math.abs(mappedX + cardW / 2 - boardCenterX) / halfBoardW
+          );
+          const archLift = Math.round(
+            Math.cos(normDx * Math.PI * 0.45) * Math.min(34, cardH * 0.38)
+          );
+          flippedY = Math.max(minBoundY, flippedY - archLift);
+        }
+        if (gen === 0 || (n.memberId && rootMemberIds.has(n.memberId))) {
+          rootLockedIds.add(n.id);
+        }
+
+        return {
+          ...n,
+          x: Math.max(minBoundX, Math.min(maxBoundX, Math.round(mappedX))),
+          y: Math.max(minBoundY, Math.min(maxBoundY, Math.round(flippedY))),
+        };
+      });
+
+      const cleanTreeNodes = resolveCollisionsNearParents4Dir(
+        mirrored,
+        edges,
+        boardWidth,
+        boardHeight,
+        displayMode,
+        photoSize,
+        cardScale,
+        {
+          minLeftX: 24,
+          rightMargin: 24,
+          minTopY: 64,
+          bottomMargin: 26,
+          padX: solverCommonOpts.padX,
+          padY: solverCommonOpts.padY,
+          anchorMaxGen: 2,
+          lockedNodeIds: rootLockedIds,
+        }
+      );
+      return { nodes: cleanTreeNodes, edges };
+    }
+
+    return { nodes, edges };
   }
 
   // -------------------------------------------------------------------------

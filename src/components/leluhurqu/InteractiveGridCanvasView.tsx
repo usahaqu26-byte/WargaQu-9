@@ -115,9 +115,11 @@ export type GenGradientPaletteId =
   | 'royal_emerald'
   | 'ocean_blue'
   | 'amber_earth'
-  | 'violet_dusk';
+  | 'violet_dusk'
+  | 'wood_leaf';
 export type ConnectorLineStyle = 'pcb90' | 'pcb45' | 'straight' | 'curved' | 'none';
 export type LineRoutingTopology = 'direct' | 'sibling_chain_all' | 'sibling_chain_g3plus';
+export type LineThicknessMode = 'uniform' | 'tree_taper';
 export type EdgePortSide = 'auto' | 'top' | 'bottom' | 'left' | 'right';
 export type CaptionPosition =
   | 'bottom-bar'
@@ -215,6 +217,8 @@ export interface SavedGridDesign {
   bgStyle: CanvasBackground;
   lineStyle?: ConnectorLineStyle;
   lineRoutingTopology?: LineRoutingTopology;
+  lineThicknessMode?: LineThicknessMode;
+  showLineArrows?: boolean;
   lineThickness?: number;
   childLineColor?: string;
   coupleLineColor?: string;
@@ -320,6 +324,17 @@ const GEN_GRADIENT_PALETTES: Record<
       { bg: '#a855f7', border: '#4c1d95', line: '#c084fc' },
       { bg: '#e9d5ff', border: '#7e22ce', line: '#d8b4fe' },
       { bg: '#faf5ff', border: '#9333ea', line: '#e9d5ff' },
+    ],
+  },
+  wood_leaf: {
+    label: 'Coklat Kayu (G1) ➔ Hijau Daun (G5+)',
+    stops: [
+      { bg: '#3f1d0b', border: '#b45309', line: '#78350f' },
+      { bg: '#6b3410', border: '#d97706', line: '#92400e' },
+      { bg: '#4d5e18', border: '#84cc16', line: '#65a30d' },
+      { bg: '#166534', border: '#22c55e', line: '#22c55e' },
+      { bg: '#15803d', border: '#4ade80', line: '#4ade80' },
+      { bg: '#86efac', border: '#16a34a', line: '#86efac' },
     ],
   },
 };
@@ -981,6 +996,9 @@ function getSmartPorts(
   } else if (edgeType === 'child' && n2.y >= n1.y + s1.h * 0.6) {
     // Keturunan ke bawah -> jalur PCB keluar dari port bawah ke port atas anak
     autoPair = { a: p1.bottom, b: p2.top, dir1: 'bottom', dir2: 'top' };
+  } else if (edgeType === 'child' && n2.y + s2.h <= n1.y + s1.h * 0.4) {
+    // Keturunan ke atas (Pohon Besar G1 bawah -> G5 kanopi atas)
+    autoPair = { a: p1.top, b: p2.bottom, dir1: 'top', dir2: 'bottom' };
   } else if (
     edgeType === 'child' &&
     n2.x >= n1.x + s1.w * 0.75 &&
@@ -988,6 +1006,13 @@ function getSmartPorts(
   ) {
     // Keturunan cabang horizontal kiri ke kanan
     autoPair = { a: p1.right, b: p2.left, dir1: 'right', dir2: 'left' };
+  } else if (
+    edgeType === 'child' &&
+    n2.x + s2.w * 0.75 <= n1.x &&
+    Math.abs(cy1 - cy2) < 200
+  ) {
+    // Keturunan cabang horizontal kanan ke kiri
+    autoPair = { a: p1.left, b: p2.right, dir1: 'left', dir2: 'right' };
   } else {
     let minDist = Infinity;
     autoPair = { a: p1.bottom, b: p2.top, dir1: 'bottom', dir2: 'top' };
@@ -1800,6 +1825,9 @@ export const InteractiveGridCanvasView: React.FC<
   const [lineStyle, setLineStyle] = useState<ConnectorLineStyle>('pcb90');
   const [lineRoutingTopology, setLineRoutingTopology] =
     useState<LineRoutingTopology>('sibling_chain_all');
+  const [lineThicknessMode, setLineThicknessMode] =
+    useState<LineThicknessMode>('uniform');
+  const [showLineArrows, setShowLineArrows] = useState<boolean>(true);
   const [lineThickness, setLineThickness] = useState<number>(2.5);
   const [childLineColor, setChildLineColor] = useState<string>('');
   const [coupleLineColor, setCoupleLineColor] = useState<string>('#f59e0b');
@@ -2531,6 +2559,8 @@ export const InteractiveGridCanvasView: React.FC<
       setBgStyle(target.bgStyle || '');
       setLineStyle(target.lineStyle || 'pcb90');
       setLineRoutingTopology(target.lineRoutingTopology || 'sibling_chain_all');
+      setLineThicknessMode(target.lineThicknessMode || 'uniform');
+      setShowLineArrows(target.showLineArrows ?? true);
       setLineThickness(target.lineThickness || 2.5);
       setChildLineColor(target.childLineColor ?? '');
       setCoupleLineColor(target.coupleLineColor ?? '#f59e0b');
@@ -2607,6 +2637,8 @@ export const InteractiveGridCanvasView: React.FC<
       bgStyle: '',
       lineStyle: 'pcb90',
       lineRoutingTopology: 'sibling_chain_all',
+      lineThicknessMode: 'uniform',
+      showLineArrows: true,
       lineThickness: 2.5,
       childLineColor: '',
       coupleLineColor: '#f59e0b',
@@ -2637,6 +2669,8 @@ export const InteractiveGridCanvasView: React.FC<
     setQuickText(initialDesign.quickText);
     setLineStyle('pcb90');
     setLineRoutingTopology('sibling_chain_all');
+    setLineThicknessMode('uniform');
+    setShowLineArrows(true);
     setLineThickness(2.5);
     setChildLineColor('');
     setCoupleLineColor('#f59e0b');
@@ -2750,6 +2784,8 @@ export const InteractiveGridCanvasView: React.FC<
                 bgStyle,
                 lineStyle,
                 lineRoutingTopology,
+                lineThicknessMode,
+                showLineArrows,
                 lineThickness,
                 childLineColor,
                 coupleLineColor,
@@ -2797,6 +2833,8 @@ export const InteractiveGridCanvasView: React.FC<
       bgStyle,
       lineStyle,
       lineRoutingTopology,
+      lineThicknessMode,
+      showLineArrows,
       lineThickness,
       childLineColor,
       coupleLineColor,
@@ -2910,6 +2948,8 @@ export const InteractiveGridCanvasView: React.FC<
     bgStyle,
     lineStyle,
     lineRoutingTopology,
+    lineThicknessMode,
+    showLineArrows,
     lineThickness,
     childLineColor,
     coupleLineColor,
@@ -3347,6 +3387,8 @@ export const InteractiveGridCanvasView: React.FC<
               bgStyle,
               lineStyle,
               lineRoutingTopology,
+              lineThicknessMode,
+              showLineArrows,
               lineThickness,
               childLineColor,
               coupleLineColor,
@@ -3386,6 +3428,8 @@ export const InteractiveGridCanvasView: React.FC<
         bgStyle,
         lineStyle,
         lineRoutingTopology,
+        lineThicknessMode,
+        showLineArrows,
         lineThickness,
         childLineColor,
         coupleLineColor,
@@ -3448,6 +3492,8 @@ export const InteractiveGridCanvasView: React.FC<
       bgStyle,
       lineStyle,
       lineRoutingTopology,
+      lineThicknessMode,
+      showLineArrows,
       lineThickness,
       childLineColor,
       coupleLineColor,
@@ -3504,6 +3550,8 @@ export const InteractiveGridCanvasView: React.FC<
     setBgStyle(design.bgStyle || '');
     setLineStyle(design.lineStyle || 'pcb90');
     setLineRoutingTopology(design.lineRoutingTopology || 'sibling_chain_all');
+    setLineThicknessMode(design.lineThicknessMode || 'uniform');
+    setShowLineArrows(design.showLineArrows ?? true);
     setLineThickness(design.lineThickness || 2.5);
     setChildLineColor(design.childLineColor ?? '');
     setCoupleLineColor(design.coupleLineColor ?? '#f59e0b');
@@ -3795,6 +3843,16 @@ export const InteractiveGridCanvasView: React.FC<
           ? 'a3'
           : analyzeTrahForSmartLayout(sourceMembers).recommendedPaper;
         setPaperSize(nextPaper);
+      }
+
+      if (presetId === 'pohon_hayat_besar') {
+        setLineStyle('curved');
+        setLineThicknessMode('tree_taper');
+        setGenGradientPalette('wood_leaf');
+        setLinesOnTop(false);
+        setShowLineArrows(true);
+      } else {
+        setLineThicknessMode(preset.recommendedLineThicknessMode || 'uniform');
       }
 
       if (applyRecommendedStyle && !preserveCardAppearance) {
@@ -5715,7 +5773,25 @@ export const InteractiveGridCanvasView: React.FC<
     []
   );
 
-  // Memoized Rute Garis Silsilah (mendukung Rantai Saudara Terdekat G1-G5 / Hibrid G3+ anti-silang)
+  // Peta urutan lahir anak (Kakak rank kecil -> Adik rank besar) agar panah Adik -> Kakak selalu akurat
+  const memberBirthRankMap = useMemo(() => {
+    const rank = new Map<string, number>();
+    const byParent = new Map<string, FamilyMember[]>();
+    windowedMembers.forEach((m) => {
+      const pid = m.parentId || '__root__';
+      if (!byParent.has(pid)) byParent.set(pid, []);
+      byParent.get(pid)!.push(m);
+    });
+    byParent.forEach((list) => {
+      const sorted = [...list].sort(
+        (a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0)
+      );
+      sorted.forEach((m, i) => rank.set(m.id, i));
+    });
+    return rank;
+  }, [windowedMembers]);
+
+  // Memoized Rute Garis Silsilah (mendukung Rantai Saudara Terdekat, Batang Pohon 20->1px, & Panah Arah)
   const computedEdges = useMemo<ComputedCanvasEdgeItem[]>(() => {
     if (lineStyle === 'none') return [];
     const obstacleBoxes: NodeObstacleBox[] = nodes.map((n) => {
@@ -5731,6 +5807,120 @@ export const InteractiveGridCanvasView: React.FC<
       photoFrameSize,
       cardScale
     );
+
+    const TREE_GEN_WIDTHS = [20, 15, 10, 5, 1.2];
+
+    const sampleRoutePts = (
+      dStr: string
+    ): Array<{ x: number; y: number }> => {
+      const cubicMatch = dStr.match(
+        /^M\s*([-\d.]+)\s+([-\d.]+)\s+C\s*([-\d.]+)\s+([-\d.]+),\s*([-\d.]+)\s+([-\d.]+),\s*([-\d.]+)\s+([-\d.]+)/
+      );
+      if (cubicMatch) {
+        const x0 = parseFloat(cubicMatch[1]);
+        const y0 = parseFloat(cubicMatch[2]);
+        const c1x = parseFloat(cubicMatch[3]);
+        const c1y = parseFloat(cubicMatch[4]);
+        const c2x = parseFloat(cubicMatch[5]);
+        const c2y = parseFloat(cubicMatch[6]);
+        const x3 = parseFloat(cubicMatch[7]);
+        const y3 = parseFloat(cubicMatch[8]);
+        const ptsOut: Array<{ x: number; y: number }> = [];
+        const steps = 14;
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const mt = 1 - t;
+          const px =
+            mt * mt * mt * x0 +
+            3 * mt * mt * t * c1x +
+            3 * mt * t * t * c2x +
+            t * t * t * x3;
+          const py =
+            mt * mt * mt * y0 +
+            3 * mt * mt * t * c1y +
+            3 * mt * t * t * c2y +
+            t * t * t * y3;
+          ptsOut.push({ x: px, y: py });
+        }
+        return ptsOut;
+      }
+
+      const quadMatch = dStr.match(
+        /^M\s*([-\d.]+)\s+([-\d.]+)\s+Q\s*([-\d.]+)\s+([-\d.]+),\s*([-\d.]+)\s+([-\d.]+)/
+      );
+      if (quadMatch) {
+        const x0 = parseFloat(quadMatch[1]);
+        const y0 = parseFloat(quadMatch[2]);
+        const cx = parseFloat(quadMatch[3]);
+        const cy = parseFloat(quadMatch[4]);
+        const x2 = parseFloat(quadMatch[5]);
+        const y2 = parseFloat(quadMatch[6]);
+        const ptsOut: Array<{ x: number; y: number }> = [];
+        const steps = 12;
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const mt = 1 - t;
+          ptsOut.push({
+            x: mt * mt * x0 + 2 * mt * t * cx + t * t * x2,
+            y: mt * mt * y0 + 2 * mt * t * cy + t * t * y2,
+          });
+        }
+        return ptsOut;
+      }
+
+      const nums = dStr.match(/-?\d+(?:\.\d+)?/g);
+      const ptsOut: Array<{ x: number; y: number }> = [];
+      if (nums && nums.length >= 4) {
+        for (let i = 0; i + 1 < nums.length; i += 2) {
+          ptsOut.push({ x: parseFloat(nums[i]), y: parseFloat(nums[i + 1]) });
+        }
+      }
+      return ptsOut;
+    };
+
+    const buildTaperedBranchPath = (
+      routePts: Array<{ x: number; y: number }>,
+      startW: number,
+      endW: number
+    ): string | undefined => {
+      if (routePts.length < 2) return undefined;
+      const leftPts: string[] = [];
+      const rightPts: string[] = [];
+      const total = routePts.length - 1;
+      for (let i = 0; i <= total; i++) {
+        const t = i / Math.max(1, total);
+        const hw = (startW + (endW - startW) * t) / 2;
+        const prev = routePts[Math.max(0, i - 1)];
+        const next = routePts[Math.min(total, i + 1)];
+        let tx = next.x - prev.x;
+        let ty = next.y - prev.y;
+        const len = Math.hypot(tx, ty);
+        if (len < 1e-4) {
+          tx = 0;
+          ty = 1;
+        } else {
+          tx /= len;
+          ty /= len;
+        }
+        const nx = -ty;
+        const ny = tx;
+        const p = routePts[i];
+        leftPts.push(
+          `${Math.round((p.x + nx * hw) * 10) / 10} ${
+            Math.round((p.y + ny * hw) * 10) / 10
+          }`
+        );
+        rightPts.unshift(
+          `${Math.round((p.x - nx * hw) * 10) / 10} ${
+            Math.round((p.y - ny * hw) * 10) / 10
+          }`
+        );
+      }
+      return `M ${leftPts[0]} ${leftPts
+        .slice(1)
+        .map((pt) => `L ${pt}`)
+        .join(' ')} ${rightPts.map((pt) => `L ${pt}`).join(' ')} Z`;
+    };
 
     return displayEdges
       .map(({ origIdx, edge, edgeKind }) => {
@@ -5787,12 +5977,106 @@ export const InteractiveGridCanvasView: React.FC<
             Math.abs(pts.a.y - pts.b.y) > 1);
         const gradId = `edge-grad-${origIdx}`;
 
+        // Ketebalan garis bertingkat ala Batang Pohon (20 -> 15 -> 10 -> 5 -> 1px) vs seragam
+        const g1Idx = Math.max(0, Math.min(4, Math.floor(n1.genLevel ?? 0)));
+        const g2Idx = Math.max(
+          0,
+          Math.min(4, Math.floor(n2.genLevel ?? g1Idx + 1))
+        );
+        let startW =
+          edgeKind === 'sibling'
+            ? Math.max(1.3, lineThickness * 0.85)
+            : lineThickness;
+        let endW = startW;
+
+        if (lineThicknessMode === 'tree_taper' && edgeKind !== 'couple') {
+          if (edgeKind === 'child') {
+            startW = TREE_GEN_WIDTHS[g1Idx];
+            endW = TREE_GEN_WIDTHS[g2Idx];
+          } else {
+            const sibW = Math.max(
+              1,
+              Math.min(4.2, TREE_GEN_WIDTHS[g2Idx] * 0.45)
+            );
+            startW = sibW;
+            endW = sibW;
+          }
+        }
+        const avgStrokeWidth = Math.round(((startW + endW) / 2) * 10) / 10;
+
+        const routePts =
+          (lineThicknessMode === 'tree_taper' && edgeKind === 'child') ||
+          (showLineArrows && edgeKind !== 'couple')
+            ? sampleRoutePts(route.d)
+            : [];
+
+        const taperedPathD =
+          lineThicknessMode === 'tree_taper' &&
+          edgeKind === 'child' &&
+          Math.abs(startW - endW) >= 0.5 &&
+          routePts.length >= 2
+            ? buildTaperedBranchPath(routePts, startW, endW)
+            : undefined;
+
+        // Panah Arah: Ortu -> Anak (di ujung anak) & Adik -> Kakak (di ujung kakak sesuai orderIndex)
+        let arrowMeta: ComputedCanvasEdgeItem['arrowMeta'] = undefined;
+        if (showLineArrows && edgeKind !== 'couple' && routePts.length >= 2) {
+          let pointToEnd = true;
+          if (edgeKind === 'sibling') {
+            const rFrom = n1.memberId
+              ? memberBirthRankMap.get(n1.memberId) ?? 0
+              : 0;
+            const rTo = n2.memberId
+              ? memberBirthRankMap.get(n2.memberId) ?? 0
+              : 0;
+            pointToEnd = rTo <= rFrom;
+          }
+          const tipPt = pointToEnd
+            ? routePts[routePts.length - 1]
+            : routePts[0];
+          const prevPt = pointToEnd
+            ? routePts[routePts.length - 2]
+            : routePts[1];
+          let vx = tipPt.x - prevPt.x;
+          let vy = tipPt.y - prevPt.y;
+          if (Math.hypot(vx, vy) < 0.5) {
+            const side = pointToEnd ? pts.dir2 : pts.dir1;
+            vx = side === 'left' ? 1 : side === 'right' ? -1 : 0;
+            vy = side === 'top' ? 1 : side === 'bottom' ? -1 : 0;
+          }
+          const angleRad = Math.atan2(vy, vx);
+          const tipW = pointToEnd ? endW : startW;
+          const arrowSize =
+            lineThicknessMode === 'tree_taper'
+              ? Math.max(6, Math.min(18, Math.round((tipW * 0.95 + 4.5) * 10) / 10))
+              : Math.max(6.5, Math.min(12, Math.round((tipW * 1.6 + 3) * 10) / 10));
+          const arrowColor =
+            edgeKind === 'sibling'
+              ? resolvedSiblingColor
+              : canUseGrad
+              ? pointToEnd
+                ? g2Style?.line || lineColor
+                : g1Style?.line || lineColor
+              : lineColor;
+          arrowMeta = {
+            tipX: tipPt.x,
+            tipY: tipPt.y,
+            angleRad,
+            size: arrowSize,
+            color: arrowColor,
+            kind: edgeKind,
+          };
+        }
+
         return {
           idx: origIdx,
           edge,
           pts,
           route,
           edgeKind,
+          strokeWidth: avgStrokeWidth,
+          taperedPathD,
+          arrowMeta,
           lineColor,
           gradFrom: g1Style?.line || lineColor,
           gradTo: g2Style?.line || lineColor,
@@ -5805,8 +6089,12 @@ export const InteractiveGridCanvasView: React.FC<
     nodes,
     edges,
     nodeMap,
+    memberBirthRankMap,
     lineStyle,
     lineRoutingTopology,
+    lineThicknessMode,
+    showLineArrows,
+    lineThickness,
     cardDisplayMode,
     photoFrameSize,
     cardScale,
@@ -6420,6 +6708,7 @@ export const InteractiveGridCanvasView: React.FC<
                       }`}
                     >
                       <option value="none">Polos / Ikuti Tema Kanvas</option>
+                      <option value="wood_leaf">Coklat Kayu (G1) ➔ Hijau Daun (G5+)</option>
                       <option value="royal_emerald">Zamrud Tua (G1) ➔ Mint Cerah (G5+)</option>
                       <option value="ocean_blue">Biru Samudra (G1) ➔ Langit Cerah (G5+)</option>
                       <option value="amber_earth">Coklat Emas (G1) ➔ Krem Cerah (G5+)</option>
@@ -6696,15 +6985,18 @@ export const InteractiveGridCanvasView: React.FC<
                   {/* Ketebalan Garis */}
                   {lineStyle !== 'none' && (
                     <>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1 flex-wrap">
                         <span className="text-[10px] opacity-75">Tebal Garis:</span>
                         {[1.8, 2.5, 3.5].map((w) => (
                           <button
                             key={w}
                             type="button"
-                            onClick={() => setLineThickness(w)}
+                            onClick={() => {
+                              setLineThicknessMode('uniform');
+                              setLineThickness(w);
+                            }}
                             className={`px-2 py-0.5 rounded-md border text-[10px] font-bold ${
-                              lineThickness === w
+                              lineThicknessMode === 'uniform' && lineThickness === w
                                 ? 'bg-sky-500 text-slate-950 border-sky-400'
                                 : 'border-slate-600 opacity-75'
                             }`}
@@ -6712,10 +7004,33 @@ export const InteractiveGridCanvasView: React.FC<
                             {w === 1.8 ? 'Tipis' : w === 2.5 ? 'Standar' : 'Tebal'}
                           </button>
                         ))}
+                        <button
+                          type="button"
+                          onClick={() => setLineThicknessMode('tree_taper')}
+                          title="G1 batang 20px, G2 15px, G3 10px, G4 5px, G5 ranting 1px"
+                          className={`px-2 py-0.5 rounded-md border text-[10px] font-bold ${
+                            lineThicknessMode === 'tree_taper'
+                              ? 'bg-amber-500 text-slate-950 border-amber-300'
+                              : 'border-slate-600 opacity-75'
+                          }`}
+                        >
+                          Batang Pohon (20➔1px)
+                        </button>
                       </div>
 
-                      {/* Anti-Tertutup Kartu & Titik Dot Geser Garis */}
+                      {/* Anti-Tertutup Kartu & Panah & Titik Dot Geser Garis */}
                       <div className="p-2 rounded-xl border border-sky-500/30 bg-sky-500/10 space-y-1.5">
+                        <label className="flex items-center gap-2 cursor-pointer text-[10.5px]">
+                          <input
+                            type="checkbox"
+                            checked={showLineArrows}
+                            onChange={(e) => setShowLineArrows(e.target.checked)}
+                            className="accent-emerald-400"
+                          />
+                          <span className="font-bold text-emerald-300">
+                            Panah arah silsilah (Ortu ➔ Anak &amp; Adik ➔ Kakak)
+                          </span>
+                        </label>
                         <label className="flex items-center gap-2 cursor-pointer text-[10.5px]">
                           <input
                             type="checkbox"
@@ -8443,6 +8758,9 @@ export const InteractiveGridCanvasView: React.FC<
                           pts,
                           route,
                           edgeKind,
+                          strokeWidth,
+                          taperedPathD,
+                          arrowMeta,
                           lineColor,
                           gradFrom,
                           gradTo,
@@ -8451,9 +8769,11 @@ export const InteractiveGridCanvasView: React.FC<
                         }) => {
                           const isActiveEdge = activeEdgeIdx === idx;
                           const isSiblingEdge = edgeKind === 'sibling';
-                          const baseStrokeWidth = isSiblingEdge
-                            ? Math.max(1.3, lineThickness * 0.85)
-                            : lineThickness;
+                          const baseStrokeWidth =
+                            strokeWidth ??
+                            (isSiblingEdge
+                              ? Math.max(1.3, lineThickness * 0.85)
+                              : lineThickness);
                           const strokePaint = isActiveEdge
                             ? '#f59e0b'
                             : canUseGrad && !skipEdgeGradients
@@ -8461,42 +8781,86 @@ export const InteractiveGridCanvasView: React.FC<
                             : lineColor;
                           return (
                             <g key={`edge-${idx}-${edge.from}-${edge.to}`}>
-                              {linesOnTop && (
+                              {taperedPathD ? (
+                                <>
+                                  {linesOnTop && (
+                                    <path
+                                      d={taperedPathD}
+                                      fill={
+                                        isDark
+                                          ? 'rgba(15,23,42,0.75)'
+                                          : 'rgba(255,255,255,0.8)'
+                                      }
+                                      stroke={
+                                        isDark
+                                          ? 'rgba(15,23,42,0.75)'
+                                          : 'rgba(255,255,255,0.8)'
+                                      }
+                                      strokeWidth={3}
+                                    />
+                                  )}
+                                  <path
+                                    d={taperedPathD}
+                                    fill={strokePaint}
+                                    fillOpacity={linesOnTop ? 0.92 : 1}
+                                  />
+                                </>
+                              ) : (
+                                <>
+                                  {linesOnTop && (
+                                    <path
+                                      d={route.d}
+                                      stroke={
+                                        isDark
+                                          ? 'rgba(15,23,42,0.75)'
+                                          : 'rgba(255,255,255,0.8)'
+                                      }
+                                      strokeWidth={baseStrokeWidth + 3}
+                                      strokeLinecap="round"
+                                      strokeLinejoin={
+                                        lineStyle === 'pcb90' ? 'miter' : 'round'
+                                      }
+                                      fill="none"
+                                    />
+                                  )}
+                                  <path
+                                    d={route.d}
+                                    stroke={strokePaint}
+                                    strokeWidth={
+                                      isActiveEdge
+                                        ? baseStrokeWidth + 1.2
+                                        : baseStrokeWidth
+                                    }
+                                    strokeDasharray={
+                                      edge.type === 'couple' ? '6,4' : undefined
+                                    }
+                                    strokeLinecap="round"
+                                    strokeLinejoin={
+                                      lineStyle === 'pcb90' ? 'miter' : 'round'
+                                    }
+                                    strokeOpacity={linesOnTop ? 0.92 : 1}
+                                    fill="none"
+                                  />
+                                </>
+                              )}
+                              {arrowMeta && (
                                 <path
-                                  d={route.d}
-                                  stroke={
-                                    isDark
-                                      ? 'rgba(15,23,42,0.75)'
-                                      : 'rgba(255,255,255,0.8)'
+                                  d={
+                                    arrowMeta.kind === 'sibling'
+                                      ? `M 0 0 L ${-arrowMeta.size} ${-arrowMeta.size * 0.48} L ${-arrowMeta.size * 0.58} 0 L ${-arrowMeta.size} ${arrowMeta.size * 0.48} Z`
+                                      : `M 0 0 L ${-arrowMeta.size} ${-arrowMeta.size * 0.56} L ${-arrowMeta.size * 0.72} 0 L ${-arrowMeta.size} ${arrowMeta.size * 0.56} Z`
                                   }
-                                  strokeWidth={baseStrokeWidth + 3}
-                                  strokeLinecap="round"
-                                  strokeLinejoin={
-                                    lineStyle === 'pcb90' ? 'miter' : 'round'
-                                  }
-                                  fill="none"
+                                  transform={`translate(${arrowMeta.tipX}, ${arrowMeta.tipY}) rotate(${(
+                                    (arrowMeta.angleRad * 180) /
+                                    Math.PI
+                                  ).toFixed(2)})`}
+                                  fill={isActiveEdge ? '#f59e0b' : arrowMeta.color}
                                 />
                               )}
                               <path
                                 d={route.d}
-                                stroke={strokePaint}
-                                strokeWidth={
-                                  isActiveEdge ? baseStrokeWidth + 1.2 : baseStrokeWidth
-                                }
-                                strokeDasharray={
-                                  edge.type === 'couple' ? '6,4' : undefined
-                                }
-                                strokeLinecap="round"
-                                strokeLinejoin={
-                                  lineStyle === 'pcb90' ? 'miter' : 'round'
-                                }
-                                strokeOpacity={linesOnTop ? 0.92 : 1}
-                                fill="none"
-                              />
-                              <path
-                                d={route.d}
                                 stroke="transparent"
-                                strokeWidth={Math.max(14, lineThickness + 10)}
+                                strokeWidth={Math.max(14, baseStrokeWidth + 10)}
                                 fill="none"
                                 className="pointer-events-auto cursor-pointer print:hidden"
                                 onMouseDown={(e) => {
@@ -8748,7 +9112,9 @@ export const InteractiveGridCanvasView: React.FC<
                                   (isDark || bgStyle !== '' ? '#38bdf8' : '#0284c7'),
                               }}
                             />
-                            <span>Keturunan</span>
+                            <span>
+                              {showLineArrows ? 'Ortu ➔ Anak' : 'Keturunan'}
+                            </span>
                           </div>
                           {lineRoutingTopology !== 'direct' && (
                             <div className="flex items-center gap-1.5">
@@ -8760,7 +9126,9 @@ export const InteractiveGridCanvasView: React.FC<
                                     (isDark || bgStyle !== '' ? '#a78bfa' : '#7c3aed'),
                                 }}
                               />
-                              <span>Saudara</span>
+                              <span>
+                                {showLineArrows ? 'Adik ➔ Kakak' : 'Saudara'}
+                              </span>
                             </div>
                           )}
                           <div className="flex items-center gap-1.5">
@@ -9832,6 +10200,34 @@ export const InteractiveGridCanvasView: React.FC<
                       </button>
                     ))}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLineThicknessMode((m) =>
+                        m === 'tree_taper' ? 'uniform' : 'tree_taper'
+                      )
+                    }
+                    title="Tebal garis bertingkat batang pohon: G1 20px ➔ G5 1px"
+                    className={`px-2 py-0.5 rounded-lg font-bold whitespace-nowrap border transition ${
+                      lineThicknessMode === 'tree_taper'
+                        ? 'bg-amber-500 text-slate-950 border-amber-300'
+                        : 'bg-stone-800/90 text-stone-300 border-stone-700 hover:text-white'
+                    }`}
+                  >
+                    Batang 20→1px
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowLineArrows((v) => !v)}
+                    title="Tampilkan panah arah Ortu ➔ Anak & Adik ➔ Kakak"
+                    className={`px-2 py-0.5 rounded-lg font-bold whitespace-nowrap border transition ${
+                      showLineArrows
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-300'
+                        : 'bg-stone-800/90 text-stone-300 border-stone-700 hover:text-white'
+                    }`}
+                  >
+                    Panah {showLineArrows ? 'On' : 'Off'}
+                  </button>
                 </div>
 
                 {/* Daftar Pilihan Tata Letak Smart (1 Klik Siap Cetak) */}
