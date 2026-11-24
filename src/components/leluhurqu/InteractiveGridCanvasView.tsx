@@ -35,10 +35,6 @@ import {
   Smartphone,
   Lock,
   Unlock,
-  ChevronUp,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   Layers,
   Split,
   Undo2,
@@ -51,10 +47,17 @@ import {
   Download,
   Loader2,
   Image as ImageIcon,
+  Eye,
+  EyeOff,
+  RotateCw,
 } from 'lucide-react';
 import { FamilyMember, TrahCategory } from './LeluhurQuView';
 import { MonetizationService } from '../../services/monetizationService';
 import { isNativeCapacitorApk } from '../../services/appOriginService';
+import {
+  applyStudioScreenOrientation,
+  StudioScreenMode,
+} from '../../services/screenStudioService';
 import {
   upscaleImageToHdDataUrl,
   upscalePhotoMap,
@@ -66,6 +69,12 @@ import {
   PairingSyncEventDetail,
 } from '../../services/devicePairingService';
 import { ModularFeeSheet } from '../monetization/ModularFeeSheet';
+import { GridCardItem } from './GridCardItem';
+import {
+  GridHybridSnapshotCanvas,
+  GridMiniNavigator,
+  ComputedCanvasEdgeItem,
+} from './GridHybridCanvasLayer';
 import {
   SMART_LAYOUT_PRESETS,
   SmartPresetId,
@@ -73,9 +82,7 @@ import {
   analyzeTrahForSmartLayout,
   computeOptimalCardScale,
   computeMergedCardMetrics,
-  computeModularContainerPlan,
   getUniformSubCardSize,
-  ModularNuclearGroup,
   formatMemberLifeSubtitle,
   generateSmartLayoutFromTable,
 } from './smartGridLayouts';
@@ -230,6 +237,7 @@ export interface InteractiveGridCanvasViewProps {
   defaultCuratorName?: string;
   defaultCreatedYear?: string;
   defaultPhotoShape?: GridPhotoShape;
+  enterStudioTrigger?: number;
 }
 
 // Ukuran Kertas Standar A0 - A4 pada skala 96 DPI (proporsional cetak)
@@ -1498,6 +1506,7 @@ export const InteractiveGridCanvasView: React.FC<
   defaultCuratorName = '',
   defaultCreatedYear = '',
   defaultPhotoShape = 'kotak',
+  enterStudioTrigger = 0,
 }) => {
   // Mode Layout & Interaksi
   const [layoutMode, setLayoutMode] = useState<GridLayoutMode>('manual');
@@ -1561,10 +1570,7 @@ export const InteractiveGridCanvasView: React.FC<
 
   // Kunci Geser Aman (Hold 2 detik untuk tampilkan panah ▲▼◀▶ & buka geser kartu)
   const [safeHoldMove, setSafeHoldMove] = useState<boolean>(true);
-  const [holdingState, setHoldingState] = useState<{
-    nodeId: string;
-    progress: number;
-  } | null>(null);
+  const [holdingNodeId, setHoldingNodeId] = useState<string | null>(null);
   const [moveUnlockedIds, setMoveUnlockedIds] = useState<string[]>([]);
   const [moveAnchorId, setMoveAnchorId] = useState<string | null>(null);
   const [activeEdgeIdx, setActiveEdgeIdx] = useState<number | null>(null);
@@ -1601,10 +1607,24 @@ export const InteractiveGridCanvasView: React.FC<
     startY: number;
   }>({ active: false, startX: 0, startY: 0 });
 
-  // Mode Leluasa (Layar Penuh dengan Tombol Melayang Adaptif) & Navigasi Sentuh
-  const [isFocusMode, setIsFocusMode] = useState<boolean>(false);
+  // Mode Studio Fullscreen (Otomatis aktif saat buka tab Grid) + Layar Miring ala Game + Hybrid Render
+  const [isFocusMode, setIsFocusMode] = useState<boolean>(true);
   const [isPanMode, setIsPanMode] = useState<boolean>(false);
-  const [autoScreenOrient, setAutoScreenOrient] = useState<boolean>(false);
+  const [studioScreenMode, setStudioScreenMode] =
+    useState<StudioScreenMode>('portrait');
+  const [nativeLandscapeActive, setNativeLandscapeActive] =
+    useState<boolean>(false);
+  const [windowSize, setWindowSize] = useState<{ w: number; h: number }>(() =>
+    typeof window !== 'undefined'
+      ? { w: window.innerWidth, h: window.innerHeight }
+      : { w: 390, h: 844 }
+  );
+  const [isHudHidden, setIsHudHidden] = useState<boolean>(false);
+  const [isMiniNavOpen, setIsMiniNavOpen] = useState<boolean>(false);
+  const [renderQualityMode, setRenderQualityMode] = useState<
+    'auto' | 'hd' | 'snapshot'
+  >('auto');
+  const [isDraggingCards, setIsDraggingCards] = useState<boolean>(false);
 
   // Undo History Stack (maksimal 35 langkah)
   const MAX_UNDO_STEPS = 35;
@@ -1658,9 +1678,28 @@ export const InteractiveGridCanvasView: React.FC<
 
   const boardRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const stageTransformRef = useRef<HTMLDivElement>(null);
+  const zoomLabelRef = useRef<HTMLSpanElement>(null);
+  const miniNavViewportElRef = useRef<HTMLDivElement | null>(null);
+  const nodeDomRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const dragRubberSvgRef = useRef<SVGSVGElement | null>(null);
   const loadedTrahIdRef = useRef<string>('');
   const lastMemberSigRef = useRef<string>('');
   const lastStructureSigRef = useRef<string>('');
+
+  // GPU Artboard Transform Ref (0 React re-render saat pan / pinch-zoom!)
+  const viewTransformRef = useRef<{ panX: number; panY: number; zoom: number }>({
+    panX: 24,
+    panY: 24,
+    zoom: 0.56,
+  });
+  const stageRafRef = useRef<number | null>(null);
+  const zoomSyncTimerRef = useRef<number | null>(null);
+  const pendingFocusCenterRef = useRef<{
+    x: number;
+    y: number;
+    zoom: number;
+  } | null>(null);
 
   // Pinch-to-Zoom 2 Jari & Pan Hand Ref
   const pinchRef = useRef<{
@@ -1669,39 +1708,41 @@ export const InteractiveGridCanvasView: React.FC<
     startZoom: number;
     midX: number;
     midY: number;
-    startScrollLeft: number;
-    startScrollTop: number;
+    startPanX: number;
+    startPanY: number;
   }>({
     active: false,
     startDist: 0,
     startZoom: 1,
     midX: 0,
     midY: 0,
-    startScrollLeft: 0,
-    startScrollTop: 0,
+    startPanX: 0,
+    startPanY: 0,
   });
 
   const panDragRef = useRef<{
     active: boolean;
     startClientX: number;
     startClientY: number;
-    startScrollLeft: number;
-    startScrollTop: number;
+    startPanX: number;
+    startPanY: number;
   }>({
     active: false,
     startClientX: 0,
     startClientY: 0,
-    startScrollLeft: 0,
-    startScrollTop: 0,
+    startPanX: 0,
+    startPanY: 0,
   });
 
-  // Drag State Ref (mendukung drag 1 kartu, multi-select, maupun satu Group sekaligus!)
+  // Drag State Ref (Direct-DOM GPU translate3d tanpa setNodes tiap frame!)
   const dragStateRef = useRef<{
     active: boolean;
     movingIds: string[];
     startPointerX: number;
     startPointerY: number;
     initialPositions: Record<string, { x: number; y: number }>;
+    lastDx: number;
+    lastDy: number;
     preDragNodes?: InteractiveNode[];
   }>({
     active: false,
@@ -1709,6 +1750,8 @@ export const InteractiveGridCanvasView: React.FC<
     startPointerX: 0,
     startPointerY: 0,
     initialPositions: {},
+    lastDx: 0,
+    lastDy: 0,
   });
 
   // Dimensi Kertas Aktif (A0 - A4)
@@ -1749,6 +1792,10 @@ export const InteractiveGridCanvasView: React.FC<
         margin: 0;
       }
       @media print {
+        #grid-gpu-stage {
+          transform: none !important;
+          position: static !important;
+        }
         #printable-pcb-preview {
           width: ${boardWidth}px !important;
           height: ${boardHeight}px !important;
@@ -2688,56 +2735,295 @@ export const InteractiveGridCanvasView: React.FC<
     );
   }, [activeTrah.id, activeTrah.members, windowedMembers, activeDesignId, activePresetId]);
 
-  // Auto-Fit kanvas ke viewport layar (menyesuaikan lebar & tinggi agar kertas Potret/Lanskap utuh)
-  const handleFitScreen = useCallback(() => {
-    if (!viewportRef.current) return;
-    const pad = isFocusMode ? 24 : 40;
-    const availW = Math.max(160, viewportRef.current.clientWidth - pad);
-    const availH = Math.max(160, viewportRef.current.clientHeight - pad);
-    const fit = Math.max(
-      0.15,
-      Math.min(1.5, +Math.min(availW / boardWidth, availH / boardHeight).toFixed(2))
-    );
-    setZoom(fit);
-    showNotification(
-      `Kertas ${paperDim.label} (${paperOrientation === 'landscape' ? 'Lanskap' : 'Potret'}) pas layar (${Math.round(
-        fit * 100
-      )}%)`
-    );
-  }, [boardWidth, boardHeight, isFocusMode, paperDim.label, paperOrientation, showNotification]);
+  const isCssLandscapeActive =
+    isFocusMode &&
+    studioScreenMode === 'landscape' &&
+    !nativeLandscapeActive &&
+    windowSize.h > windowSize.w;
 
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (viewportRef.current) {
-        const pad = isFocusMode ? 24 : 40;
-        const availW = Math.max(160, viewportRef.current.clientWidth - pad);
-        const availH = Math.max(160, viewportRef.current.clientHeight - pad);
-        const fit = Math.max(
-          0.15,
-          Math.min(1.1, +Math.min(availW / boardWidth, availH / boardHeight).toFixed(2))
-        );
-        setZoom(fit);
+  const getViewportMetrics = useCallback(() => {
+    if (isCssLandscapeActive) {
+      return { w: Math.max(240, windowSize.h), h: Math.max(200, windowSize.w) };
+    }
+    const vp = viewportRef.current;
+    if (vp && vp.clientWidth > 60 && vp.clientHeight > 60) {
+      return { w: vp.clientWidth, h: vp.clientHeight };
+    }
+    return { w: Math.max(240, windowSize.w), h: Math.max(200, windowSize.h) };
+  }, [isCssLandscapeActive, windowSize.h, windowSize.w]);
+
+  const getViewportLocalPoint = useCallback(
+    (clientX: number, clientY: number) => {
+      if (isCssLandscapeActive) {
+        return { x: clientY, y: windowSize.w - clientX };
       }
-    }, 60);
-    return () => clearTimeout(t);
-  }, [paperSize, paperOrientation, activeDesignId, isFocusMode, boardWidth, boardHeight]);
+      const rect = viewportRef.current?.getBoundingClientRect();
+      if (!rect) return { x: clientX, y: clientY };
+      return { x: clientX - rect.left, y: clientY - rect.top };
+    },
+    [isCssLandscapeActive, windowSize.w]
+  );
 
-  // Ikuti orientasi layar (Potret / Lanskap) otomatis bila diaktifkan
+  const getBoardPoint = useCallback(
+    (clientX: number, clientY: number) => {
+      const vpPt = getViewportLocalPoint(clientX, clientY);
+      const vt = viewTransformRef.current;
+      return {
+        x: (vpPt.x - vt.panX) / vt.zoom,
+        y: (vpPt.y - vt.panY) / vt.zoom,
+      };
+    },
+    [getViewportLocalPoint]
+  );
+
+  const applyStageTransformNow = useCallback(() => {
+    const vt = viewTransformRef.current;
+    if (stageTransformRef.current) {
+      stageTransformRef.current.style.transform = `translate3d(${vt.panX}px, ${vt.panY}px, 0) scale(${vt.zoom})`;
+    }
+    if (zoomLabelRef.current) {
+      zoomLabelRef.current.textContent = `${Math.round(vt.zoom * 100)}%`;
+    }
+    if (miniNavViewportElRef.current) {
+      const { w: vpW, h: vpH } = getViewportMetrics();
+      const maxW = 122;
+      const maxH = 84;
+      const mapScale = Math.min(maxW / boardWidth, maxH / boardHeight);
+      const visX = (-vt.panX / vt.zoom) * mapScale;
+      const visY = (-vt.panY / vt.zoom) * mapScale;
+      const visW = (vpW / vt.zoom) * mapScale;
+      const visH = (vpH / vt.zoom) * mapScale;
+      const mapW = Math.max(56, Math.round(boardWidth * mapScale));
+      const mapH = Math.max(40, Math.round(boardHeight * mapScale));
+      const clampedL = Math.max(0, Math.min(mapW - 8, visX));
+      const clampedT = Math.max(0, Math.min(mapH - 8, visY));
+      miniNavViewportElRef.current.style.left = `${clampedL}px`;
+      miniNavViewportElRef.current.style.top = `${clampedT}px`;
+      miniNavViewportElRef.current.style.width = `${Math.max(
+        10,
+        Math.min(mapW - clampedL, visW)
+      )}px`;
+      miniNavViewportElRef.current.style.height = `${Math.max(
+        10,
+        Math.min(mapH - clampedT, visH)
+      )}px`;
+    }
+  }, [boardHeight, boardWidth, getViewportMetrics]);
+
+  const scheduleStageRender = useCallback(() => {
+    if (stageRafRef.current !== null) return;
+    stageRafRef.current = window.requestAnimationFrame(() => {
+      stageRafRef.current = null;
+      applyStageTransformNow();
+    });
+  }, [applyStageTransformNow]);
+
+  const commitStageTransform = useCallback(
+    (
+      nextPanX: number,
+      nextPanY: number,
+      nextZoom: number,
+      syncReactImmediately = false
+    ) => {
+      const clampedZoom = Math.max(0.12, Math.min(2.6, nextZoom));
+      viewTransformRef.current = {
+        panX: nextPanX,
+        panY: nextPanY,
+        zoom: clampedZoom,
+      };
+      scheduleStageRender();
+
+      if (zoomSyncTimerRef.current !== null) {
+        window.clearTimeout(zoomSyncTimerRef.current);
+        zoomSyncTimerRef.current = null;
+      }
+      if (syncReactImmediately) {
+        setZoom(+clampedZoom.toFixed(3));
+      } else {
+        zoomSyncTimerRef.current = window.setTimeout(() => {
+          zoomSyncTimerRef.current = null;
+          setZoom(+viewTransformRef.current.zoom.toFixed(3));
+        }, 140);
+      }
+    },
+    [scheduleStageRender]
+  );
+
+  // Auto-Fit kanvas kertas A0-A4 ke tengah viewport GPU Stage
+  const handleFitScreen = useCallback(
+    (silent = false) => {
+      const { w: vpW, h: vpH } = getViewportMetrics();
+      const pad = isFocusMode ? 28 : 44;
+      const availW = Math.max(160, vpW - pad);
+      const availH = Math.max(160, vpH - pad);
+      const fit = Math.max(
+        0.12,
+        Math.min(1.35, +Math.min(availW / boardWidth, availH / boardHeight).toFixed(3))
+      );
+      const panX = Math.round((vpW - boardWidth * fit) / 2);
+      const panY = Math.round((vpH - boardHeight * fit) / 2);
+      commitStageTransform(panX, panY, fit, true);
+      if (!silent) {
+        showNotification(
+          `Kertas ${paperDim.label} (${paperOrientation === 'landscape' ? 'Lanskap' : 'Potret'}) pas layar (${Math.round(
+            fit * 100
+          )}%)`
+        );
+      }
+    },
+    [
+      boardHeight,
+      boardWidth,
+      commitStageTransform,
+      getViewportMetrics,
+      isFocusMode,
+      paperDim.label,
+      paperOrientation,
+      showNotification,
+    ]
+  );
+
+  const handleZoomByStep = useCallback(
+    (delta: number) => {
+      const { w: vpW, h: vpH } = getViewportMetrics();
+      const vt = viewTransformRef.current;
+      const nextZoom = Math.max(0.12, Math.min(2.6, +(vt.zoom + delta).toFixed(3)));
+      const midX = vpW / 2;
+      const midY = vpH / 2;
+      const worldX = (midX - vt.panX) / vt.zoom;
+      const worldY = (midY - vt.panY) / vt.zoom;
+      const nextPanX = midX - worldX * nextZoom;
+      const nextPanY = midY - worldY * nextZoom;
+      commitStageTransform(nextPanX, nextPanY, nextZoom, true);
+    },
+    [commitStageTransform, getViewportMetrics]
+  );
+
+  const handleJumpToBoardPoint = useCallback(
+    (boardX: number, boardY: number, overrideZoom?: number) => {
+      const { w: vpW, h: vpH } = getViewportMetrics();
+      const targetZoom = overrideZoom ?? viewTransformRef.current.zoom;
+      const nextPanX = vpW / 2 - boardX * targetZoom;
+      const nextPanY = vpH / 2 - boardY * targetZoom;
+      commitStageTransform(nextPanX, nextPanY, targetZoom, overrideZoom !== undefined);
+    },
+    [commitStageTransform, getViewportMetrics]
+  );
+
+  // Putar Layar HP (Potret <-> Lanskap ala Game) TANPA mengubah orientasi/isi kertas!
+  const handleToggleStudioScreenMode = useCallback(async () => {
+    const nextMode: StudioScreenMode =
+      studioScreenMode === 'landscape' ? 'portrait' : 'landscape';
+
+    // Simpan titik tengah kertas yang sedang dilihat agar setelah layar miring posisi tetap sama!
+    const { w: vpW, h: vpH } = getViewportMetrics();
+    const vt = viewTransformRef.current;
+    pendingFocusCenterRef.current = {
+      x: (vpW / 2 - vt.panX) / vt.zoom,
+      y: (vpH / 2 - vt.panY) / vt.zoom,
+      zoom: vt.zoom,
+    };
+
+    const result = await applyStudioScreenOrientation(
+      nextMode,
+      isFocusMode && nextMode === 'landscape'
+    );
+    setStudioScreenMode(nextMode);
+    setNativeLandscapeActive(result.nativeLandscape);
+    showNotification(
+      nextMode === 'landscape'
+        ? 'Mode Layar Miring (Lanskap Studio) aktif — posisi & ukuran kertas tetap utuh!'
+        : 'Kembali ke Mode Layar Berdiri (Potret)'
+    );
+  }, [getViewportMetrics, isFocusMode, showNotification, studioScreenMode]);
+
+  const handleExitFullscreenStudio = useCallback(async () => {
+    const { w: vpW, h: vpH } = getViewportMetrics();
+    const vt = viewTransformRef.current;
+    pendingFocusCenterRef.current = {
+      x: (vpW / 2 - vt.panX) / vt.zoom,
+      y: (vpH / 2 - vt.panY) / vt.zoom,
+      zoom: vt.zoom,
+    };
+    setIsFocusMode(false);
+    setStudioScreenMode('portrait');
+    setNativeLandscapeActive(false);
+    setIsHudHidden(false);
+    await applyStudioScreenOrientation('auto', false);
+  }, [getViewportMetrics]);
+
+  // Sinkronkan ukuran jendela layar saat rotate / resize
   useEffect(() => {
-    if (!autoScreenOrient) return;
-    const syncOrientationToScreen = () => {
-      const targetOrient: GridPaperOrientation =
-        window.innerWidth >= window.innerHeight ? 'landscape' : 'portrait';
-      setPaperOrientation((prev) => (prev === targetOrient ? prev : targetOrient));
+    const onResize = () => {
+      setWindowSize({ w: window.innerWidth, h: window.innerHeight });
     };
-    syncOrientationToScreen();
-    window.addEventListener('resize', syncOrientationToScreen);
-    window.addEventListener('orientationchange', syncOrientationToScreen);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
     return () => {
-      window.removeEventListener('resize', syncOrientationToScreen);
-      window.removeEventListener('orientationchange', syncOrientationToScreen);
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
     };
-  }, [autoScreenOrient]);
+  }, []);
+
+  // Masuk ulang ke Mode Studio Full-Layar saat user mengetuk tab Grid lagi
+  useEffect(() => {
+    if (enterStudioTrigger > 0) {
+      setIsFocusMode(true);
+      setIsHudHidden(false);
+    }
+  }, [enterStudioTrigger]);
+
+  // Pertahankan posisi fokus kertas saat orientasi layar HP berubah (Potret <-> Lanskap)
+  useEffect(() => {
+    const pending = pendingFocusCenterRef.current;
+    if (!pending) return;
+    const t = window.setTimeout(() => {
+      const p = pendingFocusCenterRef.current;
+      if (!p) return;
+      pendingFocusCenterRef.current = null;
+      const { w: vpW, h: vpH } = getViewportMetrics();
+      const panX = Math.round(vpW / 2 - p.x * p.zoom);
+      const panY = Math.round(vpH / 2 - p.y * p.zoom);
+      commitStageTransform(panX, panY, p.zoom, true);
+    }, 80);
+    return () => window.clearTimeout(t);
+  }, [
+    windowSize.w,
+    windowSize.h,
+    studioScreenMode,
+    nativeLandscapeActive,
+    isFocusMode,
+    getViewportMetrics,
+    commitStageTransform,
+  ]);
+
+  // Auto-Fit saat pertama buka, ganti desain, atau ganti ukuran/orientasi kertas
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      handleFitScreen(true);
+    }, 70);
+    return () => window.clearTimeout(t);
+  }, [paperSize, paperOrientation, activeDesignId, boardWidth, boardHeight, handleFitScreen]);
+
+  // Kembalikan orientasi layar normal saat keluar dari kanvas Grid
+  useEffect(() => {
+    return () => {
+      if (stageRafRef.current !== null) {
+        window.cancelAnimationFrame(stageRafRef.current);
+      }
+      if (zoomSyncTimerRef.current !== null) {
+        window.clearTimeout(zoomSyncTimerRef.current);
+      }
+      void applyStudioScreenOrientation('auto', false);
+    };
+  }, []);
+
+  // Re-apply stage transform saat Mini-Navigator dibuka agar kotak viewport langsung muncul
+  useEffect(() => {
+    if (isMiniNavOpen) {
+      applyStageTransformNow();
+    }
+  }, [isMiniNavOpen, applyStageTransformNow]);
 
   // Shortcut Keyboard: Ctrl+Z / Cmd+Z (Undo) & ESC keluar dari Mode Leluasa
   useEffect(() => {
@@ -3924,15 +4210,15 @@ export const InteractiveGridCanvasView: React.FC<
   }, [showGenGuides, nodes, activeTrah.members, cardDisplayMode, photoFrameSize, cardScale]);
 
   // =========================================================================
-  // INTERAKSI DRAG KARTU / HOLD 2 DETIK (PANAH ▲▼◀▶) / GESER DOT GARIS
+  // INTERAKSI DRAG KARTU GPU (0 RE-RENDER) / HOLD 2 DETIK / PINCH & PAN GPU
   // =========================================================================
   const cancelHoldTimer = useCallback(() => {
     if (holdTimerRef.current.intervalId !== null) {
-      window.clearInterval(holdTimerRef.current.intervalId);
+      window.clearTimeout(holdTimerRef.current.intervalId);
       holdTimerRef.current.intervalId = null;
     }
     holdTimerRef.current.active = false;
-    setHoldingState(null);
+    setHoldingNodeId(null);
   }, []);
 
   const stopNudgeRepeat = useCallback(() => {
@@ -3985,23 +4271,20 @@ export const InteractiveGridCanvasView: React.FC<
   ) => {
     e.stopPropagation();
     if ('cancelable' in e && e.cancelable) e.preventDefault();
-    if (!boardRef.current) return;
 
     const ed = edges[edgeIdx];
     if (!ed) return;
 
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-    const rect = boardRef.current.getBoundingClientRect();
-    const startPointerX = (clientX - rect.left) / zoom;
-    const startPointerY = (clientY - rect.top) / zoom;
+    const pt = getBoardPoint(clientX, clientY);
 
     setActiveEdgeIdx(edgeIdx);
     edgeDragRef.current = {
       active: true,
       edgeIdx,
-      startPointerX,
-      startPointerY,
+      startPointerX: pt.x,
+      startPointerY: pt.y,
       initOffsetX: ed.offsetX ?? 0,
       initOffsetY: ed.offsetY ?? 0,
       preDragEdges: edges.map((item) => ({ ...item })),
@@ -4077,6 +4360,20 @@ export const InteractiveGridCanvasView: React.FC<
     );
   };
 
+  const hitTestNodeAtBoardPoint = useCallback(
+    (bx: number, by: number): InteractiveNode | null => {
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        const n = nodes[i];
+        const sz = getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale);
+        if (bx >= n.x && bx <= n.x + sz.w && by >= n.y && by <= n.y + sz.h) {
+          return n;
+        }
+      }
+      return null;
+    },
+    [nodes, cardDisplayMode, photoFrameSize, cardScale]
+  );
+
   const startNodeInteraction = (
     e: React.MouseEvent | React.TouchEvent,
     id: string
@@ -4085,11 +4382,11 @@ export const InteractiveGridCanvasView: React.FC<
       lastTouchTimeRef.current = Date.now();
       if (e.touches.length >= 2) {
         dragStateRef.current.active = false;
+        setIsDraggingCards(false);
         cancelHoldTimer();
         return;
       }
     } else if (Date.now() - lastTouchTimeRef.current < 500) {
-      // Abaikan mousedown sintetis setelah touchstart pada layar sentuh
       return;
     }
 
@@ -4125,9 +4422,11 @@ export const InteractiveGridCanvasView: React.FC<
     if (!clickedNode) return;
 
     const isModifierPressed =
-      ('shiftKey' in e && e.shiftKey) || ('ctrlKey' in e && e.ctrlKey) || ('metaKey' in e && e.metaKey);
+      ('shiftKey' in e && e.shiftKey) ||
+      ('ctrlKey' in e && e.ctrlKey) ||
+      ('metaKey' in e && e.metaKey);
 
-    // 2. Mode Checklist Pilih Banyak: langsung pilih/batal pilih tanpa menekan lama (tanpa hold 2 detik)!
+    // 2. Mode Checklist Pilih Banyak
     if (isMultiSelectMode || isModifierPressed) {
       cancelHoldTimer();
       const nextSelection = selectedIds.includes(id)
@@ -4149,9 +4448,8 @@ export const InteractiveGridCanvasView: React.FC<
       setSelectedIds(activeSelection);
     }
 
-    if (layoutMode !== 'manual' || !boardRef.current) return;
+    if (layoutMode !== 'manual') return;
 
-    // Tentukan semua kartu yang ikut tergeser (kartu terpilih + semua anggota group terkait)
     const movingSet = new Set<string>(activeSelection);
     activeSelection.forEach((selId) => {
       const n = nodes.find((x) => x.id === selId);
@@ -4165,9 +4463,7 @@ export const InteractiveGridCanvasView: React.FC<
 
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-    const rect = boardRef.current.getBoundingClientRect();
-    const startX = (clientX - rect.left) / zoom;
-    const startY = (clientY - rect.top) / zoom;
+    const startPt = getBoardPoint(clientX, clientY);
 
     const initialPositions: Record<string, { x: number; y: number }> = {};
     nodes.forEach((n) => {
@@ -4178,7 +4474,6 @@ export const InteractiveGridCanvasView: React.FC<
 
     const alreadyUnlocked = moveUnlockedIds.includes(id);
 
-    // Jika Kunci Aman nonaktif ATAU kartu sudah di-unlock (hold 2 detik), langsung bisa geser
     if (!safeHoldMove || alreadyUnlocked) {
       if (alreadyUnlocked) {
         setMoveAnchorId(id);
@@ -4186,237 +4481,388 @@ export const InteractiveGridCanvasView: React.FC<
       dragStateRef.current = {
         active: true,
         movingIds: movingArr,
-        startPointerX: startX,
-        startPointerY: startY,
+        startPointerX: startPt.x,
+        startPointerY: startPt.y,
         initialPositions,
+        lastDx: 0,
+        lastDy: 0,
         preDragNodes: cloneNodesForHistory(nodes),
       };
+      setIsDraggingCards(true);
       return;
     }
 
-    // Kunci Aman Aktif: tahan ~2 detik untuk membuka panah interaktif ▲▼◀▶ & geser bebas!
+    // Kunci Aman Aktif: 1 timer tunggal (CSS animasi, 0 React re-render selama 2 detik!)
     if (!moveUnlockedIds.includes(id)) {
       setMoveUnlockedIds([]);
       setMoveAnchorId(null);
     }
     cancelHoldTimer();
-    const holdStartTime = Date.now();
-    const HOLD_DURATION_MS = 2000;
+    const HOLD_DURATION_MS = 1800;
 
-    setHoldingState({ nodeId: id, progress: 5 });
-    const intervalId = window.setInterval(() => {
-      const elapsed = Date.now() - holdStartTime;
-      const pct = Math.min(100, Math.round((elapsed / HOLD_DURATION_MS) * 100));
-      if (elapsed >= HOLD_DURATION_MS) {
-        window.clearInterval(intervalId);
-        holdTimerRef.current.intervalId = null;
-        holdTimerRef.current.active = false;
-        setHoldingState(null);
-        setMoveUnlockedIds(movingArr);
-        setMoveAnchorId(id);
-        if (typeof navigator !== 'undefined' && navigator.vibrate) {
-          navigator.vibrate(35);
-        }
-        // Aktifkan drag langsung sambil jari/mouse masih menahan, atau gunakan panah ▲▼◀▶
-        dragStateRef.current = {
-          active: true,
-          movingIds: movingArr,
-          startPointerX: startX,
-          startPointerY: startY,
-          initialPositions,
-          preDragNodes: cloneNodesForHistory(latestUndoStateRef.current.nodes),
-        };
-        showNotification(
-          'Kartu terbuka! Gunakan panah ▲▼◀▶ atau seret kartu untuk memindahkan.'
-        );
-      } else {
-        setHoldingState({ nodeId: id, progress: pct });
+    setHoldingNodeId(id);
+    const timeoutId = window.setTimeout(() => {
+      holdTimerRef.current.intervalId = null;
+      holdTimerRef.current.active = false;
+      setHoldingNodeId(null);
+      setMoveUnlockedIds(movingArr);
+      setMoveAnchorId(id);
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(35);
       }
-    }, 50);
+      dragStateRef.current = {
+        active: true,
+        movingIds: movingArr,
+        startPointerX: startPt.x,
+        startPointerY: startPt.y,
+        initialPositions,
+        lastDx: 0,
+        lastDy: 0,
+        preDragNodes: cloneNodesForHistory(latestUndoStateRef.current.nodes),
+      };
+      setIsDraggingCards(true);
+      showNotification(
+        'Kartu terbuka! Gunakan panah ▲▼◀▶ atau seret kartu untuk memindahkan.'
+      );
+    }, HOLD_DURATION_MS);
 
     holdTimerRef.current = {
       active: true,
       nodeId: id,
       startClientX: clientX,
       startClientY: clientY,
-      intervalId,
+      intervalId: timeoutId,
     };
   };
 
-  // Pinch-to-Zoom 2 Jari & Pan Kanvas pada Viewport
-  const handleViewportTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    const vp = viewportRef.current;
-    if (!vp) return;
+  // Pinch-to-Zoom 2 Jari & 1-Jari Pan Kanvas pada Viewport (GPU Stage)
+  const tapCandidateRef = useRef<{
+    active: boolean;
+    clientX: number;
+    clientY: number;
+    moved: boolean;
+  }>({ active: false, clientX: 0, clientY: 0, moved: false });
 
+  const handleViewportTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (e.touches.length === 2) {
       dragStateRef.current.active = false;
+      setIsDraggingCards(false);
       edgeDragRef.current.active = false;
       marqueeRef.current.active = false;
       panDragRef.current.active = false;
+      tapCandidateRef.current.active = false;
       cancelHoldTimer();
 
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-      const vpRect = vp.getBoundingClientRect();
-      const midX = (t1.clientX + t2.clientX) / 2 - vpRect.left;
-      const midY = (t1.clientY + t2.clientY) / 2 - vpRect.top;
+      const midPt = getViewportLocalPoint(
+        (t1.clientX + t2.clientX) / 2,
+        (t1.clientY + t2.clientY) / 2
+      );
+      const vt = viewTransformRef.current;
 
       pinchRef.current = {
         active: true,
         startDist: Math.max(10, dist),
-        startZoom: zoom,
-        midX,
-        midY,
-        startScrollLeft: vp.scrollLeft,
-        startScrollTop: vp.scrollTop,
+        startZoom: vt.zoom,
+        midX: midPt.x,
+        midY: midPt.y,
+        startPanX: vt.panX,
+        startPanY: vt.panY,
       };
-    } else if (e.touches.length === 1 && isPanMode) {
+      return;
+    }
+
+    if (e.touches.length === 1) {
       const t = e.touches[0];
-      panDragRef.current = {
-        active: true,
-        startClientX: t.clientX,
-        startClientY: t.clientY,
-        startScrollLeft: vp.scrollLeft,
-        startScrollTop: vp.scrollTop,
-      };
+      const vt = viewTransformRef.current;
+      // 1 jari di mode Geser Kanvas ATAU sentuhan di area kosong kanvas langsung menggeser kanvas dengan halus!
+      if (isPanMode || e.target === viewportRef.current || e.target === boardRef.current || (e.target as HTMLElement)?.dataset?.stageBg === 'true') {
+        panDragRef.current = {
+          active: true,
+          startClientX: t.clientX,
+          startClientY: t.clientY,
+          startPanX: vt.panX,
+          startPanY: vt.panY,
+        };
+        tapCandidateRef.current = {
+          active: true,
+          clientX: t.clientX,
+          clientY: t.clientY,
+          moved: false,
+        };
+      }
     }
   };
 
   const handleViewportWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (e.ctrlKey || e.metaKey) {
+    if (e.ctrlKey || e.metaKey || Math.abs(e.deltaY) > 0) {
       e.preventDefault();
-      const delta = e.deltaY < 0 ? 0.08 : -0.08;
-      setZoom((z) => Math.max(0.15, Math.min(2.5, +(z + delta).toFixed(2))));
+      const vpPt = getViewportLocalPoint(e.clientX, e.clientY);
+      const vt = viewTransformRef.current;
+      const factor = e.deltaY < 0 ? 1.09 : 0.92;
+      const nextZoom = Math.max(0.12, Math.min(2.6, +(vt.zoom * factor).toFixed(3)));
+      const worldX = (vpPt.x - vt.panX) / vt.zoom;
+      const worldY = (vpPt.y - vt.panY) / vt.zoom;
+      const nextPanX = vpPt.x - worldX * nextZoom;
+      const nextPanY = vpPt.y - worldY * nextZoom;
+      commitStageTransform(nextPanX, nextPanY, nextZoom, false);
     }
   };
 
-  // Mulai seret kotak seleksi (Marquee) atau Pan di area kanvas kosong
+  const useSnapshotOverview =
+    !isExportingPoster &&
+    (renderQualityMode === 'snapshot' ||
+      (renderQualityMode === 'auto' && nodes.length >= 35 && zoom < 0.42));
+  const lodLite = nodes.length >= 25 && zoom < 0.55;
+
+  // Mulai seret kotak seleksi (Marquee) atau Pan di area kanvas kosong (Mouse)
   const handleBoardMouseDown = (e: React.MouseEvent) => {
-    if (!boardRef.current || !viewportRef.current) return;
+    if (Date.now() - lastTouchTimeRef.current < 500) return;
 
     setMoveUnlockedIds([]);
     setMoveAnchorId(null);
     setActiveEdgeIdx(null);
 
-    if (isPanMode || e.button === 1) {
+    const vt = viewTransformRef.current;
+    if (isPanMode || e.button === 1 || e.button === 2) {
       e.preventDefault();
       panDragRef.current = {
         active: true,
         startClientX: e.clientX,
         startClientY: e.clientY,
-        startScrollLeft: viewportRef.current.scrollLeft,
-        startScrollTop: viewportRef.current.scrollTop,
+        startPanX: vt.panX,
+        startPanY: vt.panY,
       };
       return;
     }
 
     if (e.button !== 0) return;
 
-    const rect = boardRef.current.getBoundingClientRect();
-    const startX = (e.clientX - rect.left) / zoom;
-    const startY = (e.clientY - rect.top) / zoom;
+    const pt = getBoardPoint(e.clientX, e.clientY);
 
-    marqueeRef.current = { active: true, startX, startY };
-    setMarqueeBox({ x: startX, y: startY, w: 0, h: 0 });
+    // Jika sedang mode Hybrid Snapshot Overview, klik langsung memilih kartu di titik tersebut!
+    if (useSnapshotOverview) {
+      const hit = hitTestNodeAtBoardPoint(pt.x, pt.y);
+      if (hit) {
+        setSelectedIds((prev) =>
+          e.shiftKey || isMultiSelectMode
+            ? prev.includes(hit.id)
+              ? prev.filter((x) => x !== hit.id)
+              : [...prev, hit.id]
+            : [hit.id]
+        );
+        return;
+      }
+    }
+
+    marqueeRef.current = { active: true, startX: pt.x, startY: pt.y };
+    setMarqueeBox({ x: pt.x, y: pt.y, w: 0, h: 0 });
     if (!e.shiftKey && !isMultiSelectMode) {
       setSelectedIds([]);
     }
   };
 
-  useEffect(() => {
-    const handleMove = (e: MouseEvent | TouchEvent) => {
-      const vp = viewportRef.current;
+  // Ref terbaru agar window event listener tidak pernah teardown/rebind saat zoom/drag!
+  const interactionLatestRef = useRef({
+    nodes,
+    edges,
+    snapToGrid,
+    boardWidth,
+    boardHeight,
+    cardDisplayMode,
+    photoFrameSize,
+    cardScale,
+    isMultiSelectMode,
+    useSnapshotOverview,
+    getViewportLocalPoint,
+    getBoardPoint,
+    commitStageTransform,
+    cancelHoldTimer,
+    stopNudgeRepeat,
+    persistCurrentDesign,
+    pushUndoSnapshot,
+    hitTestNodeAtBoardPoint,
+  });
+  interactionLatestRef.current = {
+    nodes,
+    edges,
+    snapToGrid,
+    boardWidth,
+    boardHeight,
+    cardDisplayMode,
+    photoFrameSize,
+    cardScale,
+    isMultiSelectMode,
+    useSnapshotOverview,
+    getViewportLocalPoint,
+    getBoardPoint,
+    commitStageTransform,
+    cancelHoldTimer,
+    stopNudgeRepeat,
+    persistCurrentDesign,
+    pushUndoSnapshot,
+    hitTestNodeAtBoardPoint,
+  };
 
-      // 0A. Pinch-to-Zoom 2 Jari (prioritas tertinggi!)
-      if ('touches' in e && e.touches.length === 2 && vp) {
+  const dragFrameRafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const updateDragRubberOverlay = (
+      movingSet: Set<string>,
+      dxById: Map<string, { dx: number; dy: number }>
+    ) => {
+      const svg = dragRubberSvgRef.current;
+      if (!svg) return;
+      const latest = interactionLatestRef.current;
+      const nMap = new Map(latest.nodes.map((n) => [n.id, n]));
+      let html = '';
+      latest.edges.forEach((ed) => {
+        if (!movingSet.has(ed.from) && !movingSet.has(ed.to)) return;
+        const n1 = nMap.get(ed.from);
+        const n2 = nMap.get(ed.to);
+        if (!n1 || !n2) return;
+        const s1 = getNodeSize(
+          n1,
+          latest.cardDisplayMode,
+          latest.photoFrameSize,
+          latest.cardScale
+        );
+        const s2 = getNodeSize(
+          n2,
+          latest.cardDisplayMode,
+          latest.photoFrameSize,
+          latest.cardScale
+        );
+        const d1 = dxById.get(n1.id) || { dx: 0, dy: 0 };
+        const d2 = dxById.get(n2.id) || { dx: 0, dy: 0 };
+        const x1 = n1.x + d1.dx + s1.w / 2;
+        const y1 = n1.y + d1.dy + s1.h / 2;
+        const x2 = n2.x + d2.dx + s2.w / 2;
+        const y2 = n2.y + d2.dy + s2.h / 2;
+        const col = ed.type === 'couple' ? '#f59e0b' : '#38bdf8';
+        html += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2" stroke-dasharray="5,4" stroke-opacity="0.85" />`;
+      });
+      svg.innerHTML = html;
+    };
+
+    const handleMove = (e: MouseEvent | TouchEvent) => {
+      const latest = interactionLatestRef.current;
+
+      // 0A. Pinch-to-Zoom 2 Jari (GPU 0 React re-render!)
+      if ('touches' in e && e.touches.length === 2) {
         if (e.cancelable) e.preventDefault();
         dragStateRef.current.active = false;
         edgeDragRef.current.active = false;
         marqueeRef.current.active = false;
-        cancelHoldTimer();
+        panDragRef.current.active = false;
+        tapCandidateRef.current.active = false;
+        latest.cancelHoldTimer();
 
         const t1 = e.touches[0];
         const t2 = e.touches[1];
-        const currDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+        const currDist = Math.hypot(
+          t2.clientX - t1.clientX,
+          t2.clientY - t1.clientY
+        );
+        const currMid = latest.getViewportLocalPoint(
+          (t1.clientX + t2.clientX) / 2,
+          (t1.clientY + t2.clientY) / 2
+        );
 
         if (!pinchRef.current.active) {
-          const vpRect = vp.getBoundingClientRect();
+          const vt = viewTransformRef.current;
           pinchRef.current = {
             active: true,
             startDist: Math.max(10, currDist),
-            startZoom: zoom,
-            midX: (t1.clientX + t2.clientX) / 2 - vpRect.left,
-            midY: (t1.clientY + t2.clientY) / 2 - vpRect.top,
-            startScrollLeft: vp.scrollLeft,
-            startScrollTop: vp.scrollTop,
+            startZoom: vt.zoom,
+            midX: currMid.x,
+            midY: currMid.y,
+            startPanX: vt.panX,
+            startPanY: vt.panY,
           };
           return;
         }
 
-        const {
-          startDist,
-          startZoom,
-          midX,
-          midY,
-          startScrollLeft,
-          startScrollTop,
-        } = pinchRef.current;
+        const { startDist, startZoom, midX, midY, startPanX, startPanY } =
+          pinchRef.current;
         const scaleRatio = currDist / startDist;
-        const nextZoom = Math.max(0.15, Math.min(2.5, +(startZoom * scaleRatio).toFixed(3)));
-        const zoomFactor = nextZoom / startZoom;
+        const nextZoom = Math.max(
+          0.12,
+          Math.min(2.6, startZoom * scaleRatio)
+        );
+        const worldX = (midX - startPanX) / startZoom;
+        const worldY = (midY - startPanY) / startZoom;
+        const nextPanX = currMid.x - worldX * nextZoom;
+        const nextPanY = currMid.y - worldY * nextZoom;
 
-        setZoom(nextZoom);
-        vp.scrollLeft = (startScrollLeft + midX) * zoomFactor - midX;
-        vp.scrollTop = (startScrollTop + midY) * zoomFactor - midY;
+        latest.commitStageTransform(nextPanX, nextPanY, nextZoom, false);
         return;
       }
 
-      // 0B. Geser Kanvas (Pan Hand Mode)
-      if (panDragRef.current.active && vp) {
+      // 0B. Geser Kanvas (GPU Pan 0 React re-render!)
+      if (panDragRef.current.active) {
         if (e.cancelable) e.preventDefault();
         const clientX =
           'touches' in e ? e.touches[0].clientX : (e as MouseEvent).clientX;
         const clientY =
           'touches' in e ? e.touches[0].clientY : (e as MouseEvent).clientY;
-        const dx = clientX - panDragRef.current.startClientX;
-        const dy = clientY - panDragRef.current.startClientY;
-        vp.scrollLeft = panDragRef.current.startScrollLeft - dx;
-        vp.scrollTop = panDragRef.current.startScrollTop - dy;
+        const startPt = latest.getViewportLocalPoint(
+          panDragRef.current.startClientX,
+          panDragRef.current.startClientY
+        );
+        const currPt = latest.getViewportLocalPoint(clientX, clientY);
+        const dx = currPt.x - startPt.x;
+        const dy = currPt.y - startPt.y;
+        if (tapCandidateRef.current.active && Math.hypot(dx, dy) > 8) {
+          tapCandidateRef.current.moved = true;
+        }
+        const nextPanX = panDragRef.current.startPanX + dx;
+        const nextPanY = panDragRef.current.startPanY + dy;
+        latest.commitStageTransform(
+          nextPanX,
+          nextPanY,
+          viewTransformRef.current.zoom,
+          false
+        );
         return;
       }
 
-      // Batalkan timer hold 2 detik jika pengguna menggeser jari > 12px (berniat scroll/batal)
+      // Batalkan timer hold 2 detik jika pengguna menggeser jari > 12px
       if (holdTimerRef.current.active) {
-        const cx = 'touches' in e ? e.touches[0].clientX : (e as MouseEvent).clientX;
-        const cy = 'touches' in e ? e.touches[0].clientY : (e as MouseEvent).clientY;
+        const cx =
+          'touches' in e ? e.touches[0].clientX : (e as MouseEvent).clientX;
+        const cy =
+          'touches' in e ? e.touches[0].clientY : (e as MouseEvent).clientY;
         if (
           Math.hypot(
             cx - holdTimerRef.current.startClientX,
             cy - holdTimerRef.current.startClientY
           ) > 12
         ) {
-          cancelHoldTimer();
+          latest.cancelHoldTimer();
         }
       }
-
-      if (!boardRef.current) return;
 
       const clientX =
         'touches' in e ? e.touches[0].clientX : (e as MouseEvent).clientX;
       const clientY =
         'touches' in e ? e.touches[0].clientY : (e as MouseEvent).clientY;
-      const rect = boardRef.current.getBoundingClientRect();
-      const currX = (clientX - rect.left) / zoom;
-      const currY = (clientY - rect.top) / zoom;
+      const currPt = latest.getBoardPoint(clientX, clientY);
 
-      // 1A. Geser Titik Dot Jalur Garis (Atas/Bawah/Kiri/Kanan)
+      // 1A. Geser Titik Dot Jalur Garis
       if (edgeDragRef.current.active) {
         if (e.cancelable) e.preventDefault();
-        const { edgeIdx, startPointerX, startPointerY, initOffsetX, initOffsetY } =
-          edgeDragRef.current;
-        const nextOx = Math.round(initOffsetX + (currX - startPointerX));
-        const nextOy = Math.round(initOffsetY + (currY - startPointerY));
+        const {
+          edgeIdx,
+          startPointerX,
+          startPointerY,
+          initOffsetX,
+          initOffsetY,
+        } = edgeDragRef.current;
+        const nextOx = Math.round(initOffsetX + (currPt.x - startPointerX));
+        const nextOy = Math.round(initOffsetY + (currPt.y - startPointerY));
         setEdges((prev) =>
           prev.map((ed, idx) =>
             idx === edgeIdx ? { ...ed, offsetX: nextOx, offsetY: nextOy } : ed
@@ -4425,7 +4871,7 @@ export const InteractiveGridCanvasView: React.FC<
         return;
       }
 
-      // 1B. Dragging Kartu / Group
+      // 1B. Direct-DOM GPU Dragging Kartu / Group (0 setNodes per frame!)
       if (dragStateRef.current.active) {
         if (e.cancelable) e.preventDefault();
         const {
@@ -4435,63 +4881,106 @@ export const InteractiveGridCanvasView: React.FC<
           initialPositions,
         } = dragStateRef.current;
 
-        const dx = currX - startPointerX;
-        const dy = currY - startPointerY;
-        const movingSet = new Set(movingIds);
+        const rawDx = currPt.x - startPointerX;
+        const rawDy = currPt.y - startPointerY;
+        dragStateRef.current.lastDx = rawDx;
+        dragStateRef.current.lastDy = rawDy;
 
-        setNodes((prev) =>
-          prev.map((n) => {
-            if (!movingSet.has(n.id)) return n;
+        if (dragFrameRafRef.current !== null) return;
+        dragFrameRafRef.current = window.requestAnimationFrame(() => {
+          dragFrameRafRef.current = null;
+          const ds = dragStateRef.current;
+          if (!ds.active) return;
+          const movingSet = new Set(movingIds);
+          const dxById = new Map<string, { dx: number; dy: number }>();
+
+          latest.nodes.forEach((n) => {
+            if (!movingSet.has(n.id)) return;
             const orig = initialPositions[n.id];
-            if (!orig) return n;
-
-            let nx = orig.x + dx;
-            let ny = orig.y + dy;
-
-            if (snapToGrid) {
+            if (!orig) return;
+            let nx = orig.x + ds.lastDx;
+            let ny = orig.y + ds.lastDy;
+            if (latest.snapToGrid) {
               nx = Math.round(nx / SNAP_SIZE) * SNAP_SIZE;
               ny = Math.round(ny / SNAP_SIZE) * SNAP_SIZE;
             }
+            const size = getNodeSize(
+              n,
+              latest.cardDisplayMode,
+              latest.photoFrameSize,
+              latest.cardScale
+            );
+            nx = Math.max(0, Math.min(latest.boardWidth - size.w, nx));
+            ny = Math.max(0, Math.min(latest.boardHeight - size.h, ny));
+            const appliedDx = nx - orig.x;
+            const appliedDy = ny - orig.y;
+            dxById.set(n.id, { dx: appliedDx, dy: appliedDy });
+            const el = nodeDomRefs.current.get(n.id);
+            if (el) {
+              el.style.transform = `translate3d(${appliedDx}px, ${appliedDy}px, 0)`;
+            }
+          });
 
-            const size = getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale);
-            return {
-              ...n,
-              x: Math.max(0, Math.min(boardWidth - size.w, nx)),
-              y: Math.max(0, Math.min(boardHeight - size.h, ny)),
-            };
-          })
-        );
+          updateDragRubberOverlay(movingSet, dxById);
+        });
         return;
       }
 
       // 2. Marquee Selection Rectangle
       if (marqueeRef.current.active) {
         const { startX, startY } = marqueeRef.current;
-        const rx = Math.min(startX, currX);
-        const ry = Math.min(startY, currY);
-        const rw = Math.abs(currX - startX);
-        const rh = Math.abs(currY - startY);
+        const rx = Math.min(startX, currPt.x);
+        const ry = Math.min(startY, currPt.y);
+        const rw = Math.abs(currPt.x - startX);
+        const rh = Math.abs(currPt.y - startY);
         setMarqueeBox({ x: rx, y: ry, w: rw, h: rh });
       }
     };
 
     const handleEnd = (e?: MouseEvent | TouchEvent) => {
-      if (e && 'touches' in e && e.touches.length < 2) {
-        pinchRef.current.active = false;
-      } else if (!e || !('touches' in e)) {
-        pinchRef.current.active = false;
+      const latest = interactionLatestRef.current;
+
+      if (pinchRef.current.active) {
+        if (!e || !('touches' in e) || e.touches.length < 2) {
+          pinchRef.current.active = false;
+          setZoom(+viewTransformRef.current.zoom.toFixed(3));
+        }
       }
 
-      panDragRef.current.active = false;
-      stopNudgeRepeat();
+      if (panDragRef.current.active) {
+        panDragRef.current.active = false;
+        if (tapCandidateRef.current.active && !tapCandidateRef.current.moved) {
+          const pt = latest.getBoardPoint(
+            tapCandidateRef.current.clientX,
+            tapCandidateRef.current.clientY
+          );
+          if (latest.useSnapshotOverview) {
+            const hit = latest.hitTestNodeAtBoardPoint(pt.x, pt.y);
+            if (hit) {
+              setSelectedIds([hit.id]);
+            } else {
+              setSelectedIds([]);
+            }
+          } else {
+            setSelectedIds([]);
+          }
+          setMoveUnlockedIds([]);
+          setMoveAnchorId(null);
+          setActiveEdgeIdx(null);
+        }
+        tapCandidateRef.current.active = false;
+      }
+
+      latest.stopNudgeRepeat();
 
       if (holdTimerRef.current.active) {
-        cancelHoldTimer();
+        latest.cancelHoldTimer();
       }
 
       if (edgeDragRef.current.active) {
         edgeDragRef.current.active = false;
-        const { edgeIdx, initOffsetX, initOffsetY, preDragEdges } = edgeDragRef.current;
+        const { edgeIdx, initOffsetX, initOffsetY, preDragEdges } =
+          edgeDragRef.current;
         setEdges((currentEdges) => {
           const movedEdge = currentEdges[edgeIdx];
           if (
@@ -4500,26 +4989,69 @@ export const InteractiveGridCanvasView: React.FC<
             ((movedEdge.offsetX ?? 0) !== initOffsetX ||
               (movedEdge.offsetY ?? 0) !== initOffsetY)
           ) {
-            pushUndoSnapshot('Geser Jalur Garis', undefined, preDragEdges);
+            latest.pushUndoSnapshot('Geser Jalur Garis', undefined, preDragEdges);
           }
-          persistCurrentDesign(nodes, currentEdges);
+          latest.persistCurrentDesign(latest.nodes, currentEdges);
           return currentEdges;
         });
       }
 
       if (dragStateRef.current.active) {
         dragStateRef.current.active = false;
-        const { initialPositions, preDragNodes } = dragStateRef.current;
+        if (dragFrameRafRef.current !== null) {
+          window.cancelAnimationFrame(dragFrameRafRef.current);
+          dragFrameRafRef.current = null;
+        }
+        const {
+          movingIds,
+          initialPositions,
+          lastDx,
+          lastDy,
+          preDragNodes,
+        } = dragStateRef.current;
+
+        // Bersihkan transform sementara di DOM & rubber-band SVG
+        movingIds.forEach((mId) => {
+          const el = nodeDomRefs.current.get(mId);
+          if (el) el.style.transform = '';
+        });
+        if (dragRubberSvgRef.current) {
+          dragRubberSvgRef.current.innerHTML = '';
+        }
+        setIsDraggingCards(false);
+
+        const movingSet = new Set(movingIds);
         setNodes((currentNodes) => {
-          const movedAny = currentNodes.some((n) => {
-            const initPos = initialPositions[n.id];
-            return initPos && (initPos.x !== n.x || initPos.y !== n.y);
+          let movedAny = false;
+          const nextNodes = currentNodes.map((n) => {
+            if (!movingSet.has(n.id)) return n;
+            const orig = initialPositions[n.id];
+            if (!orig) return n;
+            let nx = orig.x + lastDx;
+            let ny = orig.y + lastDy;
+            if (latest.snapToGrid) {
+              nx = Math.round(nx / SNAP_SIZE) * SNAP_SIZE;
+              ny = Math.round(ny / SNAP_SIZE) * SNAP_SIZE;
+            }
+            const size = getNodeSize(
+              n,
+              latest.cardDisplayMode,
+              latest.photoFrameSize,
+              latest.cardScale
+            );
+            nx = Math.max(0, Math.min(latest.boardWidth - size.w, nx));
+            ny = Math.max(0, Math.min(latest.boardHeight - size.h, ny));
+            if (nx !== orig.x || ny !== orig.y) {
+              movedAny = true;
+            }
+            return { ...n, x: nx, y: ny };
           });
+
           if (movedAny && preDragNodes) {
-            pushUndoSnapshot('Geser Kartu', preDragNodes);
+            latest.pushUndoSnapshot('Geser Kartu', preDragNodes);
           }
-          persistCurrentDesign(currentNodes, edges);
-          return currentNodes;
+          latest.persistCurrentDesign(nextNodes, latest.edges);
+          return nextNodes;
         });
       }
 
@@ -4527,9 +5059,14 @@ export const InteractiveGridCanvasView: React.FC<
         marqueeRef.current.active = false;
         setMarqueeBox((box) => {
           if (box && (box.w > 12 || box.h > 12)) {
-            const insideIds = nodes
+            const insideIds = latest.nodes
               .filter((n) => {
-                const s = getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale);
+                const s = getNodeSize(
+                  n,
+                  latest.cardDisplayMode,
+                  latest.photoFrameSize,
+                  latest.cardScale
+                );
                 const overlapX = n.x < box.x + box.w && n.x + s.w > box.x;
                 const overlapY = n.y < box.y + box.h && n.y + s.h > box.y;
                 return overlapX && overlapY;
@@ -4538,7 +5075,7 @@ export const InteractiveGridCanvasView: React.FC<
 
             if (insideIds.length > 0) {
               setSelectedIds((prev) =>
-                isMultiSelectMode
+                latest.isMultiSelectMode
                   ? Array.from(new Set([...prev, ...insideIds]))
                   : insideIds
               );
@@ -4561,23 +5098,11 @@ export const InteractiveGridCanvasView: React.FC<
       window.removeEventListener('mouseup', handleEnd);
       window.removeEventListener('touchend', handleEnd);
       window.removeEventListener('touchcancel', handleEnd);
+      if (dragFrameRafRef.current !== null) {
+        window.cancelAnimationFrame(dragFrameRafRef.current);
+      }
     };
-  }, [
-    zoom,
-    snapToGrid,
-    boardWidth,
-    boardHeight,
-    cardDisplayMode,
-    photoFrameSize,
-    cardScale,
-    edges,
-    nodes,
-    isMultiSelectMode,
-    cancelHoldTimer,
-    stopNudgeRepeat,
-    persistCurrentDesign,
-    pushUndoSnapshot,
-  ]);
+  }, []);
 
   // Tambah kartu baru
   const addNewNode = () => {
@@ -4773,6 +5298,140 @@ export const InteractiveGridCanvasView: React.FC<
     return m;
   }, [nodes]);
 
+  const registerNodeEl = useCallback(
+    (id: string, el: HTMLDivElement | null) => {
+      if (el) {
+        nodeDomRefs.current.set(id, el);
+      } else {
+        nodeDomRefs.current.delete(id);
+      }
+    },
+    []
+  );
+
+  const stableHandlersRef = useRef({
+    startNodeInteraction,
+    startNudgeRepeat,
+    stopNudgeRepeat,
+    handleUnmergeSelectedCard,
+  });
+  stableHandlersRef.current = {
+    startNodeInteraction,
+    startNudgeRepeat,
+    stopNudgeRepeat,
+    handleUnmergeSelectedCard,
+  };
+
+  const stableStartCardInteraction = useCallback(
+    (e: React.MouseEvent | React.TouchEvent, id: string) => {
+      stableHandlersRef.current.startNodeInteraction(e, id);
+    },
+    []
+  );
+
+  const stableStartNudgeRepeat = useCallback(
+    (targets: string[], dx: number, dy: number) => {
+      stableHandlersRef.current.startNudgeRepeat(targets, dx, dy);
+    },
+    []
+  );
+
+  const stableStopNudgeRepeat = useCallback(() => {
+    stableHandlersRef.current.stopNudgeRepeat();
+  }, []);
+
+  const stableLockArrows = useCallback(() => {
+    setMoveUnlockedIds([]);
+    setMoveAnchorId(null);
+  }, []);
+
+  const stableUnmergeCard = useCallback((id: string) => {
+    stableHandlersRef.current.handleUnmergeSelectedCard(id);
+  }, []);
+
+  // Memoized Rute Garis Silsilah (tidak dihitung ulang saat zoom, select, panel, atau drag!)
+  const computedEdges = useMemo<ComputedCanvasEdgeItem[]>(() => {
+    if (lineStyle === 'none') return [];
+    const obstacleBoxes: NodeObstacleBox[] = nodes.map((n) => {
+      const sz = getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale);
+      return { id: n.id, x: n.x, y: n.y, w: sz.w, h: sz.h };
+    });
+
+    return edges
+      .map((edge, idx) => {
+        const n1 = nodeMap.get(edge.from);
+        const n2 = nodeMap.get(edge.to);
+        if (!n1 || !n2) return null;
+
+        const pts = getSmartPorts(
+          n1,
+          n2,
+          edge.type,
+          cardDisplayMode,
+          photoFrameSize,
+          cardScale,
+          edge.fromPort,
+          edge.toPort
+        );
+        const route = buildConnectorRoute(
+          pts,
+          lineStyle,
+          edge,
+          obstacleBoxes
+        );
+        const g1Style = getGenGradientStyle(
+          genGradientPalette,
+          n1.genLevel ?? 0
+        );
+        const g2Style = getGenGradientStyle(
+          genGradientPalette,
+          n2.genLevel ?? (n1.genLevel ?? 0) + 1
+        );
+        const resolvedChildColor =
+          childLineColor ||
+          g1Style?.line ||
+          (theme === 'dark' || bgStyle !== '' ? '#38bdf8' : '#0284c7');
+        const resolvedCoupleColor = coupleLineColor || '#f59e0b';
+        const lineColor =
+          edge.type === 'couple' ? resolvedCoupleColor : resolvedChildColor;
+        const canUseGrad =
+          edge.type === 'child' &&
+          genGradientPalette !== 'none' &&
+          !childLineColor &&
+          !!g1Style &&
+          !!g2Style &&
+          (Math.abs(pts.a.x - pts.b.x) > 1 ||
+            Math.abs(pts.a.y - pts.b.y) > 1);
+        const gradId = `edge-grad-${idx}`;
+
+        return {
+          idx,
+          edge,
+          pts,
+          route,
+          lineColor,
+          gradFrom: g1Style?.line || lineColor,
+          gradTo: g2Style?.line || lineColor,
+          canUseGrad,
+          gradId,
+        };
+      })
+      .filter(Boolean) as ComputedCanvasEdgeItem[];
+  }, [
+    nodes,
+    edges,
+    nodeMap,
+    lineStyle,
+    cardDisplayMode,
+    photoFrameSize,
+    cardScale,
+    genGradientPalette,
+    childLineColor,
+    coupleLineColor,
+    theme,
+    bgStyle,
+  ]);
+
   const getBoardBackgroundStyle = (): React.CSSProperties => {
     if (bgStyle === 'bg-gunung') {
       return {
@@ -4806,17 +5465,32 @@ export const InteractiveGridCanvasView: React.FC<
   const hasGroupInSelection = selectedIds.some(
     (id) => nodeMap.get(id)?.groupId
   );
+  const isLandscapeHud =
+    isFocusMode && (studioScreenMode === 'landscape' || windowSize.w > windowSize.h);
 
   return (
     <div
+      style={
+        isCssLandscapeActive
+          ? {
+              position: 'fixed',
+              left: `${windowSize.w}px`,
+              top: 0,
+              width: `${windowSize.h}px`,
+              height: `${windowSize.w}px`,
+              transform: 'rotate(90deg)',
+              transformOrigin: 'top left',
+            }
+          : undefined
+      }
       className={
         isFocusMode
-          ? `fixed inset-0 z-50 flex flex-col overflow-hidden print-flow-unlock ${
+          ? `fixed ${isCssLandscapeActive ? '' : 'inset-0'} z-50 flex flex-col overflow-hidden print-flow-unlock ${
               isDark
                 ? 'bg-[#0b1120] text-slate-100'
                 : 'bg-[#e2e8f0] text-slate-900'
             }`
-          : `flex-1 flex flex-col overflow-hidden rounded-2xl border shadow-lg print-flow-unlock ${
+          : `flex-1 flex flex-col overflow-hidden rounded-2xl border shadow-lg print-flow-unlock relative ${
               isDark
                 ? 'bg-[#0f172a] border-slate-800 text-slate-100'
                 : 'bg-[#f1f5f9] border-stone-300 text-slate-900'
@@ -5019,7 +5693,6 @@ export const InteractiveGridCanvasView: React.FC<
             <button
               type="button"
               onClick={() => {
-                setAutoScreenOrient(false);
                 setPaperOrientation((o) =>
                   o === 'landscape' ? 'portrait' : 'landscape'
                 );
@@ -5029,7 +5702,7 @@ export const InteractiveGridCanvasView: React.FC<
                   ? 'bg-slate-800 text-emerald-300 hover:bg-slate-700'
                   : 'bg-white text-emerald-800 border border-stone-200'
               }`}
-              title="Ubah Orientasi Lanskap / Potret"
+              title="Ubah Orientasi Kertas Lanskap / Potret"
             >
               {paperOrientation === 'landscape' ? 'Lanskap' : 'Potret'}
             </button>
@@ -5057,10 +5730,10 @@ export const InteractiveGridCanvasView: React.FC<
                 ? 'bg-slate-800 border-slate-700 text-emerald-300 hover:border-emerald-400'
                 : 'bg-emerald-50 border-emerald-300 text-emerald-800'
             }`}
-            title="Mode Leluasa (Kanvas Layar Penuh dengan Tombol Melayang)"
+            title="Masuk Studio Penuh (Kanvas Layar Penuh + Tombol Melayang)"
           >
             <Maximize2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Leluasa</span>
+            <span className="hidden sm:inline">Studio Penuh</span>
           </button>
 
           <button
@@ -5109,11 +5782,13 @@ export const InteractiveGridCanvasView: React.FC<
       <div className="flex-1 flex overflow-hidden relative print-flow-unlock">
         {isPanelOpen && (
           <aside
-            className={`${
-              isFocusMode
-                ? 'absolute left-2 top-14 bottom-16 rounded-2xl border shadow-2xl z-40 w-[290px] sm:w-[320px]'
-                : 'absolute sm:relative left-0 top-0 bottom-0 w-[290px] sm:w-[320px] shrink-0 border-r z-30 shadow-xl sm:shadow-none'
-            } p-3.5 flex flex-col gap-3 overflow-y-auto print:hidden ${
+            className={`absolute ${
+              isLandscapeHud
+                ? 'left-16 top-2 bottom-2 w-[300px] sm:w-[320px]'
+                : isFocusMode
+                ? 'left-2 top-14 bottom-16 w-[290px] sm:w-[320px]'
+                : 'left-2 top-2 bottom-2 w-[290px] sm:w-[320px]'
+            } rounded-2xl border shadow-2xl z-45 p-3.5 flex flex-col gap-3 overflow-y-auto print:hidden ${
               isDark
                 ? 'bg-[#1e293b]/95 backdrop-blur-md border-slate-700 text-slate-100'
                 : 'bg-white/95 backdrop-blur-md border-stone-200 text-stone-800'
@@ -5445,16 +6120,33 @@ export const InteractiveGridCanvasView: React.FC<
                       <Grid className="w-3 h-3 text-emerald-400" />
                       <span>Tempel Rapi ke Grid 20px (Snap)</span>
                     </label>
-                    <label className="flex items-center gap-2 cursor-pointer text-[10.5px]">
-                      <input
-                        type="checkbox"
-                        checked={autoScreenOrient}
-                        onChange={(e) => setAutoScreenOrient(e.target.checked)}
-                        className="accent-sky-500"
-                      />
-                      <Smartphone className="w-3 h-3 text-sky-400" />
-                      <span>Auto Potret/Lanskap ikuti layar</span>
-                    </label>
+                    <div className="pt-1 flex flex-col gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleStudioScreenMode()}
+                        className={`w-full py-1.5 px-2.5 rounded-xl border text-[10.5px] font-bold flex items-center justify-between transition ${
+                          studioScreenMode === 'landscape'
+                            ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
+                            : isDark
+                            ? 'bg-slate-900 border-slate-700 text-sky-300 hover:border-sky-400'
+                            : 'bg-stone-100 border-stone-300 text-sky-900'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <Smartphone className="w-3.5 h-3.5" />
+                          <span>
+                            {studioScreenMode === 'landscape'
+                              ? 'Layar Miring (Lanskap Studio) Aktif'
+                              : 'Putar Layar HP Miring (Ala Game)'}
+                          </span>
+                        </span>
+                        <RotateCw className="w-3.5 h-3.5 shrink-0" />
+                      </button>
+                      <p className="text-[9.5px] opacity-70 leading-snug">
+                        Memutar tampilan HP ke Lanskap tanpa mengubah orientasi &amp; ukuran kertas ({paperDim.label}{' '}
+                        {paperOrientation === 'landscape' ? 'Lanskap' : 'Potret'}).
+                      </p>
+                    </div>
                   </div>
                 </div>
 
@@ -6964,23 +7656,24 @@ export const InteractiveGridCanvasView: React.FC<
           </aside>
         )}
 
-        {/* Viewport Kanvas Kertas A0 - A4 + Kontrol Melayang Adaptif */}
+        {/* Viewport GPU Artboard Kertas A0 - A4 (Pan & Pinch-Zoom 0 Re-Render) */}
         <div
           ref={viewportRef}
           onTouchStart={handleViewportTouchStart}
           onWheel={handleViewportWheel}
-          style={{ touchAction: isPanMode ? 'none' : 'pan-x pan-y' }}
-          className={`flex-1 overflow-auto flex relative print-flow-unlock ${
-            isFocusMode ? 'p-3 sm:p-5' : 'p-4 sm:p-6'
-          } ${isPanMode ? 'cursor-grab active:cursor-grabbing' : ''}`}
+          style={{ touchAction: 'none' }}
+          className={`flex-1 relative overflow-hidden touch-none select-none print-flow-unlock ${
+            isPanMode ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+          }`}
         >
           <div
-            id="printable-pcb-preview-shell"
-            className="m-auto shrink-0"
+            id="grid-gpu-stage"
+            ref={stageTransformRef}
             style={{
-              width: `${boardWidth * zoom}px`,
-              height: `${boardHeight * zoom}px`,
+              transformOrigin: 'top left',
+              willChange: 'transform',
             }}
+            className="absolute top-0 left-0 print:static print:transform-none"
           >
             <div
               id="printable-pcb-preview"
@@ -6989,8 +7682,6 @@ export const InteractiveGridCanvasView: React.FC<
               style={{
                 width: `${boardWidth}px`,
                 height: `${boardHeight}px`,
-                transform: `scale(${zoom})`,
-                transformOrigin: 'top left',
                 ...getBoardBackgroundStyle(),
               }}
               className={`relative rounded-xl border-2 shadow-2xl overflow-hidden print:shadow-none print:border-none ${
@@ -7189,87 +7880,31 @@ export const InteractiveGridCanvasView: React.FC<
                 />
               )}
 
-              {/* SVG Garis Konektor Real-Time (Hilang penuh saat mode Tanpa Garis / lineStyle === 'none') */}
-              {lineStyle !== 'none' && (() => {
-                const obstacleBoxes: NodeObstacleBox[] = nodes.map((n) => {
-                  const sz = getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale);
-                  return { id: n.id, x: n.x, y: n.y, w: sz.w, h: sz.h };
-                });
+              {/* Lapisan Hybrid Snapshot <canvas> super ringan untuk Overview Trah Besar */}
+              <GridHybridSnapshotCanvas
+                visible={useSnapshotOverview}
+                boardWidth={boardWidth}
+                boardHeight={boardHeight}
+                nodes={nodes}
+                computedEdges={computedEdges}
+                selectedIds={selectedIds}
+                lineStyle={lineStyle}
+                lineThickness={lineThickness}
+                cardDisplayMode={cardDisplayMode}
+                photoFrameSize={photoFrameSize}
+                photoShape={photoShape}
+                cardScale={cardScale}
+                genGradientPalette={genGradientPalette}
+                cardBgColor={cardBgColor}
+                cardBorderColor={cardBorderColor}
+                isDark={isDark}
+                bgStyle={bgStyle}
+              />
 
-                const computedEdges = edges
-                  .map((edge, idx) => {
-                    const n1 = nodeMap.get(edge.from);
-                    const n2 = nodeMap.get(edge.to);
-                    if (!n1 || !n2) return null;
-
-                    const pts = getSmartPorts(
-                      n1,
-                      n2,
-                      edge.type,
-                      cardDisplayMode,
-                      photoFrameSize,
-                      cardScale,
-                      edge.fromPort,
-                      edge.toPort
-                    );
-                    const route = buildConnectorRoute(
-                      pts,
-                      lineStyle,
-                      edge,
-                      obstacleBoxes
-                    );
-                    const g1Style = getGenGradientStyle(
-                      genGradientPalette,
-                      n1.genLevel ?? 0
-                    );
-                    const g2Style = getGenGradientStyle(
-                      genGradientPalette,
-                      n2.genLevel ?? (n1.genLevel ?? 0) + 1
-                    );
-                    const resolvedChildColor =
-                      childLineColor ||
-                      g1Style?.line ||
-                      (isDark || bgStyle !== '' ? '#38bdf8' : '#0284c7');
-                    const resolvedCoupleColor = coupleLineColor || '#f59e0b';
-                    const lineColor =
-                      edge.type === 'couple'
-                        ? resolvedCoupleColor
-                        : resolvedChildColor;
-                    const canUseGrad =
-                      edge.type === 'child' &&
-                      genGradientPalette !== 'none' &&
-                      !childLineColor &&
-                      !!g1Style &&
-                      !!g2Style &&
-                      (Math.abs(pts.a.x - pts.b.x) > 1 ||
-                        Math.abs(pts.a.y - pts.b.y) > 1);
-                    const gradId = `edge-grad-${idx}`;
-
-                    return {
-                      idx,
-                      edge,
-                      pts,
-                      route,
-                      lineColor,
-                      gradFrom: g1Style?.line || lineColor,
-                      gradTo: g2Style?.line || lineColor,
-                      canUseGrad,
-                      gradId,
-                    };
-                  })
-                  .filter(Boolean) as Array<{
-                  idx: number;
-                  edge: InteractiveEdge;
-                  pts: ReturnType<typeof getSmartPorts>;
-                  route: ReturnType<typeof buildConnectorRoute>;
-                  lineColor: string;
-                  gradFrom: string;
-                  gradTo: string;
-                  canUseGrad: boolean;
-                  gradId: string;
-                }>;
-
+              {/* SVG Garis Konektor Real-Time (Memoized • Dinonaktifkan sementara saat Mode Ringan Snapshot) */}
+              {!useSnapshotOverview && lineStyle !== 'none' && (() => {
                 const isPcbStyle = lineStyle === 'pcb90' || lineStyle === 'pcb45';
+                const skipEdgeGradients = lodLite && !isExportingPoster;
 
                 return (
                   <>
@@ -7281,24 +7916,26 @@ export const InteractiveGridCanvasView: React.FC<
                         linesOnTop ? 'z-[22]' : 'z-[3]'
                       }`}
                     >
-                      <defs>
-                        {computedEdges.map((ce) =>
-                          ce.canUseGrad ? (
-                            <linearGradient
-                              key={`def-${ce.gradId}`}
-                              id={ce.gradId}
-                              gradientUnits="userSpaceOnUse"
-                              x1={ce.pts.a.x}
-                              y1={ce.pts.a.y}
-                              x2={ce.pts.b.x}
-                              y2={ce.pts.b.y}
-                            >
-                              <stop offset="0%" stopColor={ce.gradFrom} />
-                              <stop offset="100%" stopColor={ce.gradTo} />
-                            </linearGradient>
-                          ) : null
-                        )}
-                      </defs>
+                      {!skipEdgeGradients && (
+                        <defs>
+                          {computedEdges.map((ce) =>
+                            ce.canUseGrad ? (
+                              <linearGradient
+                                key={`def-${ce.gradId}`}
+                                id={ce.gradId}
+                                gradientUnits="userSpaceOnUse"
+                                x1={ce.pts.a.x}
+                                y1={ce.pts.a.y}
+                                x2={ce.pts.b.x}
+                                y2={ce.pts.b.y}
+                              >
+                                <stop offset="0%" stopColor={ce.gradFrom} />
+                                <stop offset="100%" stopColor={ce.gradTo} />
+                              </linearGradient>
+                            ) : null
+                          )}
+                        </defs>
+                      )}
 
                       {computedEdges.map(
                         ({
@@ -7315,12 +7952,11 @@ export const InteractiveGridCanvasView: React.FC<
                           const isActiveEdge = activeEdgeIdx === idx;
                           const strokePaint = isActiveEdge
                             ? '#f59e0b'
-                            : canUseGrad
+                            : canUseGrad && !skipEdgeGradients
                             ? `url(#${gradId})`
                             : lineColor;
                           return (
                             <g key={`edge-${idx}`}>
-                              {/* Halo lembut saat garis tampil di atas kartu agar tetap terbaca bersih */}
                               {linesOnTop && (
                                 <path
                                   d={route.d}
@@ -7353,7 +7989,6 @@ export const InteractiveGridCanvasView: React.FC<
                                 strokeOpacity={linesOnTop ? 0.92 : 1}
                                 fill="none"
                               />
-                              {/* Area klik transparan agar garis tetap bisa dipilih meski dot dihapus */}
                               <path
                                 d={route.d}
                                 stroke="transparent"
@@ -7423,7 +8058,7 @@ export const InteractiveGridCanvasView: React.FC<
                       )}
                     </svg>
 
-                    {/* Layer Dot Handle Interaktif (Geser Atas/Bawah/Kiri/Kanan, Ubah Posisi, atau Sembunyikan Dot) */}
+                    {/* Layer Dot Handle Interaktif */}
                     {(showLineDots || activeEdgeIdx !== null) && (
                       <svg
                         width={boardWidth}
@@ -7460,9 +8095,7 @@ export const InteractiveGridCanvasView: React.FC<
                               <title>
                                 Klik untuk ubah posisi dot (25%/50%/75%) atau hapus dot • Seret untuk belokkan garis • Klik 2× reset Auto
                               </title>
-                              {/* Area sentuh luas tak terlihat */}
                               <circle cx={hx} cy={hy} r={13} fill="transparent" />
-                              {/* Titik Dot Utama */}
                               <circle
                                 cx={hx}
                                 cy={hy}
@@ -7498,783 +8131,61 @@ export const InteractiveGridCanvasView: React.FC<
                 );
               })()}
 
-              {/* Kartu Anggota Keluarga & Modular Card-in-Card (Kotak/Bulat/Segi-6, Jarak 1mm, Pola I/L) */}
-              {nodes.map((node) => {
-                const isSelected = selectedIds.includes(node.id);
-                const isConnectSource = connectFromId === node.id;
-                const isHolding = holdingState?.nodeId === node.id;
-                const isUnlocked = moveUnlockedIds.includes(node.id);
-                const showArrowsHere =
-                  isUnlocked &&
-                  (moveAnchorId === node.id ||
-                    (!moveAnchorId && moveUnlockedIds[0] === node.id));
-                const moveTargets =
-                  moveUnlockedIds.length > 0 ? moveUnlockedIds : [node.id];
-                const nudgeStep = snapToGrid ? SNAP_SIZE : 10;
+              {/* Lapisan Garis Karet Direct-DOM saat Drag Kartu (0 React Re-Render) */}
+              <svg
+                ref={dragRubberSvgRef}
+                width={boardWidth}
+                height={boardHeight}
+                className="absolute inset-0 pointer-events-none z-[25] print:hidden"
+              />
 
-                const effScale = cardScale * (node.scaleMultiplier ?? 1);
-                const size = getNodeSize(node, cardDisplayMode, photoFrameSize, cardScale);
-                const isModularContainer = Boolean(
-                  node.mergedMembers && node.mergedMembers.length >= 2
-                );
-                const isModularUnitNode = Boolean(
-                  !isModularContainer &&
-                    (node.modularSubLayout === 'I' ||
-                      node.modularSubLayout === 'L' ||
-                      (node.scaleMultiplier ?? 1) > 1.05)
-                );
-                const uniformUnit = getUniformSubCardSize(
-                  cardDisplayMode,
-                  photoFrameSize,
-                  effScale
-                );
-                const pDim =
-                  isModularUnitNode && (cardDisplayMode === 'photo_name' || cardDisplayMode === 'full')
-                    ? { w: uniformUnit.photoW, h: uniformUnit.photoH }
-                    : getScaledPhotoDim(photoFrameSize, effScale);
-                const scaledNamePx = Math.max(7.5, Math.round(11.5 * effScale));
-                const scaledSubPx = Math.max(6.5, Math.round(9 * effScale));
-
-                const genStyle = getGenGradientStyle(
-                  genGradientPalette,
-                  node.genLevel ?? 0
-                );
-                const effectiveBg =
-                  node.customBgColor || cardBgColor || genStyle?.bg || '';
-                const effectiveBorder =
-                  node.customBorderColor || cardBorderColor || genStyle?.border || '';
-                const containerBg =
-                  isModularContainer && effectiveBg
-                    ? hexWithAlpha(effectiveBg, isDark ? 0.24 : 0.16)
-                    : effectiveBg;
-                const isCardLight = containerBg
-                  ? effectiveBg && isModularContainer
-                    ? !isDark
-                    : isLightHexColor(effectiveBg)
-                  : !isDark;
-
-                const resolvedShape: GridPhotoShape =
-                  photoFrameSize === 'bulat' ? 'bulat' : photoShape;
-
-                const renderPhotoFrame = (
-                  photoUrl: string,
-                  altName: string,
-                  w: number,
-                  h: number,
-                  borderHex?: string,
-                  extraMarginClass = ''
-                ) => {
-                  const frameBorderCol =
-                    borderHex ||
-                    effectiveBorder ||
-                    (isCardLight ? '#cbd5e1' : '#475569');
-                  const innerBgClass = isCardLight
-                    ? 'bg-stone-100 text-amber-700'
-                    : 'bg-[#0f172a] text-amber-400';
-
-                  const resolvedPhotoSrc =
-                    (photoUrl && exportPhotoMap?.[photoUrl]) || photoUrl;
-
-                  if (resolvedShape === 'segi6') {
-                    return (
-                      <div
-                        style={{
-                          width: `${w}px`,
-                          height: `${h}px`,
-                          clipPath: HEXAGON_CLIP_PATH,
-                          backgroundColor: frameBorderCol,
-                          padding: '2px',
-                        }}
-                        className={`shrink-0 flex items-center justify-center ${extraMarginClass}`}
-                      >
-                        <div
-                          style={{ clipPath: HEXAGON_CLIP_PATH }}
-                          className={`w-full h-full overflow-hidden flex items-center justify-center font-extrabold text-[10px] ${innerBgClass}`}
-                        >
-                          {resolvedPhotoSrc ? (
-                            <img
-                              src={resolvedPhotoSrc}
-                              alt={altName}
-                              className="w-full h-full object-cover pointer-events-none"
-                            />
-                          ) : (
-                            <span>{getInitials(altName)}</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  }
+              {/* Kartu Anggota Keluarga & Modular Card-in-Card (React.memo + Direct-DOM GPU Drag) */}
+              {!useSnapshotOverview &&
+                nodes.map((node) => {
+                  const isSelected = selectedIds.includes(node.id);
+                  const isUnlocked = moveUnlockedIds.includes(node.id);
+                  const showArrowsHere =
+                    isUnlocked &&
+                    (moveAnchorId === node.id ||
+                      (!moveAnchorId && moveUnlockedIds[0] === node.id));
+                  const moveTargets =
+                    moveUnlockedIds.length > 0 ? moveUnlockedIds : [node.id];
+                  const nudgeStep = snapToGrid ? SNAP_SIZE : 10;
 
                   return (
-                    <div
-                      style={{
-                        width: `${w}px`,
-                        height: `${h}px`,
-                        borderColor: frameBorderCol,
-                      }}
-                      className={`overflow-hidden flex items-center justify-center font-extrabold text-[10px] border shrink-0 ${innerBgClass} ${
-                        resolvedShape === 'bulat' ? 'rounded-full' : 'rounded-[5px]'
-                      } ${extraMarginClass}`}
-                    >
-                      {resolvedPhotoSrc ? (
-                        <img
-                          src={resolvedPhotoSrc}
-                          alt={altName}
-                          className="w-full h-full object-cover pointer-events-none"
-                        />
-                      ) : (
-                        <span>{getInitials(altName)}</span>
-                      )}
-                    </div>
+                    <GridCardItem
+                      key={node.id}
+                      node={node}
+                      isSelected={isSelected}
+                      isConnectSource={connectFromId === node.id}
+                      isHolding={holdingNodeId === node.id}
+                      isUnlocked={isUnlocked}
+                      showArrowsHere={showArrowsHere}
+                      moveTargets={moveTargets}
+                      nudgeStep={nudgeStep}
+                      cardDisplayMode={cardDisplayMode}
+                      photoFrameSize={photoFrameSize}
+                      photoShape={photoShape}
+                      cardScale={cardScale}
+                      genGradientPalette={genGradientPalette}
+                      cardBgColor={cardBgColor}
+                      cardBorderColor={cardBorderColor}
+                      isDark={isDark}
+                      layoutMode={layoutMode}
+                      safeHoldMove={safeHoldMove}
+                      isMultiSelectMode={isMultiSelectMode}
+                      showGenGuides={showGenGuides}
+                      lodLite={lodLite && !isExportingPoster}
+                      exportPhotoMap={exportPhotoMap}
+                      registerNodeEl={registerNodeEl}
+                      onStartInteraction={stableStartCardInteraction}
+                      onStartNudgeRepeat={stableStartNudgeRepeat}
+                      onStopNudgeRepeat={stableStopNudgeRepeat}
+                      onLockArrows={stableLockArrows}
+                      onUnmergeCard={stableUnmergeCard}
+                    />
                   );
-                };
-
-                const cardCustomStyle: React.CSSProperties = {
-                  left: `${node.x}px`,
-                  top: `${node.y}px`,
-                  width: `${size.w}px`,
-                  ...(isModularUnitNode ? { height: `${size.h}px` } : { minHeight: `${size.h}px` }),
-                  ...(containerBg ? { backgroundColor: containerBg } : {}),
-                  ...(effectiveBorder && !isSelected && !isConnectSource && !isUnlocked
-                    ? { borderColor: effectiveBorder }
-                    : {}),
-                };
-
-                return (
-                  <div
-                    key={node.id}
-                    onMouseDown={(e) => startNodeInteraction(e, node.id)}
-                    onTouchStart={(e) => startNodeInteraction(e, node.id)}
-                    onClick={(e) => e.stopPropagation()}
-                    style={cardCustomStyle}
-                    className={`group absolute rounded-xl border-2 flex flex-col items-center justify-center text-center shadow-lg transition-shadow select-none ${
-                      cardDisplayMode === 'name_only'
-                        ? 'px-2 py-1'
-                        : isModularContainer
-                        ? 'p-1'
-                        : 'p-[3px]'
-                    } ${
-                      layoutMode === 'manual'
-                        ? isUnlocked || !safeHoldMove
-                          ? 'cursor-grab active:cursor-grabbing'
-                          : 'cursor-pointer'
-                        : 'cursor-pointer'
-                    } ${
-                      isUnlocked
-                        ? 'z-50 border-emerald-400 ring-4 ring-emerald-400/40'
-                        : isSelected
-                        ? 'z-40 border-amber-500 ring-3 ring-amber-500/35'
-                        : isConnectSource
-                        ? 'z-40 border-sky-400 ring-3 ring-sky-400/40'
-                        : !effectiveBg
-                        ? isDark
-                          ? 'z-10 bg-[#1e293b] border-slate-600 hover:border-amber-400'
-                          : 'z-10 bg-white border-stone-300 hover:border-amber-500'
-                        : 'z-10 hover:brightness-105'
-                    } ${
-                      isCardLight ? 'text-slate-900' : 'text-slate-100'
-                    } ${node.wafat ? 'border-dashed opacity-90' : ''}`}
-                    title={
-                      safeHoldMove && layoutMode === 'manual' && !isUnlocked
-                        ? `${node.name} • Tahan 2 detik untuk tampilkan panah geser ▲▼◀▶`
-                        : node.name
-                    }
-                  >
-                    {/* Indikator Progress Hold 2 Detik */}
-                    {isHolding && (
-                      <div className="absolute -top-7 left-1/2 -translate-x-1/2 z-50 px-2 py-0.5 rounded-full bg-slate-950/95 border border-emerald-400 text-[9px] font-black text-emerald-300 whitespace-nowrap shadow-lg flex items-center gap-1.5 pointer-events-none">
-                        <span className="inline-block w-10 h-1.5 rounded-full bg-slate-700 overflow-hidden">
-                          <span
-                            className="block h-full bg-emerald-400 transition-all duration-75"
-                            style={{ width: `${holdingState.progress}%` }}
-                          />
-                        </span>
-                        <span>Tahan...</span>
-                      </div>
-                    )}
-
-                    {/* 4 Panah Interaktif Atas / Bawah / Kiri / Kanan setelah Hold 2 Detik */}
-                    {showArrowsHere && (
-                      <>
-                        <button
-                          type="button"
-                          onMouseDown={(e) => {
-                            e.stopPropagation();
-                            startNudgeRepeat(moveTargets, 0, -nudgeStep);
-                          }}
-                          onTouchStart={(e) => {
-                            e.stopPropagation();
-                            startNudgeRepeat(moveTargets, 0, -nudgeStep);
-                          }}
-                          onMouseUp={stopNudgeRepeat}
-                          onMouseLeave={stopNudgeRepeat}
-                          onTouchEnd={stopNudgeRepeat}
-                          onTouchCancel={stopNudgeRepeat}
-                          className="absolute -top-8 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg border-2 border-white flex items-center justify-center z-50 print:hidden"
-                          title="Geser ke Atas"
-                        >
-                          <ChevronUp className="w-4 h-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onMouseDown={(e) => {
-                            e.stopPropagation();
-                            startNudgeRepeat(moveTargets, 0, nudgeStep);
-                          }}
-                          onTouchStart={(e) => {
-                            e.stopPropagation();
-                            startNudgeRepeat(moveTargets, 0, nudgeStep);
-                          }}
-                          onMouseUp={stopNudgeRepeat}
-                          onMouseLeave={stopNudgeRepeat}
-                          onTouchEnd={stopNudgeRepeat}
-                          onTouchCancel={stopNudgeRepeat}
-                          className="absolute -bottom-8 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg border-2 border-white flex items-center justify-center z-50 print:hidden"
-                          title="Geser ke Bawah"
-                        >
-                          <ChevronDown className="w-4 h-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onMouseDown={(e) => {
-                            e.stopPropagation();
-                            startNudgeRepeat(moveTargets, -nudgeStep, 0);
-                          }}
-                          onTouchStart={(e) => {
-                            e.stopPropagation();
-                            startNudgeRepeat(moveTargets, -nudgeStep, 0);
-                          }}
-                          onMouseUp={stopNudgeRepeat}
-                          onMouseLeave={stopNudgeRepeat}
-                          onTouchEnd={stopNudgeRepeat}
-                          onTouchCancel={stopNudgeRepeat}
-                          className="absolute top-1/2 -translate-y-1/2 -left-8 w-7 h-7 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg border-2 border-white flex items-center justify-center z-50 print:hidden"
-                          title="Geser ke Kiri"
-                        >
-                          <ChevronLeft className="w-4 h-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onMouseDown={(e) => {
-                            e.stopPropagation();
-                            startNudgeRepeat(moveTargets, nudgeStep, 0);
-                          }}
-                          onTouchStart={(e) => {
-                            e.stopPropagation();
-                            startNudgeRepeat(moveTargets, nudgeStep, 0);
-                          }}
-                          onMouseUp={stopNudgeRepeat}
-                          onMouseLeave={stopNudgeRepeat}
-                          onTouchEnd={stopNudgeRepeat}
-                          onTouchCancel={stopNudgeRepeat}
-                          className="absolute top-1/2 -translate-y-1/2 -right-8 w-7 h-7 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg border-2 border-white flex items-center justify-center z-50 print:hidden"
-                          title="Geser ke Kanan"
-                        >
-                          <ChevronRight className="w-4 h-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setMoveUnlockedIds([]);
-                            setMoveAnchorId(null);
-                          }}
-                          className="absolute -top-3 -right-3 px-1.5 py-0.5 rounded-full bg-slate-950 border border-emerald-400 text-emerald-300 text-[8.5px] font-black shadow z-50 print:hidden"
-                          title="Kunci kembali posisi kartu"
-                        >
-                          Kunci ✓
-                        </button>
-                      </>
-                    )}
-
-                    {/* Badge Checklist Mode Pilih Banyak (ketuk langsung pilih/batal pilih) */}
-                    {isMultiSelectMode && (
-                      <span
-                        className={`absolute -top-2 -right-2 w-5 h-5 rounded-full border-2 flex items-center justify-center shadow z-30 pointer-events-none print:hidden ${
-                          isSelected
-                            ? 'bg-sky-500 border-white text-slate-950'
-                            : isDark
-                            ? 'bg-slate-900/90 border-sky-400/70 text-transparent'
-                            : 'bg-white/95 border-sky-500/70 text-transparent'
-                        }`}
-                      >
-                        <Check className="w-3 h-3 stroke-[3]" />
-                      </span>
-                    )}
-
-                    {/* Badge Mikro Generasi di sudut kiri-atas kartu saat Jalur Generasi aktif */}
-                    {showGenGuides && node.genLevel !== undefined && (
-                      <span
-                        className={`absolute -top-2 left-1.5 px-1 rounded text-[8px] font-black leading-tight border ${
-                          isDark
-                            ? 'bg-slate-900 border-amber-500/50 text-amber-300'
-                            : 'bg-amber-50 border-amber-400 text-amber-800'
-                        }`}
-                      >
-                        G{node.genLevel + 1}
-                      </span>
-                    )}
-
-                    {/* 4 Titik Port Indikator */}
-                    <span
-                      className={`absolute -top-1.5 left-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full bg-amber-500 pointer-events-none transition-opacity ${
-                        isSelected
-                          ? 'opacity-100'
-                          : 'opacity-0 group-hover:opacity-100'
-                      }`}
-                    />
-                    <span
-                      className={`absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full bg-amber-500 pointer-events-none transition-opacity ${
-                        isSelected
-                          ? 'opacity-100'
-                          : 'opacity-0 group-hover:opacity-100'
-                      }`}
-                    />
-                    <span
-                      className={`absolute -left-1.5 top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-amber-500 pointer-events-none transition-opacity ${
-                        isSelected
-                          ? 'opacity-100'
-                          : 'opacity-0 group-hover:opacity-100'
-                      }`}
-                    />
-                    <span
-                      className={`absolute -right-1.5 top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-amber-500 pointer-events-none transition-opacity ${
-                        isSelected
-                          ? 'opacity-100'
-                          : 'opacity-0 group-hover:opacity-100'
-                      }`}
-                    />
-
-                    {node.mergedMembers && node.mergedMembers.length >= 2 ? (
-                      (() => {
-                        const mList = node.mergedMembers;
-                        const modLayout = node.modularSubLayout || 'grid';
-                        const plan = computeModularContainerPlan(
-                          mList.length,
-                          cardDisplayMode,
-                          photoFrameSize,
-                          effScale,
-                          node.mergedCols,
-                          modLayout,
-                          mList
-                        );
-                        const cellNamePx = Math.max(7, Math.round(9.5 * effScale));
-                        const cellSubPx = Math.max(6, Math.round(7.5 * effScale));
-                        const subPhotoW = plan.photoW;
-                        const subPhotoH = plan.photoH;
-
-                        const renderSubCard = (
-                          mm: MergedCardMember,
-                          mIdx: number,
-                          widthPx = plan.cellW,
-                          heightPx = plan.cellH
-                        ) => {
-                          const subGen = getGenGradientStyle(
-                            genGradientPalette,
-                            mm.genLevel ?? node.genLevel ?? 0
-                          );
-                          const subBg =
-                            mm.customBgColor || subGen?.bg || undefined;
-                          const subBorder =
-                            mm.customBorderColor || subGen?.border || undefined;
-                          const subIsLight = subBg
-                            ? isLightHexColor(subBg)
-                            : isCardLight;
-
-                          return (
-                            <div
-                              key={`${mm.originalNodeId}_${mIdx}`}
-                              style={{
-                                width: `${widthPx}px`,
-                                height: `${heightPx}px`,
-                                ...(subBg ? { backgroundColor: subBg } : {}),
-                                ...(subBorder ? { borderColor: subBorder } : {}),
-                              }}
-                              title={mm.sub ? `${mm.name} (${mm.sub})` : mm.name}
-                              className={`flex flex-col items-center justify-between rounded-lg border overflow-hidden shrink-0 p-[2px] ${
-                                !subBg
-                                  ? isCardLight
-                                    ? 'bg-stone-100/90 border-stone-300/80'
-                                    : 'bg-slate-900/75 border-slate-700/80'
-                                  : ''
-                              } ${subIsLight ? 'text-slate-900' : 'text-slate-100'} ${
-                                mm.wafat ? 'border-dashed opacity-90' : ''
-                              }`}
-                            >
-                              {cardDisplayMode !== 'name_only' &&
-                                renderPhotoFrame(
-                                  mm.photo,
-                                  mm.name,
-                                  subPhotoW,
-                                  subPhotoH,
-                                  subBorder
-                                )}
-
-                              {cardDisplayMode === 'photo_name' && (
-                                <div
-                                  style={{
-                                    height: `${plan.badgeH}px`,
-                                    fontSize: `${cellNamePx}px`,
-                                  }}
-                                  className={`w-full rounded px-1 flex items-center justify-center font-extrabold leading-none truncate ${
-                                    subIsLight
-                                      ? 'bg-black/[0.07] text-slate-900'
-                                      : 'bg-black/30 text-white'
-                                  }`}
-                                >
-                                  <span className="truncate">{mm.name}</span>
-                                </div>
-                              )}
-
-                              {cardDisplayMode === 'name_only' && (
-                                <div
-                                  style={{ fontSize: `${cellNamePx}px` }}
-                                  className="font-bold leading-tight text-center break-words whitespace-normal w-full my-auto"
-                                >
-                                  {mm.gender && (
-                                    <span className="mr-0.5">
-                                      {mm.gender === 'P' ? '👩' : '👨'}
-                                    </span>
-                                  )}
-                                  {mm.name}
-                                </div>
-                              )}
-
-                              {cardDisplayMode === 'full' && (
-                                <div
-                                  style={{ minHeight: `${plan.badgeH}px` }}
-                                  className={`w-full rounded px-1 py-0.5 flex flex-col items-center justify-center text-center leading-tight ${
-                                    subIsLight
-                                      ? 'bg-black/[0.07] text-slate-900'
-                                      : 'bg-black/30 text-white'
-                                  }`}
-                                >
-                                  <div
-                                    style={{ fontSize: `${cellNamePx}px` }}
-                                    className="font-extrabold leading-tight break-words whitespace-normal w-full line-clamp-2"
-                                  >
-                                    {mm.gender && (
-                                      <span className="mr-0.5">
-                                        {mm.gender === 'P' ? '👩' : '👨'}
-                                      </span>
-                                    )}
-                                    {mm.name}
-                                  </div>
-                                  {mm.sub && (
-                                    <div
-                                      style={{ fontSize: `${cellSubPx}px` }}
-                                      className={`mt-0.5 leading-tight break-words w-full line-clamp-2 opacity-85 ${
-                                        subIsLight ? 'text-slate-700' : 'text-slate-200'
-                                      }`}
-                                    >
-                                      {mm.sub}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        };
-
-                        const renderNuclearGroupBox = (
-                          grp: ModularNuclearGroup,
-                          keyPrefix: string
-                        ) => (
-                          <div
-                            key={`${keyPrefix}-${grp.id}`}
-                            style={{ gap: `${plan.tightGap}px` }}
-                            className={`flex flex-col items-center rounded-lg p-[2px] border ${
-                              isCardLight
-                                ? 'bg-black/[0.03] border-stone-400/35'
-                                : 'bg-white/[0.03] border-white/10'
-                            }`}
-                          >
-                            {/* Pasangan Suami-Istri Menempel Rapat (0mm) */}
-                            <div className="flex items-stretch justify-center gap-0">
-                              {grp.couple.map((cm, cIdx) =>
-                                renderSubCard(cm, cIdx)
-                              )}
-                            </div>
-                            {/* Anak dalam 1 Keluarga Inti (1–2mm rapat) */}
-                            {grp.childrenRows.map((row, rIdx) => (
-                              <div
-                                key={`${keyPrefix}-${grp.id}-r-${rIdx}`}
-                                style={{ gap: `${plan.tightGap}px` }}
-                                className="flex items-stretch justify-center"
-                              >
-                                {row.map((ch, kIdx) => renderSubCard(ch, kIdx))}
-                              </div>
-                            ))}
-                          </div>
-                        );
-
-                        return (
-                          <div className="w-full h-full flex flex-col items-center justify-start">
-                            {isSelected && (
-                              <button
-                                type="button"
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onTouchStart={(e) => e.stopPropagation()}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleUnmergeSelectedCard(node.id);
-                                }}
-                                className="absolute -top-2.5 right-1.5 px-1.5 py-0.5 rounded-full bg-sky-500 hover:bg-sky-400 text-slate-950 text-[8.5px] font-black shadow z-30 flex items-center gap-0.5 print:hidden"
-                                title="Pisah kembali ke kartu satuan"
-                              >
-                                <Split className="w-2.5 h-2.5" />
-                                <span>Pisah</span>
-                              </button>
-                            )}
-
-                            <div
-                                style={{
-                                  height: `${plan.headerH}px`,
-                                  fontSize: `${Math.max(8, Math.round(9.5 * Math.max(0.7, effScale)))}px`,
-                                }}
-                                className="w-full flex items-center justify-between gap-1 px-1 mb-1 border-b border-current/20 font-extrabold truncate"
-                              >
-                                <span className="truncate">
-                                  {node.name}
-                                </span>
-                                <span className="shrink-0 px-1 rounded bg-black/25 text-[8px] font-black">
-                                  {modLayout === 'I'
-                                    ? `I • ${mList.length}`
-                                    : modLayout === 'L'
-                                    ? `L • ${mList.length}`
-                                    : `${mList.length} Foto`}
-                                </span>
-                              </div>
-
-                            {plan.layout === 'I' ? (
-                              (() => {
-                                const headGroup = plan.groups[0];
-                                const childGroups = plan.groups.slice(1);
-                                const childRows: ModularNuclearGroup[][] = [];
-                                for (let i = 0; i < childGroups.length; i += plan.iSubCols) {
-                                  childRows.push(childGroups.slice(i, i + plan.iSubCols));
-                                }
-                                return (
-                                  <div
-                                    style={{ gap: `${plan.looseGap}px` }}
-                                    className="w-full flex flex-col items-center"
-                                  >
-                                    {headGroup && renderNuclearGroupBox(headGroup, 'modI-head')}
-                                    {childRows.map((rowGrps, rIdx) => (
-                                      <div
-                                        key={`modI-row-${rIdx}`}
-                                        style={{ gap: `${plan.looseGap}px` }}
-                                        className="flex items-start justify-center"
-                                      >
-                                        {rowGrps.map((cg) =>
-                                          renderNuclearGroupBox(cg, `modI-sub-${rIdx}`)
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                );
-                              })()
-                            ) : plan.layout === 'L' ? (
-                              (() => {
-                                const headGroup = plan.groups[0];
-                                const restGroups = plan.groups.slice(1);
-                                // Kasus khusus 1 keluarga inti di dalam modul: bentuk siku L dari pasangan + anak
-                                if (restGroups.length === 0 && headGroup) {
-                                  const flatKids = headGroup.childrenRows.flat();
-                                  if (flatKids.length >= 2) {
-                                    const rightKidCount = Math.min(2, Math.ceil(flatKids.length / 2));
-                                    const rightKids = flatKids.slice(0, rightKidCount);
-                                    const downKids = flatKids.slice(rightKidCount);
-                                    const downCols = Math.min(2, Math.max(1, downKids.length));
-                                    const downKidRows: MergedCardMember[][] = [];
-                                    for (let i = 0; i < downKids.length; i += downCols) {
-                                      downKidRows.push(downKids.slice(i, i + downCols));
-                                    }
-                                    return (
-                                      <div
-                                        style={{ gap: `${plan.tightGap}px` }}
-                                        className="w-full flex flex-col items-start rounded-lg p-[2px]"
-                                      >
-                                        <div
-                                          style={{ gap: `${plan.tightGap}px` }}
-                                          className="flex items-stretch justify-start"
-                                        >
-                                          <div className="flex items-stretch gap-0">
-                                            {headGroup.couple.map((cm, cIdx) =>
-                                              renderSubCard(cm, cIdx)
-                                            )}
-                                          </div>
-                                          {rightKids.map((rk, rIdx) =>
-                                            renderSubCard(rk, rIdx)
-                                          )}
-                                        </div>
-                                        {downKidRows.map((dr, drIdx) => (
-                                          <div
-                                            key={`l-single-down-${drIdx}`}
-                                            style={{ gap: `${plan.tightGap}px` }}
-                                            className="flex items-stretch justify-start"
-                                          >
-                                            {dr.map((dk, dkIdx) =>
-                                              renderSubCard(dk, dkIdx)
-                                            )}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    );
-                                  }
-                                }
-
-                                const downRows: ModularNuclearGroup[][] = [];
-                                for (let i = 0; i < plan.lDownGroups.length; i += plan.iSubCols) {
-                                  downRows.push(
-                                    plan.lDownGroups.slice(i, i + plan.iSubCols)
-                                  );
-                                }
-
-                                return (
-                                  <div
-                                    style={{ gap: `${plan.looseGap}px` }}
-                                    className="w-full flex flex-col items-start"
-                                  >
-                                    {/* Lengan Atas L: Keluarga Inti G3 di kiri + lengan kanan */}
-                                    <div
-                                      style={{ gap: `${plan.looseGap}px` }}
-                                      className="flex items-start justify-start"
-                                    >
-                                      {headGroup &&
-                                        renderNuclearGroupBox(headGroup, 'modL-head')}
-                                      {plan.lRightGroups.map((rg) =>
-                                        renderNuclearGroupBox(rg, 'modL-right')
-                                      )}
-                                    </div>
-                                    {/* Lengan Turun L: Kelompok Keluarga Inti G4–G5 berjarak 3–5mm */}
-                                    {downRows.map((dr, drIdx) => (
-                                      <div
-                                        key={`modL-down-${drIdx}`}
-                                        style={{ gap: `${plan.looseGap}px` }}
-                                        className="flex items-start justify-start"
-                                      >
-                                        {dr.map((dg) =>
-                                          renderNuclearGroupBox(dg, `modL-d-${drIdx}`)
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
-                                );
-                              })()
-                            ) : (
-                              <div
-                                style={{
-                                  display: 'grid',
-                                  gridTemplateColumns: `repeat(${plan.cols}, minmax(0, 1fr))`,
-                                  gap: `${plan.tightGap}px`,
-                                  width: '100%',
-                                }}
-                                className="items-stretch justify-items-center"
-                              >
-                                {mList.map((mm, mIdx) =>
-                                  renderSubCard(mm, mIdx)
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()
-                    ) : (
-                      <>
-                        {/* Kartu Poros Utama G1–G2 Lebih Besar (badge tingkat halus) */}
-                        {(node.genLevel ?? 0) <= 1 && (node.scaleMultiplier ?? 1) > 1.05 && (
-                          <span className="absolute -top-2 left-1.5 px-1 rounded bg-amber-500 text-slate-950 text-[7.5px] font-black leading-tight shadow print:hidden">
-                            G{(node.genLevel ?? 0) + 1}
-                          </span>
-                        )}
-
-                        {/* 1. Mode Card: Nama Lengkap Saja */}
-                        {cardDisplayMode === 'name_only' && (
-                          <div
-                            style={{ fontSize: `${scaledNamePx}px` }}
-                            className="font-extrabold leading-snug break-words whitespace-normal w-full text-center"
-                          >
-                            {node.gender && (
-                              <span className="mr-0.5 opacity-90">
-                                {node.gender === 'P' ? '👩' : '👨'}
-                              </span>
-                            )}
-                            <span>{node.name}</span>
-                          </div>
-                        )}
-
-                        {/* 2. Mode Card: Foto + Badge Nama */}
-                        {cardDisplayMode === 'photo_name' && (
-                          <div className="w-full h-full flex flex-col items-center justify-between overflow-hidden">
-                            {renderPhotoFrame(
-                              node.photo,
-                              node.name,
-                              pDim.w,
-                              pDim.h
-                            )}
-                            <div
-                              style={{
-                                height: `${uniformUnit.badgeH}px`,
-                                fontSize: `${Math.max(7, Math.round(9.5 * effScale))}px`,
-                              }}
-                              className={`w-full rounded px-1 flex items-center justify-center font-extrabold leading-none truncate ${
-                                isCardLight
-                                  ? 'bg-black/[0.07] text-slate-900'
-                                  : 'bg-black/30 text-white'
-                              }`}
-                            >
-                              <span className="truncate">{node.name}</span>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* 3. Mode Card: Foto + Badge Lengkap (Nama, Lahir/Wafat, Kota) */}
-                        {cardDisplayMode === 'full' && (
-                          <div className="w-full h-full flex flex-col items-center justify-between overflow-hidden gap-0.5">
-                            {renderPhotoFrame(
-                              node.photo,
-                              node.name,
-                              pDim.w,
-                              pDim.h
-                            )}
-                            <div
-                              className={`w-full rounded-md px-1.5 py-0.5 flex flex-col items-center justify-center text-center leading-tight ${
-                                isCardLight
-                                  ? 'bg-black/[0.07] text-slate-900'
-                                  : 'bg-black/30 text-white'
-                              }`}
-                            >
-                              <div
-                                style={{ fontSize: `${Math.max(7, Math.round(9.5 * effScale))}px` }}
-                                className="font-extrabold leading-tight break-words whitespace-normal w-full"
-                              >
-                                {node.gender && (
-                                  <span className="mr-0.5">
-                                    {node.gender === 'P' ? '👩' : '👨'}
-                                  </span>
-                                )}
-                                <span>{node.name}</span>
-                              </div>
-                              {node.sub && (
-                                <div
-                                  style={{ fontSize: `${Math.max(6, Math.round(8 * effScale))}px` }}
-                                  className={`mt-0.5 leading-tight break-words w-full opacity-90 ${
-                                    isCardLight ? 'text-slate-700' : 'text-slate-200'
-                                  }`}
-                                >
-                                  {node.sub}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                );
-              })}
+                })}
 
               {/* Blok Keterangan Poster Silsilah (Nama Keluarga Besar, Tahun, App Pembuat, Legenda Garis) */}
               {captionInfo.show && (
@@ -8396,27 +8307,347 @@ export const InteractiveGridCanvasView: React.FC<
         </div>
 
         {/* ========================================================= */}
-        {/* KONTROL MELAYANG ADAPTIF (MENYESUAIKAN PORTRAIT/LANSKAP)  */}
+        {/* KONTROL MELAYANG ADAPTIF (POTRET / LANSKAP ALA GAME)     */}
         {/* ========================================================= */}
 
-        {/* 1. Dock Melayang Kiri-Atas (Khusus Mode Leluasa: Kertas, Orientasi, Keluar) */}
-        {isFocusMode && (
-          <div className="fixed top-2.5 left-2.5 z-40 flex flex-wrap items-center gap-1.5 print:hidden max-w-[58vw]">
+        {/* 0. Tombol Eye Toggle saat HUD Disembunyikan */}
+        {isFocusMode && isHudHidden && (
+          <button
+            type="button"
+            onClick={() => setIsHudHidden(false)}
+            className="absolute top-2.5 right-2.5 z-50 px-2.5 py-1.5 rounded-xl bg-stone-900/90 hover:bg-stone-800 text-amber-300 border border-stone-700 backdrop-blur-md text-[11px] font-extrabold flex items-center gap-1.5 shadow-xl print:hidden"
+            title="Tampilkan Ikon Studio"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            <span>Tampilkan Ikon</span>
+          </button>
+        )}
+
+        {/* Indikator Halus saat Drag Kartu GPU */}
+        {isDraggingCards && !isHudHidden && (
+          <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-40 px-2.5 py-1 rounded-full bg-emerald-950/90 border border-emerald-400/60 text-emerald-300 text-[10px] font-black pointer-events-none shadow-lg print:hidden">
+            Menggeser kartu...
+          </div>
+        )}
+
+        {/* 1 & 2. HUD MODE LANSKAP ALA GAME (DOCK JEMPOL KIRI & KANAN VERTIKAL) */}
+        {isFocusMode && !isHudHidden && isLandscapeHud && (
+          <>
+            {/* Dock Vertikal Kiri (Layar Miring, Keluar, Pilih, Geser, Undo, Tambah, Garis) */}
+            <div className="absolute left-2 top-2 bottom-2 z-40 flex flex-col justify-between items-center gap-1.5 pointer-events-none print:hidden">
+              <div className="pointer-events-auto flex flex-col items-center gap-1 p-1 rounded-2xl bg-stone-900/88 border border-stone-700/90 backdrop-blur-md shadow-xl">
+                <button
+                  type="button"
+                  onClick={() => void handleExitFullscreenStudio()}
+                  className="w-10 h-9 rounded-xl bg-stone-800 hover:bg-stone-700 text-white flex flex-col items-center justify-center text-[8.5px] font-extrabold"
+                  title="Keluar dari Studio Penuh (ESC)"
+                >
+                  <Minimize2 className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Keluar</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleToggleStudioScreenMode()}
+                  className={`w-10 h-9 rounded-xl flex flex-col items-center justify-center text-[8.5px] font-extrabold transition ${
+                    studioScreenMode === 'landscape'
+                      ? 'bg-emerald-500 text-slate-950'
+                      : 'bg-stone-800 text-sky-300 hover:bg-stone-700'
+                  }`}
+                  title="Putar Layar Berdiri / Miring (Posisi Kertas Tetap!)"
+                >
+                  <RotateCw className="w-3.5 h-3.5" />
+                  <span>Layar</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !isMultiSelectMode;
+                    setIsMultiSelectMode(next);
+                    if (next) cancelHoldTimer();
+                  }}
+                  className={`w-10 h-9 rounded-xl flex flex-col items-center justify-center text-[8.5px] font-bold transition ${
+                    isMultiSelectMode
+                      ? 'bg-sky-500 text-stone-950'
+                      : 'text-sky-300 hover:bg-stone-800'
+                  }`}
+                  title="Mode Pilih Checklist Banyak Kartu"
+                >
+                  <CheckSquare className="w-3.5 h-3.5" />
+                  <span>Pilih</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsPanMode((v) => !v);
+                    showNotification(
+                      !isPanMode
+                        ? 'Mode Geser Kanvas Aktif'
+                        : 'Mode Edit Kartu Aktif'
+                    );
+                  }}
+                  className={`w-10 h-9 rounded-xl flex flex-col items-center justify-center text-[8.5px] font-bold transition ${
+                    isPanMode
+                      ? 'bg-sky-500 text-slate-950'
+                      : 'text-stone-300 hover:bg-stone-800'
+                  }`}
+                  title="Mode Geser Kanvas (Hand Tool)"
+                >
+                  <Hand className="w-3.5 h-3.5" />
+                  <span>Geser</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleUndo}
+                  disabled={undoCount === 0}
+                  className={`w-10 h-8 rounded-xl flex flex-col items-center justify-center text-[8.5px] font-bold ${
+                    undoCount === 0
+                      ? 'text-stone-600 cursor-not-allowed'
+                      : 'text-amber-300 hover:bg-stone-800'
+                  }`}
+                  title="Undo Perubahan Terakhir"
+                >
+                  <Undo2 className="w-3.5 h-3.5" />
+                  <span>Undo</span>
+                </button>
+              </div>
+
+              <div className="pointer-events-auto flex flex-col items-center gap-1 p-1 rounded-2xl bg-stone-900/88 border border-stone-700/90 backdrop-blur-md shadow-xl">
+                <button
+                  type="button"
+                  onClick={addNewNode}
+                  className="w-10 h-9 rounded-xl bg-emerald-700/90 hover:bg-emerald-600 text-white flex flex-col items-center justify-center text-[8.5px] font-bold"
+                  title="Tambah Kartu Baru"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Kartu</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={startConnectMode}
+                  className={`w-10 h-9 rounded-xl flex flex-col items-center justify-center text-[8.5px] font-bold ${
+                    connectFromId
+                      ? 'bg-amber-400 text-stone-950 animate-pulse'
+                      : 'text-sky-300 hover:bg-stone-800'
+                  }`}
+                  title="Hubungkan Garis Silsilah"
+                >
+                  <Link2 className="w-3.5 h-3.5" />
+                  <span>{connectFromId ? 'Tuju' : 'Garis'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Dock Vertikal Kanan (Eye, Panel Smart/Gaya/Edit, Simpan, PNG/Cetak + Minimap & Zoom) */}
+            <div className="absolute right-2 top-2 bottom-2 z-40 flex flex-col justify-between items-end gap-1.5 pointer-events-none print:hidden">
+              <div className="pointer-events-auto flex items-center gap-1 p-1 rounded-2xl bg-stone-900/88 border border-stone-700/90 backdrop-blur-md shadow-xl">
+                <button
+                  type="button"
+                  onClick={() => setIsHudHidden(true)}
+                  className="p-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300"
+                  title="Sembunyikan Ikon (100% Kanvas Bersih)"
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPanelTab('smart');
+                    setIsPanelOpen((v) => (panelTab === 'smart' ? !v : true));
+                  }}
+                  className={`px-2 py-1.5 rounded-xl text-[10.5px] font-bold flex items-center gap-1 ${
+                    isPanelOpen && panelTab === 'smart'
+                      ? 'bg-emerald-400 text-stone-950'
+                      : 'text-amber-300 hover:bg-stone-800'
+                  }`}
+                  title="Smart Tata Letak"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPanelTab('style');
+                    setIsPanelOpen((v) => (panelTab === 'style' ? !v : true));
+                  }}
+                  className={`px-2 py-1.5 rounded-xl text-[10.5px] font-bold flex items-center gap-1 ${
+                    isPanelOpen && panelTab === 'style'
+                      ? 'bg-sky-500 text-stone-950'
+                      : 'text-sky-300 hover:bg-stone-800'
+                  }`}
+                  title="Gaya Kartu, Warna & Garis"
+                >
+                  <Palette className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPanelTab('edit');
+                    setIsPanelOpen((v) => (panelTab === 'edit' ? !v : true));
+                  }}
+                  className={`px-2 py-1.5 rounded-xl text-[10.5px] font-bold flex items-center gap-1 ${
+                    isPanelOpen && panelTab === 'edit'
+                      ? 'bg-amber-500 text-stone-950'
+                      : 'text-stone-200 hover:bg-stone-800'
+                  }`}
+                  title="Edit Kartu & Susunan"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveNamedDesign}
+                  className="p-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950"
+                  title="Simpan Desain"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  disabled={isExportingPoster}
+                  onClick={() => handleTriggerGridExportAction('png')}
+                  className="p-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white"
+                  title={`Unduh PNG HD ${paperDim.label}`}
+                >
+                  <Download className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  disabled={isExportingPoster}
+                  onClick={() => handleTriggerGridExportAction('print')}
+                  className="p-1.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950"
+                  title={`Cetak Poster ${paperDim.label}`}
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="pointer-events-auto flex flex-col items-end gap-1.5">
+                <GridMiniNavigator
+                  isOpen={isMiniNavOpen}
+                  onToggleOpen={() => setIsMiniNavOpen((v) => !v)}
+                  boardWidth={boardWidth}
+                  boardHeight={boardHeight}
+                  nodes={nodes}
+                  cardDisplayMode={cardDisplayMode}
+                  photoFrameSize={photoFrameSize}
+                  cardScale={cardScale}
+                  paperLabel={paperDim.label}
+                  isDark={isDark}
+                  registerViewportBoxEl={(el) => {
+                    miniNavViewportElRef.current = el;
+                  }}
+                  onJumpToBoardPoint={handleJumpToBoardPoint}
+                  isCssRotatedLandscape={isCssLandscapeActive}
+                />
+
+                <div className="flex items-center gap-1 rounded-2xl bg-stone-900/90 border border-stone-700/90 text-white p-1 backdrop-blur-md shadow-xl">
+                  <select
+                    value={paperSize}
+                    onChange={(e) => setPaperSize(e.target.value as GridPaperSize)}
+                    className="bg-transparent text-amber-300 text-[10px] font-black px-1 py-0.5 outline-hidden cursor-pointer"
+                    title="Ukuran Kertas A0-A4"
+                  >
+                    <option value="a4" className="bg-stone-900">A4</option>
+                    <option value="a3" className="bg-stone-900">A3</option>
+                    <option value="a2" className="bg-stone-900">A2</option>
+                    <option value="a1" className="bg-stone-900">A1</option>
+                    <option value="a0" className="bg-stone-900">A0</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPaperOrientation((o) =>
+                        o === 'landscape' ? 'portrait' : 'landscape'
+                      )
+                    }
+                    className="px-1.5 py-0.5 rounded-lg bg-stone-800 text-emerald-300 text-[9.5px] font-bold"
+                    title="Putar Kertas Potret / Lanskap"
+                  >
+                    {paperOrientation === 'landscape' ? 'Lanskap' : 'Potret'}
+                  </button>
+                  <span className="w-px h-4 bg-stone-700" />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setRenderQualityMode((m) =>
+                        m === 'auto' ? 'snapshot' : m === 'snapshot' ? 'hd' : 'auto'
+                      )
+                    }
+                    className={`px-1.5 py-0.5 rounded-lg text-[9.5px] font-black ${
+                      useSnapshotOverview
+                        ? 'bg-emerald-500 text-slate-950'
+                        : renderQualityMode === 'hd'
+                        ? 'bg-amber-400 text-slate-950'
+                        : 'bg-stone-800 text-stone-300'
+                    }`}
+                    title="Mode Render Kanvas: Auto / Ringan (Snapshot) / HD Penuh"
+                  >
+                    {renderQualityMode === 'snapshot'
+                      ? 'Ringan'
+                      : renderQualityMode === 'hd'
+                      ? 'HD'
+                      : useSnapshotOverview
+                      ? 'Auto⚡'
+                      : 'Auto'}
+                  </button>
+                  <span className="w-px h-4 bg-stone-700" />
+                  <button
+                    type="button"
+                    onClick={() => handleZoomByStep(-0.15)}
+                    className="p-1 rounded-lg hover:bg-stone-800 text-stone-200"
+                    title="Perkecil Zoom"
+                  >
+                    <ZoomOut className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleFitScreen(false)}
+                    className="px-1 py-0.5 rounded-lg hover:bg-stone-800 text-[10.5px] font-mono font-extrabold text-amber-300 min-w-[38px] text-center"
+                    title="Ketuk untuk Pas Layar"
+                  >
+                    <span ref={zoomLabelRef}>{Math.round(zoom * 100)}%</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleZoomByStep(0.15)}
+                    className="p-1 rounded-lg hover:bg-stone-800 text-stone-200"
+                    title="Perbesar Zoom"
+                  >
+                    <ZoomIn className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleFitScreen(false)}
+                    className="px-1.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[9.5px] font-extrabold"
+                    title="Pas Kertas ke Layar"
+                  >
+                    Pas
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* 1. Dock Melayang Kiri-Atas (Mode Studio Potret) */}
+        {isFocusMode && !isHudHidden && !isLandscapeHud && (
+          <div className="absolute top-2.5 left-2.5 z-40 flex flex-wrap items-center gap-1 print:hidden max-w-[54vw]">
             <button
               type="button"
-              onClick={() => setIsFocusMode(false)}
-              className="px-2.5 py-1.5 rounded-xl bg-stone-900/90 hover:bg-stone-800 text-white border border-stone-700 backdrop-blur-md text-[11px] font-extrabold flex items-center gap-1 shadow-lg"
-              title="Keluar dari Mode Leluasa (ESC)"
+              onClick={() => void handleExitFullscreenStudio()}
+              className="px-2 py-1.5 rounded-xl bg-stone-900/90 hover:bg-stone-800 text-white border border-stone-700 backdrop-blur-md text-[11px] font-extrabold flex items-center gap-1 shadow-lg"
+              title="Keluar dari Studio Penuh (ESC)"
             >
               <Minimize2 className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden sm:inline">Keluar Penuh</span>
+              <span className="hidden sm:inline">Keluar</span>
             </button>
 
             <div className="flex items-center rounded-xl bg-stone-900/85 border border-stone-700 backdrop-blur-md p-0.5 gap-0.5 shadow-lg">
               <select
                 value={paperSize}
                 onChange={(e) => setPaperSize(e.target.value as GridPaperSize)}
-                className="bg-transparent text-amber-300 text-[11px] font-black px-1.5 py-1 outline-hidden cursor-pointer"
+                className="bg-transparent text-amber-300 text-[10.5px] font-black px-1 py-1 outline-hidden cursor-pointer"
+                title="Ukuran Kertas A0-A4"
               >
                 <option value="a4" className="bg-stone-900">A4</option>
                 <option value="a3" className="bg-stone-900">A3</option>
@@ -8427,35 +8658,44 @@ export const InteractiveGridCanvasView: React.FC<
               <button
                 type="button"
                 onClick={() => {
-                  setAutoScreenOrient(false);
                   setPaperOrientation((o) =>
                     o === 'landscape' ? 'portrait' : 'landscape'
                   );
                 }}
-                className="px-2 py-1 rounded-lg bg-stone-800 text-emerald-300 text-[10px] font-bold"
+                className="px-1.5 py-1 rounded-lg bg-stone-800 text-emerald-300 text-[9.5px] font-bold"
                 title="Putar Kertas Potret / Lanskap"
               >
                 {paperOrientation === 'landscape' ? 'Lanskap' : 'Potret'}
               </button>
               <button
                 type="button"
-                onClick={() => setAutoScreenOrient((v) => !v)}
-                className={`p-1 rounded-lg text-[10px] font-bold ${
-                  autoScreenOrient
-                    ? 'bg-emerald-600 text-white'
-                    : 'text-stone-400 hover:text-white'
+                onClick={() => void handleToggleStudioScreenMode()}
+                className={`px-1.5 py-1 rounded-lg text-[9.5px] font-extrabold flex items-center gap-1 ${
+                  studioScreenMode === 'landscape'
+                    ? 'bg-emerald-500 text-slate-950'
+                    : 'text-sky-300 hover:bg-stone-800'
                 }`}
-                title="Auto-Sesuaikan Potret/Lanskap dengan Layar"
+                title="Putar Layar HP Miring (Ala Game) tanpa mengubah ukuran/posisi kertas!"
               >
-                <Smartphone className="w-3.5 h-3.5" />
+                <RotateCw className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Layar Miring</span>
               </button>
             </div>
           </div>
         )}
 
-        {/* 2. Dock Melayang Kanan-Atas (Khusus Mode Leluasa: Aksi Edit Cepat) */}
-        {isFocusMode && (
-          <div className="fixed top-2.5 right-2.5 z-40 flex flex-wrap items-center justify-end gap-1 print:hidden max-w-[55vw]">
+        {/* 2. Dock Melayang Kanan-Atas (Mode Studio Potret) */}
+        {isFocusMode && !isHudHidden && !isLandscapeHud && (
+          <div className="absolute top-2.5 right-2.5 z-40 flex flex-wrap items-center justify-end gap-1 print:hidden max-w-[54vw]">
+            <button
+              type="button"
+              onClick={() => setIsHudHidden(true)}
+              className="p-1.5 rounded-xl bg-stone-900/85 hover:bg-stone-800 text-stone-300 border border-stone-700 backdrop-blur-md shadow-lg"
+              title="Sembunyikan Ikon (Layar Bersih)"
+            >
+              <EyeOff className="w-3.5 h-3.5" />
+            </button>
+
             <button
               type="button"
               onClick={() => {
@@ -8566,7 +8806,7 @@ export const InteractiveGridCanvasView: React.FC<
             <button
               type="button"
               onClick={handleSaveNamedDesign}
-              className="px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 text-[11px] font-black flex items-center gap-1 shadow-lg"
+              className="px-2 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 text-[11px] font-black flex items-center gap-1 shadow-lg"
               title="Simpan Desain"
             >
               <Save className="w-3.5 h-3.5" />
@@ -8597,86 +8837,131 @@ export const InteractiveGridCanvasView: React.FC<
           </div>
         )}
 
-        {/* 3. Dock Melayang Kanan-Bawah: Zoom 2-Jari / Tombol, Mode Geser (Hand), Pas Layar, Leluasa */}
-        <div
-          className={`${
-            isFocusMode ? 'fixed bottom-3 right-3' : 'absolute bottom-2.5 right-2.5'
-          } z-40 flex items-center gap-1 rounded-2xl bg-stone-900/90 border border-stone-700/90 text-white p-1 backdrop-blur-md shadow-xl print:hidden`}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              setIsPanMode((v) => !v);
-              showNotification(
-                !isPanMode
-                  ? 'Mode Geser Kanvas Aktif: seret kanvas bebas tanpa menggeser kartu'
-                  : 'Mode Edit Kartu Aktif'
-              );
-            }}
-            className={`px-2 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition ${
-              isPanMode
-                ? 'bg-sky-500 text-slate-950'
-                : 'text-stone-300 hover:bg-stone-800'
-            }`}
-            title="Mode Geser Kanvas (Hand Tool) agar layar sentuh tidak tidak sengaja menggeser kartu"
-          >
-            <Hand className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Geser</span>
-          </button>
+        {/* 3. Dock Melayang Kanan-Bawah (Mode Potret & Mode Normal): Mini-Navigator + Mode Render + Zoom */}
+        {!isLandscapeHud && !(isFocusMode && isHudHidden) && (
+          <div className="absolute bottom-2.5 right-2.5 z-40 flex flex-col items-end gap-1.5 print:hidden">
+            <GridMiniNavigator
+              isOpen={isMiniNavOpen}
+              onToggleOpen={() => setIsMiniNavOpen((v) => !v)}
+              boardWidth={boardWidth}
+              boardHeight={boardHeight}
+              nodes={nodes}
+              cardDisplayMode={cardDisplayMode}
+              photoFrameSize={photoFrameSize}
+              cardScale={cardScale}
+              paperLabel={paperDim.label}
+              isDark={isDark}
+              registerViewportBoxEl={(el) => {
+                miniNavViewportElRef.current = el;
+              }}
+              onJumpToBoardPoint={handleJumpToBoardPoint}
+              isCssRotatedLandscape={isCssLandscapeActive}
+            />
 
-          <span className="w-px h-4 bg-stone-700" />
+            <div className="flex items-center gap-1 rounded-2xl bg-stone-900/90 border border-stone-700/90 text-white p-1 backdrop-blur-md shadow-xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPanMode((v) => !v);
+                  showNotification(
+                    !isPanMode
+                      ? 'Mode Geser Kanvas Aktif: seret kanvas bebas tanpa menggeser kartu'
+                      : 'Mode Edit Kartu Aktif'
+                  );
+                }}
+                className={`px-2 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition ${
+                  isPanMode
+                    ? 'bg-sky-500 text-slate-950'
+                    : 'text-stone-300 hover:bg-stone-800'
+                }`}
+                title="Mode Geser Kanvas (Hand Tool)"
+              >
+                <Hand className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Geser</span>
+              </button>
 
-          <button
-            type="button"
-            onClick={() => setZoom((z) => Math.max(0.15, +(z - 0.1).toFixed(2)))}
-            className="p-1.5 rounded-xl hover:bg-stone-800 text-stone-200"
-            title="Perkecil Zoom"
-          >
-            <ZoomOut className="w-3.5 h-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={handleFitScreen}
-            className="px-1.5 py-1 rounded-lg hover:bg-stone-800 text-[11px] font-mono font-extrabold text-amber-300 min-w-[42px] text-center"
-            title="Ketuk untuk Pas Layar Otomatis"
-          >
-            {Math.round(zoom * 100)}%
-          </button>
-          <button
-            type="button"
-            onClick={() => setZoom((z) => Math.min(2.5, +(z + 0.1).toFixed(2)))}
-            className="p-1.5 rounded-xl hover:bg-stone-800 text-stone-200"
-            title="Perbesar Zoom (Mendukung Pinch 2 Jari)"
-          >
-            <ZoomIn className="w-3.5 h-3.5" />
-          </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setRenderQualityMode((m) =>
+                    m === 'auto' ? 'snapshot' : m === 'snapshot' ? 'hd' : 'auto'
+                  )
+                }
+                className={`px-1.5 py-1 rounded-xl text-[10px] font-black transition ${
+                  useSnapshotOverview
+                    ? 'bg-emerald-500 text-slate-950'
+                    : renderQualityMode === 'hd'
+                    ? 'bg-amber-400 text-slate-950'
+                    : 'bg-stone-800 text-stone-300 hover:bg-stone-700'
+                }`}
+                title="Mode Render Kanvas: Auto / Ringan (Snapshot) / HD Penuh"
+              >
+                {renderQualityMode === 'snapshot'
+                  ? 'Ringan'
+                  : renderQualityMode === 'hd'
+                  ? 'HD'
+                  : useSnapshotOverview
+                  ? 'Auto⚡'
+                  : 'Auto'}
+              </button>
 
-          <button
-            type="button"
-            onClick={handleFitScreen}
-            className="px-2 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-extrabold"
-            title="Pas Kertas ke Layar"
-          >
-            Pas
-          </button>
+              <span className="w-px h-4 bg-stone-700" />
 
-          {!isFocusMode && (
-            <button
-              type="button"
-              onClick={() => setIsFocusMode(true)}
-              className="p-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950"
-              title="Mode Leluasa (Layar Penuh)"
-            >
-              <Maximize2 className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
+              <button
+                type="button"
+                onClick={() => handleZoomByStep(-0.15)}
+                className="p-1.5 rounded-xl hover:bg-stone-800 text-stone-200"
+                title="Perkecil Zoom"
+              >
+                <ZoomOut className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFitScreen(false)}
+                className="px-1.5 py-1 rounded-lg hover:bg-stone-800 text-[11px] font-mono font-extrabold text-amber-300 min-w-[42px] text-center"
+                title="Ketuk untuk Pas Layar Otomatis"
+              >
+                <span ref={zoomLabelRef}>{Math.round(zoom * 100)}%</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleZoomByStep(0.15)}
+                className="p-1.5 rounded-xl hover:bg-stone-800 text-stone-200"
+                title="Perbesar Zoom (Mendukung Pinch 2 Jari)"
+              >
+                <ZoomIn className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleFitScreen(false)}
+                className="px-2 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-extrabold"
+                title="Pas Kertas ke Layar"
+              >
+                Pas
+              </button>
+
+              {!isFocusMode && (
+                <button
+                  type="button"
+                  onClick={() => setIsFocusMode(true)}
+                  className="p-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950"
+                  title="Masuk Studio Penuh"
+                >
+                  <Maximize2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* 3b. Kontrol Melayang Garis & Dot (Ubah Posisi Dot / Port Keluar-Masuk / Hapus Dot) */}
         {activeEdgeIdx !== null && edges[activeEdgeIdx] && (
           <div
             onClick={(e) => e.stopPropagation()}
-            className="absolute top-2.5 left-1/2 -translate-x-1/2 z-40 flex flex-wrap items-center justify-center gap-1.5 rounded-2xl bg-stone-900/95 border border-amber-500/40 text-white px-2.5 py-1.5 backdrop-blur-md shadow-xl print:hidden max-w-[92vw]"
+            className={`absolute ${
+              isLandscapeHud ? 'top-2' : 'top-14 sm:top-2.5'
+            } left-1/2 -translate-x-1/2 z-40 flex flex-wrap items-center justify-center gap-1.5 rounded-2xl bg-stone-900/95 border border-amber-500/40 text-white px-2.5 py-1.5 backdrop-blur-md shadow-xl print:hidden max-w-[88%]`}
           >
             <span className="text-[10px] font-black text-amber-300 px-1">
               Garis #{activeEdgeIdx + 1}
@@ -8784,12 +9069,14 @@ export const InteractiveGridCanvasView: React.FC<
           </div>
         )}
 
-        {/* 4. Dock Kontekstual Melayang saat Kartu Dipilih (Normal & Mode Leluasa) */}
+        {/* 4. Dock Kontekstual Melayang saat Kartu Dipilih (Normal & Studio Penuh) */}
         {selectedIds.length > 0 && (
           <div
-            className={`${
-              isFocusMode ? 'fixed bottom-3 left-3' : 'absolute bottom-2.5 left-2.5'
-            } z-40 flex flex-col gap-1.5 print:hidden max-w-[68vw]`}
+            className={`absolute ${
+              isLandscapeHud
+                ? 'bottom-2.5 left-16 max-w-[54%]'
+                : 'bottom-2.5 left-2.5 max-w-[66%]'
+            } z-40 flex flex-col gap-1.5 print:hidden`}
           >
             <div className="flex flex-wrap items-center gap-1 rounded-2xl bg-stone-900/92 border border-amber-500/40 text-white p-1.5 backdrop-blur-md shadow-xl">
               <span className="text-[10px] font-black text-amber-300 px-1.5">

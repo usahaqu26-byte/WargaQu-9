@@ -1065,6 +1065,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   const [viewMode, setViewMode] = useState<'grid' | 'excel' | 'feed' | 'kuis' | 'settings'>(() => {
     return appPreferences.defaultStartMenu || 'grid';
   });
+  const [gridStudioTrigger, setGridStudioTrigger] = useState<number>(0);
 
   // State Postingan Medsos TrahBook (terisolasi per-akun)
   const [trahPosts, setTrahPosts] = useState<TrahPost[]>(() => loadPostsForScope(accountScope));
@@ -5901,6 +5902,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                 ? 'kotak'
                 : 'segi6'
             }
+            enterStudioTrigger={gridStudioTrigger}
           />
         )}
       </main>
@@ -5916,7 +5918,8 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             type="button"
             onClick={() => {
               setViewMode('grid');
-              showNotification('Beralih ke Kanvas Grid (Manual / Auto) ✋');
+              setGridStudioTrigger((c) => c + 1);
+              showNotification('Membuka Studio Kanvas A0-A4 Layar Penuh 🎨');
             }}
             className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-2xl transition-all duration-150 active:scale-95 ${
               viewMode === 'grid'
