@@ -542,11 +542,20 @@ ATURAN EKSTRAKSI:
       return;
     }
 
-    const allowedArchetypeHints = new Set(['auto', 'tree_organic', 'lotus_mandala', 'molecule_cluster']);
-    const archetypeHint =
+    const allowedArchetypeHints = new Set([
+      'auto',
+      'tree_organic',
+      'lotus_mandala',
+      'honeycomb_tier',
+      'honeycomb_radial',
+      'molecule_cluster',
+    ]);
+    const rawArchetypeHint =
       typeof body?.archetypeHint === 'string' && allowedArchetypeHints.has(body.archetypeHint)
         ? body.archetypeHint
         : 'auto';
+    const archetypeHint =
+      rawArchetypeHint === 'molecule_cluster' ? 'honeycomb_radial' : rawArchetypeHint;
     const stylePrompt =
       typeof body?.stylePrompt === 'string'
         ? body.stylePrompt.replace(/[\r\n]+/g, ' ').trim().slice(0, 220)
@@ -576,31 +585,32 @@ ATURAN EKSTRAKSI:
 Tugas Anda HANYA meracik BLUEPRINT JSON komposisi visual & keseimbangan cabang dari kerangka tabel anonim berikut (tanpa mengarang data anggota baru).
 
 Pilihan gaya yang diminta pengguna: "${archetypeHint}"
-Arahan artistik pengguna (opsional): "${stylePrompt || 'Estetik organik harmonis, rapi, penuh karakter alami, mudah dibaca saat cetak A4-A0'}"
+Arahan artistik pengguna (opsional): "${stylePrompt || 'Estetik organik harmonis, rapi, bersih tanpa benang kusut, mudah dibaca saat cetak A4-A0'}"
 
 Data kerangka tabel (hanya ID, generasi g=0..4+, parent pid, jumlah pasangan sp, anak kids, total keturunan desc):
 ${JSON.stringify(compactPayload)}
 
 ATURAN BLUEPRINT:
 1. archetype:
+   - "honeycomb_tier": Sarang Lebah Bertingkat (segi enam mengunci rapat turun bertingkat, tanpa garis, pembatas warna bertingkat G2 mencakup G3 mencakup G4 mencakup G5).
+   - "honeycomb_radial": Sarang Lebah Ratu Pusat (G1 di pusat segi enam, G2 mengelilingi 6 sisi, G3–G5 mekar ke luar dengan pembatas warna bertingkat tanpa garis).
+   - "lotus_mandala": Kolam Teratai Mekar (G1, G2, G3 menjadi bunga teratai terpisah berpasangan di putik tengah dengan tangkai cukup antar bunga G1->G2->G3; G4–G5 menjadi kelopak mengelilingi G3).
    - "tree_organic": Pohon Hayat Organik (batang melengkung alami, akar bercabang, dahan/ranting kurva S, daun rimbun tua->muda).
-   - "lotus_mandala": Teratai Mekar Mandala (inti putik emas di pusat, kelopak berlapis seimbang 360°).
-   - "molecule_cluster": Molekul Organik (simpul heksagon/bulat berantai seimbang, garis ikatan langsung antar pusat).
    (Jika archetypeHint bukan "auto", patuhi archetypeHint tersebut!)
 2. Penyeimbangan Cabang (balanceLeftIds & balanceRightIds):
-   - Jika tree_organic: bagi ID generasi ke-3 (g=2, daftar: ${JSON.stringify(g3BranchIds.slice(0, 40))}) ke sisi kiri (balanceLeftIds) vs kanan (balanceRightIds) agar total bobot keturunan (desc) kiri dan kanan SEIMBANG secara visual.
+   - Bagi ID generasi ke-3 (g=2, daftar: ${JSON.stringify(g3BranchIds.slice(0, 40))}) ke sisi kiri (balanceLeftIds) vs kanan (balanceRightIds) agar total bobot keturunan (desc) kiri dan kanan SEIMBANG secara visual.
 3. Siluet & Kurva:
-   - treeShape: "banyan_arch" (beringin melebar rimbun), "pine_tiered" (cemara bertingkat), atau "royal_canopy" (kanopi megah simetris).
-   - curveTension: angka 0.30 sampai 0.90 (kehalusan kelengkungan dahan/tangkai).
-   - trunkCurve: angka -0.25 sampai 0.25 (kemiringan halus S pada batang utama agar terasa seperti pohon nyata, 0.06–0.14 ideal).
+   - treeShape: "banyan_arch", "pine_tiered", atau "royal_canopy".
+   - curveTension: angka 0.30 sampai 0.90.
+   - trunkCurve: angka -0.25 sampai 0.25.
    - rootSpread: angka 0.85 sampai 1.35.
 4. Bingkai & Palet Warna Harmonis (G1->G6 gradasi alami tua/hangat ke cerah/segar, pastikan teks kontras!):
-   - cardShape: "leaf" | "petal" | "hex" | "rect"
+   - cardShape: "hex" untuk honeycomb, "petal" untuk lotus_mandala, "leaf" untuk tree_organic.
    - leafVariant: "pointed" | "banyan" | "sakura"
    - spouseMode: "compact_beside" | "vertical_pair"
    - connectorStyle: "curved" | "straight"
-   - canvasBgColor: hex warna latar papan gelap/terang yang menyatu (contoh "#071a12" untuk hutan malam, "#0f172a" untuk galaksi, "#fdf8f6" untuk teratai terang)
-   - barkOuterColor & barkInnerColor: hex warna kulit kayu luar & urat dalam batang pohon
+   - canvasBgColor: hex warna latar papan gelap/terang yang menyatu
+   - barkOuterColor & barkInnerColor: hex warna aksen kulit kayu/bingkai utama
    - genColors: tepat 6 item warna G1..G6 masing-masing { bg, border, line } format hex #RRGGBB.
 5. themeTitle & designRationale: singkat dalam Bahasa Indonesia (maks 1 kalimat).`;
 
@@ -691,13 +701,22 @@ ATURAN BLUEPRINT:
       }
 
       const parsed = parseGeminiJsonObject<Record<string, unknown>>(rawText);
-      const validArchetypes = new Set(['tree_organic', 'lotus_mandala', 'molecule_cluster']);
+      const validArchetypes = new Set([
+        'tree_organic',
+        'lotus_mandala',
+        'honeycomb_tier',
+        'honeycomb_radial',
+      ]);
+      const parsedArch =
+        String(parsed.archetype) === 'molecule_cluster'
+          ? 'honeycomb_radial'
+          : String(parsed.archetype);
       const chosenArchetype =
         archetypeHint !== 'auto'
           ? archetypeHint
-          : validArchetypes.has(String(parsed.archetype))
-          ? String(parsed.archetype)
-          : 'tree_organic';
+          : validArchetypes.has(parsedArch)
+          ? parsedArch
+          : 'honeycomb_tier';
 
       const validTreeShapes = new Set(['banyan_arch', 'pine_tiered', 'royal_canopy']);
       const treeShape = validTreeShapes.has(String(parsed.treeShape))
@@ -708,7 +727,7 @@ ATURAN BLUEPRINT:
       const defaultCardShape =
         chosenArchetype === 'lotus_mandala'
           ? 'petal'
-          : chosenArchetype === 'molecule_cluster'
+          : chosenArchetype === 'honeycomb_tier' || chosenArchetype === 'honeycomb_radial'
           ? 'hex'
           : 'leaf';
       const cardShape = validCardShapes.has(String(parsed.cardShape))

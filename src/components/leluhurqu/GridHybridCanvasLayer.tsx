@@ -84,6 +84,26 @@ export interface TreeSkeletonData {
   }>;
 }
 
+export interface LineageHullItem {
+  id: string;
+  d: string;
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  dash?: string;
+  level: 2 | 3 | 4;
+}
+
+export interface LotusHaloItem {
+  id: string;
+  cx: number;
+  cy: number;
+  rx: number;
+  ry: number;
+  stroke: string;
+  fill: string;
+}
+
 interface GridHybridSnapshotCanvasProps {
   visible: boolean;
   boardWidth: number;
@@ -91,6 +111,8 @@ interface GridHybridSnapshotCanvasProps {
   nodes: InteractiveNode[];
   computedEdges: ComputedCanvasEdgeItem[];
   treeSkeleton?: TreeSkeletonData | null;
+  lineageHulls?: LineageHullItem[];
+  lotusHalos?: LotusHaloItem[];
   selectedIds: string[];
   lineStyle: ConnectorLineStyle;
   lineThickness: number;
@@ -121,6 +143,8 @@ export const GridHybridSnapshotCanvas: React.FC<
     nodes,
     computedEdges,
     treeSkeleton,
+    lineageHulls,
+    lotusHalos,
     selectedIds,
     lineStyle,
     lineThickness,
@@ -253,6 +277,47 @@ export const GridHybridSnapshotCanvas: React.FC<
             ctx.closePath();
             ctx.fillStyle = ac.color;
             ctx.fill();
+            ctx.restore();
+          });
+        }
+
+        // 0B. Pembatas Warna Bertingkat Sarang Lebah (G2 ⊃ G3 ⊃ G4) & Aura Kolam Teratai
+        if (lineageHulls && lineageHulls.length > 0) {
+          lineageHulls.forEach((hull) => {
+            try {
+              const p = new Path2D(hull.d);
+              ctx.save();
+              ctx.fillStyle = hull.fill;
+              ctx.fill(p);
+              ctx.strokeStyle = hull.stroke;
+              ctx.lineWidth = hull.strokeWidth;
+              if (hull.dash) {
+                const parts = hull.dash
+                  .split(/\s+/)
+                  .map((v) => Number(v))
+                  .filter((v) => !Number.isNaN(v) && v > 0);
+                if (parts.length > 0) ctx.setLineDash(parts);
+              }
+              ctx.lineJoin = 'round';
+              ctx.stroke(p);
+              ctx.restore();
+            } catch {
+              // ignore invalid path
+            }
+          });
+        }
+
+        if (lotusHalos && lotusHalos.length > 0) {
+          lotusHalos.forEach((halo) => {
+            ctx.save();
+            ctx.beginPath();
+            ctx.ellipse(halo.cx, halo.cy, halo.rx, halo.ry, 0, 0, Math.PI * 2);
+            ctx.fillStyle = halo.fill;
+            ctx.fill();
+            ctx.strokeStyle = halo.stroke;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([5, 5]);
+            ctx.stroke();
             ctx.restore();
           });
         }
@@ -433,6 +498,102 @@ export const GridHybridSnapshotCanvas: React.FC<
           ctx.restore();
         };
 
+        const drawCoverPhotoInActiveClip = (
+          url: string,
+          bx: number,
+          by: number,
+          bw: number,
+          bh: number,
+          alt: string,
+          bgTopCol: string,
+          nameStr: string,
+          fontPx: number,
+          padBottomRatio = 0.1
+        ) => {
+          const grdBg = ctx.createRadialGradient(
+            bx + bw * 0.5,
+            by + bh * 0.35,
+            2,
+            bx + bw * 0.5,
+            by + bh * 0.5,
+            Math.max(bw, bh) * 0.72
+          );
+          grdBg.addColorStop(0, bgTopCol || '#1e293b');
+          grdBg.addColorStop(1, '#020617');
+          ctx.fillStyle = grdBg;
+          ctx.fillRect(bx, by, bw, bh);
+
+          let drewPhoto = false;
+          if (url) {
+            const cached = imgCacheRef.current.get(url);
+            if (cached && cached !== 'loading' && cached !== 'error') {
+              try {
+                const iw = cached.naturalWidth || cached.width || bw;
+                const ih = cached.naturalHeight || cached.height || bh;
+                const imgAspect = iw / Math.max(1, ih);
+                const boxAspect = bw / Math.max(1, bh);
+                let sx = 0;
+                let sy = 0;
+                let sw = iw;
+                let sh = ih;
+                if (imgAspect > boxAspect) {
+                  sw = ih * boxAspect;
+                  sx = (iw - sw) * 0.5;
+                } else {
+                  sh = iw / Math.max(0.01, boxAspect);
+                  sy = (ih - sh) * 0.22;
+                }
+                ctx.drawImage(cached, sx, sy, sw, sh, bx, by, bw, bh);
+                drewPhoto = true;
+              } catch {
+                // ignore
+              }
+            } else if (!cached) {
+              imgCacheRef.current.set(url, 'loading');
+              const img = new Image();
+              if (!url.startsWith('data:')) {
+                img.crossOrigin = 'anonymous';
+              }
+              img.onload = () => {
+                imgCacheRef.current.set(url, img);
+                redrawTickRef.current += 1;
+              };
+              img.onerror = () => {
+                imgCacheRef.current.set(url, 'error');
+              };
+              img.src = url;
+            }
+          }
+
+          if (!drewPhoto) {
+            ctx.fillStyle = '#fcd34d';
+            ctx.font = `900 ${Math.max(10, Math.round(Math.min(bw, bh) * 0.28))}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(getInitials(alt), bx + bw / 2, by + bh * 0.42);
+          }
+
+          // Scrim gelap bawah + Nama menyatu di dalam bentuk
+          const scrimTop = by + bh * 0.54;
+          const scrimGrad = ctx.createLinearGradient(0, scrimTop, 0, by + bh);
+          scrimGrad.addColorStop(0, 'rgba(2, 6, 23, 0)');
+          scrimGrad.addColorStop(0.45, 'rgba(2, 6, 23, 0.78)');
+          scrimGrad.addColorStop(1, 'rgba(2, 6, 23, 0.96)');
+          ctx.fillStyle = scrimGrad;
+          ctx.fillRect(bx, scrimTop, bw, by + bh - scrimTop);
+
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `800 ${fontPx}px sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText(
+            nameStr,
+            bx + bw / 2,
+            by + bh - Math.max(3, Math.round(bh * padBottomRatio)),
+            bw * 0.78
+          );
+        };
+
         nodes.forEach((node) => {
           const size = getNodeSize(
             node,
@@ -581,6 +742,27 @@ export const GridHybridSnapshotCanvas: React.FC<
               ctx.textAlign = 'center';
               ctx.textBaseline = 'middle';
               ctx.fillText(node.name, cx, node.y + size.h / 2, size.w - 10);
+            } else if (cardDisplayMode === 'photo_name_unified') {
+              ctx.save();
+              drawCardRoundedRect(node.x + 2, node.y + 2, size.w - 4, size.h - 4, 10);
+              ctx.clip();
+              drawCoverPhotoInActiveClip(
+                node.photo,
+                node.x + 2,
+                node.y + 2,
+                size.w - 4,
+                size.h - 4,
+                node.name,
+                leafFillCol,
+                node.name,
+                Math.max(6.5, Math.min(11.5, Math.round(9 * effScale))),
+                0.08
+              );
+              ctx.restore();
+              ctx.strokeStyle = leafStrokeDefault;
+              ctx.lineWidth = 1.4;
+              drawCardRoundedRect(node.x + 2, node.y + 2, size.w - 4, size.h - 4, 10);
+              ctx.stroke();
             } else {
               // Pas foto tetap tegak 0° dan terpisah dari bingkai daun!
               const pDim = getScaledPhotoDim(photoFrameSize, effScale);
@@ -638,18 +820,31 @@ export const GridHybridSnapshotCanvas: React.FC<
               ? '#f59e0b'
               : effectiveBorder || (isDark ? '#38bdf8' : '#0284c7');
 
+            const buildHexPath = (rx: number, ry: number) => {
+              ctx.beginPath();
+              ctx.moveTo(cx, cy - ry);
+              ctx.lineTo(cx + rx, cy - ry * 0.5);
+              ctx.lineTo(cx + rx, cy + ry * 0.5);
+              ctx.lineTo(cx, cy + ry);
+              ctx.lineTo(cx - rx, cy + ry * 0.5);
+              ctx.lineTo(cx - rx, cy - ry * 0.5);
+              ctx.closePath();
+            };
+
+            if (node.lineageG2Color) {
+              ctx.save();
+              buildHexPath(hw * 1.045, hh * 1.045);
+              ctx.strokeStyle = node.lineageG2Color;
+              ctx.lineWidth = selectedSet.has(node.id) ? 3.2 : 2.1;
+              ctx.stroke();
+              ctx.restore();
+            }
+
             ctx.save();
             ctx.shadowColor = 'rgba(0,0,0,0.3)';
             ctx.shadowBlur = 7;
             ctx.shadowOffsetY = 3;
-            ctx.beginPath();
-            ctx.moveTo(cx, cy - hh);
-            ctx.lineTo(cx + hw, cy - hh * 0.5);
-            ctx.lineTo(cx + hw, cy + hh * 0.5);
-            ctx.lineTo(cx, cy + hh);
-            ctx.lineTo(cx - hw, cy + hh * 0.5);
-            ctx.lineTo(cx - hw, cy - hh * 0.5);
-            ctx.closePath();
+            buildHexPath(hw, hh);
             ctx.fillStyle = fillCol;
             ctx.fill();
             ctx.shadowBlur = 0;
@@ -657,12 +852,21 @@ export const GridHybridSnapshotCanvas: React.FC<
               ? 3.2
               : (node.genLevel ?? 0) === 0
               ? 2.8
-              : 1.9;
+              : 2.0;
             if (node.wafat) ctx.setLineDash([5, 3]);
             ctx.strokeStyle = hexBorderCol;
             ctx.stroke();
             ctx.setLineDash([]);
             ctx.restore();
+
+            if (node.lineageG4Color) {
+              ctx.save();
+              buildHexPath(hw * 0.91, hh * 0.91);
+              ctx.strokeStyle = node.lineageG4Color;
+              ctx.lineWidth = 1.25;
+              ctx.stroke();
+              ctx.restore();
+            }
 
             if (cardDisplayMode === 'name_only') {
               ctx.fillStyle = isDark
@@ -684,6 +888,25 @@ export const GridHybridSnapshotCanvas: React.FC<
               ctx.textAlign = 'center';
               ctx.textBaseline = 'middle';
               ctx.fillText(node.name, cx, cy, size.w - 10);
+            } else if (cardDisplayMode === 'photo_name_unified') {
+              const innerHw = Math.max(18, size.w * 0.465);
+              const innerHh = Math.max(20, size.h * 0.465);
+              ctx.save();
+              buildHexPath(innerHw, innerHh);
+              ctx.clip();
+              drawCoverPhotoInActiveClip(
+                node.photo,
+                cx - innerHw,
+                cy - innerHh,
+                innerHw * 2,
+                innerHh * 2,
+                node.name,
+                fillCol,
+                node.name,
+                Math.max(6.5, Math.min(11.5, Math.round(9 * effScale))),
+                0.13
+              );
+              ctx.restore();
             } else {
               const pDim = getScaledPhotoDim(photoFrameSize, effScale);
               const px = node.x + (size.w - pDim.w) / 2;
@@ -734,7 +957,11 @@ export const GridHybridSnapshotCanvas: React.FC<
             const cx = node.x + size.w / 2;
             const cy = node.y + size.h / 2;
             const pGen = node.genLevel ?? 0;
-            const isStamen = pGen === 0;
+            const isFlowerCenter =
+              node.lotusRole === 'flower_center' ||
+              (pGen <= 2 &&
+                node.lotusRole !== 'petal_inner' &&
+                node.lotusRole !== 'petal_outer');
             const petalW = size.w * 1.32;
             const petalH = size.h * 1.32;
             const angleRad = ((node.leafAngleDeg ?? 0) * Math.PI) / 180;
@@ -756,13 +983,13 @@ export const GridHybridSnapshotCanvas: React.FC<
 
             ctx.save();
             ctx.translate(cx, cy);
-            if (!isStamen) ctx.rotate(angleRad);
+            if (!isFlowerCenter) ctx.rotate(angleRad);
             ctx.shadowColor = 'rgba(0,0,0,0.3)';
             ctx.shadowBlur = 7;
             ctx.shadowOffsetY = 3;
 
-            if (isStamen) {
-              const r = Math.max(size.w, size.h) * 0.62;
+            if (isFlowerCenter) {
+              const r = Math.max(size.w, size.h) * (pGen === 0 ? 0.64 : 0.6);
               ctx.beginPath();
               for (let k = 0; k < 24; k++) {
                 const a = (k * Math.PI * 2) / 24;
@@ -863,6 +1090,40 @@ export const GridHybridSnapshotCanvas: React.FC<
               ctx.textAlign = 'center';
               ctx.textBaseline = 'middle';
               ctx.fillText(node.name, cx, cy, size.w - 10);
+            } else if (cardDisplayMode === 'photo_name_unified') {
+              const rx = Math.max(17, (size.w - 6) * 0.5);
+              const ry = Math.max(17, (size.h - 6) * 0.5);
+              ctx.save();
+              ctx.beginPath();
+              if (isFlowerCenter) {
+                ctx.arc(cx, cy, Math.min(rx, ry), 0, Math.PI * 2);
+              } else {
+                ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+              }
+              ctx.closePath();
+              ctx.clip();
+              drawCoverPhotoInActiveClip(
+                node.photo,
+                cx - rx,
+                cy - ry,
+                rx * 2,
+                ry * 2,
+                node.name,
+                petalFillCol,
+                node.name,
+                Math.max(6.5, Math.min(11.5, Math.round(9 * effScale))),
+                0.11
+              );
+              ctx.restore();
+              ctx.beginPath();
+              if (isFlowerCenter) {
+                ctx.arc(cx, cy, Math.min(rx, ry), 0, Math.PI * 2);
+              } else {
+                ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+              }
+              ctx.strokeStyle = petalStrokeCol;
+              ctx.lineWidth = 1.4;
+              ctx.stroke();
             } else {
               const pDim = getScaledPhotoDim(photoFrameSize, effScale);
               const px = node.x + (size.w - pDim.w) / 2;
@@ -957,6 +1218,23 @@ export const GridHybridSnapshotCanvas: React.FC<
               node.y + size.h / 2,
               size.w - 10
             );
+          } else if (cardDisplayMode === 'photo_name_unified') {
+            ctx.save();
+            drawCardRoundedRect(node.x + 2, node.y + 2, size.w - 4, size.h - 4, 9);
+            ctx.clip();
+            drawCoverPhotoInActiveClip(
+              node.photo,
+              node.x + 2,
+              node.y + 2,
+              size.w - 4,
+              size.h - 4,
+              node.name,
+              fillCol,
+              node.name,
+              Math.max(6.5, Math.min(11.5, Math.round(9 * effScale))),
+              0.08
+            );
+            ctx.restore();
           } else {
             const pDim = getScaledPhotoDim(photoFrameSize, effScale);
             const px = node.x + (size.w - pDim.w) / 2;
@@ -1026,6 +1304,8 @@ export const GridHybridSnapshotCanvas: React.FC<
       nodes,
       computedEdges,
       treeSkeleton,
+      lineageHulls,
+      lotusHalos,
       selectedIds,
       lineStyle,
       lineThickness,

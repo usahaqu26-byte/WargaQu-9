@@ -276,6 +276,11 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
   const hexIsCore = (node.genLevel ?? 0) === 0;
 
   const petalGen = node.genLevel ?? 0;
+  const isFlowerCenter =
+    node.lotusRole === 'flower_center' ||
+    (petalGen <= 2 &&
+      node.lotusRole !== 'petal_inner' &&
+      node.lotusRole !== 'petal_outer');
   const petalIsStamen = petalGen === 0;
   const petalFillPrimary =
     effectiveBg ||
@@ -351,6 +356,8 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
             } ${
               cardDisplayMode === 'name_only'
                 ? 'px-2 py-1'
+                : cardDisplayMode === 'photo_name_unified' && !isModularContainer
+                ? 'p-0 overflow-hidden'
                 : isModularContainer
                 ? 'p-1'
                 : 'p-[3px]'
@@ -446,7 +453,7 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
         </div>
       )}
 
-      {/* Bingkai Atom Segi Enam Molekul (Hexagon Atom + Cincin Orbital Halus) */}
+      {/* Bingkai Sarang Lebah Segi Enam + Cincin Pembatas Warna Bertingkat G2 ⊃ G3 ⊃ G4 */}
       {useHexFrame && (
         <div
           aria-hidden="true"
@@ -459,52 +466,77 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
             preserveAspectRatio="none"
             className="w-full h-full drop-shadow-md overflow-visible"
           >
+            {node.lineageG2Color && (
+              <polygon
+                points="60,0 117,33 117,99 60,132 3,99 3,33"
+                fill="none"
+                stroke={node.lineageG2Color}
+                strokeWidth={isSelected || isUnlocked ? 3.2 : 2.3}
+                strokeLinejoin="round"
+                opacity={0.92}
+              />
+            )}
             <polygon
-              points="60,3 114,34 114,98 60,129 6,98 6,34"
+              points="60,4 113,34.5 113,97.5 60,128 7,97.5 7,34.5"
               fill={hexFillCol}
               stroke={hexStrokeCol}
               strokeWidth={
-                isSelected || isUnlocked ? 4.2 : hexIsCore ? 3.4 : 2.2
+                isSelected || isUnlocked ? 4.2 : hexIsCore ? 3.4 : 2.3
               }
               strokeLinejoin="round"
               strokeDasharray={node.wafat ? '6 4' : undefined}
             />
-            <polygon
-              points="60,10 107,37 107,95 60,122 13,95 13,37"
-              fill="none"
-              stroke={hexStrokeCol}
-              strokeWidth={hexIsCore ? 1.5 : 0.9}
-              strokeDasharray="3 4"
-              opacity={hexIsCore ? 0.65 : 0.35}
-            />
+            {node.lineageG4Color ? (
+              <polygon
+                points="60,10 107,37 107,95 60,122 13,95 13,37"
+                fill="none"
+                stroke={node.lineageG4Color}
+                strokeWidth={1.35}
+                strokeLinejoin="round"
+                opacity={0.88}
+              />
+            ) : (
+              <polygon
+                points="60,10 107,37 107,95 60,122 13,95 13,37"
+                fill="none"
+                stroke={hexStrokeCol}
+                strokeWidth={hexIsCore ? 1.5 : 0.9}
+                strokeDasharray="3 4"
+                opacity={hexIsCore ? 0.65 : 0.35}
+              />
+            )}
           </svg>
         </div>
       )}
 
-      {/* Bingkai Teratai Mekar: G1 Putik Emas Mahkota / G2+ Kelopak Teratai Berlapis (Foto & Badge tetap 0°) */}
+      {/* Bingkai Teratai Kolam: G1/G2/G3 Pusat Bunga Rosette / G4–G5 Kelopak Teratai (Foto & Nama tetap 0°) */}
       {usePetalFrame && (
         <div
           aria-hidden="true"
           style={
-            petalIsStamen
+            isFlowerCenter
               ? undefined
               : {
                   transform: `rotate(${leafAngleDeg}deg)`,
                 }
           }
           className={`pointer-events-none absolute ${
-            petalIsStamen ? '-inset-[14%]' : '-inset-[18%]'
+            isFlowerCenter
+              ? petalIsStamen
+                ? '-inset-[16%]'
+                : '-inset-[13%]'
+              : '-inset-[18%]'
           } z-0 flex items-center justify-center ${
             node.wafat ? 'opacity-85' : ''
           }`}
         >
-          {petalIsStamen ? (
+          {isFlowerCenter ? (
             <svg
               viewBox="0 0 140 140"
               preserveAspectRatio="none"
               className="w-full h-full drop-shadow-lg overflow-visible"
             >
-              {/* Mahkota Putik Emas Inti Teratai (12 ujung kelopak mini mengelilingi G1) */}
+              {/* Mahkota Bunga Teratai Mekar (untuk Pusat Bunga G1, G2, & G3) */}
               <path
                 d="M 70 4 C 77 16, 86 14, 96 10 C 97 22, 106 25, 117 26 C 112 37, 118 45, 130 50 C 120 58, 121 68, 134 75 C 121 82, 120 92, 130 100 C 118 105, 112 113, 117 124 C 106 125, 97 128, 96 136 C 86 130, 77 129, 70 138 C 63 129, 54 130, 44 136 C 43 128, 34 125, 23 124 C 28 113, 22 105, 10 100 C 20 92, 19 82, 6 75 C 19 68, 20 58, 10 50 C 22 45, 28 37, 23 26 C 34 25, 43 22, 44 10 C 54 14, 63 16, 70 4 Z"
                 fill={petalFillPrimary}
@@ -521,7 +553,7 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
                 stroke={petalRibCol}
                 strokeWidth={1.6}
                 strokeDasharray="4 4"
-                opacity={0.9}
+                opacity={0.92}
               />
             </svg>
           ) : (
@@ -536,7 +568,7 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
                 fill={petalFillShade}
                 opacity={0.48}
               />
-              {/* Belahan kiri kelopak teratai utama (ramping runcing di puncak, mekar di tengah) */}
+              {/* Belahan kiri kelopak teratai utama */}
               <path
                 d="M 60 6 C 20 40, 10 92, 28 134 C 38 148, 52 152, 60 151 Z"
                 fill={petalFillPrimary}
@@ -689,29 +721,71 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
                   mm.wafat ? 'border-dashed opacity-90' : ''
                 }`}
               >
-                {cardDisplayMode !== 'name_only' &&
-                  renderPhotoFrame(
-                    mm.photo,
-                    mm.name,
-                    subPhotoW,
-                    subPhotoH,
-                    subBorder
-                  )}
+                {cardDisplayMode === 'photo_name_unified' ? (
+                  (() => {
+                    const resolvedSubPhoto =
+                      (mm.photo && exportPhotoMap?.[mm.photo]) || mm.photo;
+                    return (
+                      <div className="relative w-full h-full rounded-[6px] overflow-hidden flex items-center justify-center">
+                        {resolvedSubPhoto ? (
+                          <img
+                            src={resolvedSubPhoto}
+                            alt={mm.name}
+                            decoding="async"
+                            className="w-full h-full object-cover object-[50%_22%] pointer-events-none"
+                          />
+                        ) : (
+                          <span
+                            className="font-black text-amber-400 pb-3"
+                            style={{ fontSize: `${Math.max(10, Math.round(cellNamePx * 1.45))}px` }}
+                          >
+                            {getInitials(mm.name)}
+                          </span>
+                        )}
+                        <div
+                          style={{
+                            background:
+                              'linear-gradient(to top, rgba(2,6,23,0.95) 0%, rgba(2,6,23,0.72) 55%, rgba(2,6,23,0) 100%)',
+                          }}
+                          className="absolute inset-x-0 bottom-0 h-[44%] flex items-end justify-center px-1 pb-0.5 pointer-events-none"
+                        >
+                          <span
+                            style={{ fontSize: `${Math.max(6.5, cellNamePx - 0.5)}px` }}
+                            className="text-white font-extrabold leading-tight truncate drop-shadow-xs"
+                          >
+                            {mm.name}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()
+                ) : (
+                  <>
+                    {cardDisplayMode !== 'name_only' &&
+                      renderPhotoFrame(
+                        mm.photo,
+                        mm.name,
+                        subPhotoW,
+                        subPhotoH,
+                        subBorder
+                      )}
 
-                {cardDisplayMode === 'photo_name' && (
-                  <div
-                    style={{
-                      height: `${plan.badgeH}px`,
-                      fontSize: `${cellNamePx}px`,
-                    }}
-                    className={`w-full rounded px-1 flex items-center justify-center font-extrabold leading-none truncate ${
-                      subIsLight
-                        ? 'bg-black/[0.07] text-slate-900'
-                        : 'bg-black/30 text-white'
-                    }`}
-                  >
-                    <span className="truncate">{mm.name}</span>
-                  </div>
+                    {cardDisplayMode === 'photo_name' && (
+                      <div
+                        style={{
+                          height: `${plan.badgeH}px`,
+                          fontSize: `${cellNamePx}px`,
+                        }}
+                        className={`w-full rounded px-1 flex items-center justify-center font-extrabold leading-none truncate ${
+                          subIsLight
+                            ? 'bg-black/[0.07] text-slate-900'
+                            : 'bg-black/30 text-white'
+                        }`}
+                      >
+                        <span className="truncate">{mm.name}</span>
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {cardDisplayMode === 'name_only' && (
@@ -989,6 +1063,185 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
               <span>{node.name}</span>
             </div>
           )}
+
+          {/* 2B. Foto + Nama Menyatu (Di dalam bentuk Hex / Kelopak / Daun / Kartu tanpa box bawah) */}
+          {cardDisplayMode === 'photo_name_unified' && (() => {
+            const resolvedUnifiedPhoto =
+              (node.photo && exportPhotoMap?.[node.photo]) || node.photo;
+            const unifiedFontPx = Math.max(
+              6.5,
+              Math.min(11.5, Math.round(9 * effScale * 10) / 10)
+            );
+            const initialsFontPx = Math.max(
+              11,
+              Math.round(Math.min(size.w, size.h) * 0.28)
+            );
+
+            if (useHexFrame) {
+              return (
+                <div
+                  style={{
+                    width: `${Math.max(40, size.w - 4)}px`,
+                    height: `${Math.max(46, size.h - 4)}px`,
+                    clipPath: HEXAGON_CLIP_PATH,
+                  }}
+                  className="relative z-10 overflow-hidden flex items-center justify-center"
+                >
+                  {resolvedUnifiedPhoto ? (
+                    <img
+                      src={resolvedUnifiedPhoto}
+                      alt={node.name}
+                      decoding="async"
+                      className="w-full h-full object-cover object-[50%_22%] pointer-events-none"
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        background: `radial-gradient(circle at 50% 35%, ${hexFillCol}, #020617 95%)`,
+                      }}
+                      className="w-full h-full flex items-center justify-center pb-[20%]"
+                    >
+                      <span
+                        style={{ fontSize: `${initialsFontPx}px` }}
+                        className="font-black text-amber-300/95 tracking-tight drop-shadow-sm"
+                      >
+                        {getInitials(node.name)}
+                      </span>
+                    </div>
+                  )}
+                  <div
+                    style={{
+                      background:
+                        'linear-gradient(to top, rgba(2,6,23,0.96) 0%, rgba(2,6,23,0.78) 58%, rgba(2,6,23,0) 100%)',
+                    }}
+                    className="absolute inset-x-0 bottom-0 h-[44%] flex items-end justify-center px-[13%] pb-[13%] pointer-events-none"
+                  >
+                    <span
+                      style={{
+                        fontSize: `${unifiedFontPx}px`,
+                        textShadow: '0 1px 3px rgba(0,0,0,0.9)',
+                      }}
+                      className="text-white font-extrabold leading-[1.08] text-center line-clamp-2 break-words w-full"
+                    >
+                      {node.name}
+                    </span>
+                  </div>
+                </div>
+              );
+            }
+
+            if (usePetalFrame) {
+              return (
+                <div
+                  style={{
+                    width: `${Math.max(38, size.w - 6)}px`,
+                    height: `${Math.max(38, size.h - 6)}px`,
+                    borderColor: petalStrokeCol,
+                  }}
+                  className={`relative z-10 overflow-hidden border-[1.5px] flex items-center justify-center shadow-sm ${
+                    isFlowerCenter ? 'rounded-full' : 'rounded-[44%]'
+                  }`}
+                >
+                  {resolvedUnifiedPhoto ? (
+                    <img
+                      src={resolvedUnifiedPhoto}
+                      alt={node.name}
+                      decoding="async"
+                      className="w-full h-full object-cover object-[50%_22%] pointer-events-none"
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        background: `radial-gradient(circle at 50% 35%, ${petalFillPrimary}, ${petalFillShade} 95%)`,
+                      }}
+                      className="w-full h-full flex items-center justify-center pb-[20%]"
+                    >
+                      <span
+                        style={{ fontSize: `${initialsFontPx}px` }}
+                        className="font-black text-amber-200 tracking-tight drop-shadow-sm"
+                      >
+                        {getInitials(node.name)}
+                      </span>
+                    </div>
+                  )}
+                  <div
+                    style={{
+                      background:
+                        'linear-gradient(to top, rgba(2,6,23,0.96) 0%, rgba(2,6,23,0.78) 58%, rgba(2,6,23,0) 100%)',
+                    }}
+                    className="absolute inset-x-0 bottom-0 h-[44%] flex items-end justify-center px-[10%] pb-[10%] pointer-events-none"
+                  >
+                    <span
+                      style={{
+                        fontSize: `${unifiedFontPx}px`,
+                        textShadow: '0 1px 3px rgba(0,0,0,0.9)',
+                      }}
+                      className="text-white font-extrabold leading-[1.08] text-center line-clamp-2 break-words w-full"
+                    >
+                      {node.name}
+                    </span>
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <div
+                style={{
+                  borderColor: useLeafFrame ? leafStrokeCol : undefined,
+                }}
+                className={`relative z-10 w-full h-full overflow-hidden flex items-center justify-center ${
+                  useLeafFrame ? 'rounded-xl border-[1.5px]' : 'rounded-[10px]'
+                }`}
+              >
+                {resolvedUnifiedPhoto ? (
+                  <img
+                    src={resolvedUnifiedPhoto}
+                    alt={node.name}
+                    decoding="async"
+                    className="w-full h-full object-cover object-[50%_22%] pointer-events-none"
+                  />
+                ) : (
+                  <div
+                    style={{
+                      background: useLeafFrame
+                        ? `radial-gradient(circle at 50% 35%, ${leafFillPrimary}, ${leafFillShade} 95%)`
+                        : effectiveBg
+                        ? `radial-gradient(circle at 50% 35%, ${effectiveBg}, #020617 95%)`
+                        : isDark
+                        ? 'radial-gradient(circle at 50% 35%, #1e293b, #020617 95%)'
+                        : 'radial-gradient(circle at 50% 35%, #e7e5e4, #44403c 95%)',
+                    }}
+                    className="w-full h-full flex items-center justify-center pb-[20%]"
+                  >
+                    <span
+                      style={{ fontSize: `${initialsFontPx}px` }}
+                      className="font-black text-amber-300 tracking-tight drop-shadow-sm"
+                    >
+                      {getInitials(node.name)}
+                    </span>
+                  </div>
+                )}
+                <div
+                  style={{
+                    background:
+                      'linear-gradient(to top, rgba(2,6,23,0.96) 0%, rgba(2,6,23,0.78) 58%, rgba(2,6,23,0) 100%)',
+                  }}
+                  className="absolute inset-x-0 bottom-0 h-[44%] flex items-end justify-center px-1.5 pb-1 pointer-events-none"
+                >
+                  <span
+                    style={{
+                      fontSize: `${unifiedFontPx}px`,
+                      textShadow: '0 1px 3px rgba(0,0,0,0.9)',
+                    }}
+                    className="text-white font-extrabold leading-[1.08] text-center line-clamp-2 break-words w-full"
+                  >
+                    {node.name}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* 2. Foto + Badge Nama */}
           {cardDisplayMode === 'photo_name' && (

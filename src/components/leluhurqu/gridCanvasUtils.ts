@@ -203,6 +203,16 @@ export function getNodeSize(
     return { w: u.w, h: u.h };
   }
 
+  if (displayMode === 'photo_name_unified') {
+    if (node.cardShape === 'hex') {
+      const w = Math.max(54, Math.round(Math.max(pDim.w + 18, 74) * effScale));
+      const h = Math.max(62, Math.round(w * 1.14));
+      return { w, h };
+    }
+    const u = getUniformSubCardSize(displayMode, photoSize, effScale);
+    return { w: u.w, h: u.h };
+  }
+
   if (displayMode === 'name_only') {
     const nameLen = node.name.trim().length;
     const estW = Math.max(104, Math.min(200, nameLen * 7.5 + 24));

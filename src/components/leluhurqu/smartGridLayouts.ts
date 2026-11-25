@@ -19,6 +19,8 @@ export type SmartPresetId =
   | 'orbit_elips_1_5'
   | 'orbit_elips_gabung'
   | 'teratai_mekar'
+  | 'sarang_lebah_turun'
+  | 'sarang_lebah_pusat'
   | 'molekul_organik'
   | 'modular_g3_I'
   | 'modular_g3_L'
@@ -105,6 +107,11 @@ export function getBaseCardSizeForScale(
       h: Math.round((p.h + 30) * scale),
     };
   }
+  if (displayMode === 'photo_name_unified') {
+    const w = Math.max(54, Math.round(Math.max(p.w + 16, 74) * scale));
+    const h = Math.max(60, Math.round((p.h + 18) * scale));
+    return { w, h };
+  }
   if (displayMode === 'name_only') {
     return {
       w: Math.round(138 * scale),
@@ -132,6 +139,15 @@ export function getUniformSubCardSize(
     const badgeH = Math.max(14, Math.round(21 * cardScale));
     const w = Math.max(photoW + 6, Math.round((pDim.w + 14) * cardScale));
     const h = photoH + badgeH + 6;
+    return { w, h, photoW, photoH, badgeH };
+  }
+
+  if (displayMode === 'photo_name_unified') {
+    const photoW = Math.max(24, Math.round(pDim.w * cardScale));
+    const photoH = Math.max(24, Math.round(photoW * aspect));
+    const badgeH = Math.max(14, Math.round(20 * cardScale));
+    const w = Math.max(photoW + 10, Math.round(Math.max(pDim.w + 16, 74) * cardScale));
+    const h = Math.max(photoH + 14, Math.round((pDim.h + 18) * cardScale));
     return { w, h, photoW, photoH, badgeH };
   }
 
@@ -630,6 +646,18 @@ export function estimateSmartNodeBoxSize(
     return { w: m.w, h: m.h };
   }
 
+  const pDim = BASE_PHOTO_DIMS[photoSize] || BASE_PHOTO_DIMS['3x4'];
+
+  if (displayMode === 'photo_name_unified') {
+    if (node.cardShape === 'hex') {
+      const w = Math.max(54, Math.round(Math.max(pDim.w + 18, 74) * effScale));
+      const h = Math.max(62, Math.round(w * 1.14));
+      return { w, h };
+    }
+    const u = getUniformSubCardSize(displayMode, photoSize, effScale);
+    return { w: u.w, h: u.h };
+  }
+
   if (
     node.modularSubLayout === 'I' ||
     node.modularSubLayout === 'L' ||
@@ -653,8 +681,6 @@ export function estimateSmartNodeBoxSize(
       h: Math.max(26, Math.round((estLines > 1 ? 48 : 38) * effScale)),
     };
   }
-
-  const pDim = BASE_PHOTO_DIMS[photoSize] || BASE_PHOTO_DIMS['3x4'];
   return {
     w: Math.round(Math.max(142, pDim.w + 26) * effScale),
     h: Math.round((pDim.h + 50) * effScale),
@@ -940,33 +966,40 @@ export function buildSmartGalleryOptions(
 
   const candidateIds: SmartPresetId[] = isDense
     ? [
+        'sarang_lebah_turun',
+        'sarang_lebah_pusat',
+        'teratai_mekar',
         'modular_g3_I',
         'modular_g3_L',
-        'teratai_mekar',
-        'molekul_organik',
-        'pohon_hayat_besar',
         'kotak_9_baris_g45_gabung',
         'kotak_9_baris',
         'orbit_elips_gabung',
         'hierarchy_grid_fill',
+        'pohon_hayat_besar',
       ]
     : [
+        'sarang_lebah_turun',
+        'sarang_lebah_pusat',
         'teratai_mekar',
-        'molekul_organik',
-        'pohon_hayat_besar',
         'subtree_vertical',
         'kotak_9_baris',
         'orbit_elips_1_5',
         'modular_g3_I',
         'hierarchy_grid_fill',
         'subtree_horizontal',
+        'pohon_hayat_besar',
       ];
 
   const evaluated: SmartGalleryOption[] = candidateIds
     .map((pid) => {
       const preset = SMART_LAYOUT_PRESETS.find((p) => p.id === pid);
       if (!preset) return null;
-      const effMode = displayMode;
+      const effMode: CardDisplayMode =
+        pid === 'sarang_lebah_turun' ||
+        pid === 'sarang_lebah_pusat' ||
+        pid === 'teratai_mekar'
+          ? 'photo_name_unified'
+          : displayMode;
       const effPhoto = photoSize;
       const optScale = computeOptimalCardScale(
         members,
@@ -1136,37 +1169,55 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedGenGradient: 'violet_dusk',
   },
   {
-    id: 'teratai_mekar',
-    title: 'Teratai Mekar (Mandala Putik Emas & Kelopak)',
-    subtitle: 'G1 Putik Emas di Pusat • G2 Mahkota Dalam • G3–G5 Kelopak Teratai Memancar',
-    badge: 'Teratai',
-    category: 'orbit',
+    id: 'sarang_lebah_turun',
+    title: 'Sarang Lebah Bertingkat (Pembatas Warna · Tanpa Garis)',
+    subtitle: 'Segi Enam Mengunci · Batas Warna G2 ⊃ G3 ⊃ G4 ⊃ G5 · Foto+Nama Menyatu',
+    badge: 'Lebah Turun',
+    category: 'modular',
     description:
-      'Mandala bunga teratai mekar: G1 putik emas berumah mahkota besar di inti pusat, G2 cincin mahkota dalam, dan G3–G5+ mekar berlapis sebagai kelopak teratai meruncing ke luar dengan pas foto bulat serta badge kapsul tetap tegak 0°.',
+      'Susunan sarang lebah segi enam mengalir rapi dari puncak G1 ke bawah tanpa garis penghubung: pembatas warna bertingkat G2 melingkupi G3, G3 melingkupi G4 dan G5 dengan foto serta nama menyatu utuh di dalam sel.',
     recommendedTheme: 'dark',
-    recommendedBg: 'bg-galaksi',
+    recommendedBg: '',
     recommendedOrientation: 'landscape',
-    recommendedCardMode: 'photo_name',
+    recommendedCardMode: 'photo_name_unified',
     recommendedPhotoSize: 'bulat',
-    recommendedLineStyle: 'curved',
-    recommendedGuideMode: 'orbit_rings',
-    recommendedGenGradient: 'lotus_blossom',
+    recommendedLineStyle: 'none',
+    recommendedGuideMode: 'gen_bands',
+    recommendedGenGradient: 'none',
   },
   {
-    id: 'molekul_organik',
-    title: 'Molekul Organik (Segi Enam & Rantai Bebas Silang)',
-    subtitle: 'G1 Besar di Tengah • Segi Enam + Badge Tipis • Rantai Saudara • G5 Menempel Ortu',
-    badge: 'Molekul',
+    id: 'sarang_lebah_pusat',
+    title: 'Sarang Lebah Ratu Pusat (6 Sisi Mekar · Tanpa Garis)',
+    subtitle: 'G1 Pusat · 6 Sektor Klan · Pembatas Warna G2 ⊃ G3 ⊃ G4 ⊃ G5 · Menyatu',
+    badge: 'Lebah Pusat',
     category: 'orbit',
     description:
-      'Struktur molekul organik tidak beraturan dengan garis ikatan lurus tegas: G1 lebih besar di tengah fleksibel dengan pasangan menempel, kartu segi enam berfoto bulat & badge nama tipis jelas, rantai beradik G2–G4, serta G5 menempel langsung ke orang tua.',
+      'Konsep Ratu Lebah di pusat segi enam: G2 mengelilingi pusat dan mekar ke G3–G5 pada sektor masing-masing, lengkap dengan wadah pembatas warna bertingkat pengganti garis serta kartu menyatu foto dan nama.',
+    recommendedTheme: 'dark',
+    recommendedBg: '',
+    recommendedOrientation: 'landscape',
+    recommendedCardMode: 'photo_name_unified',
+    recommendedPhotoSize: 'bulat',
+    recommendedLineStyle: 'none',
+    recommendedGuideMode: 'orbit_rings',
+    recommendedGenGradient: 'none',
+  },
+  {
+    id: 'teratai_mekar',
+    title: 'Kolam Teratai Mekar (Bunga Terpisah G1–G3 · Kelopak G4–G5)',
+    subtitle: 'G1–G3 Bunga Terpisah (Pasangan di Bunga) · G4–G5 Kelopak Kelilingi G3',
+    badge: 'Teratai Kolam',
+    category: 'orbit',
+    description:
+      'G1, G2, dan G3 menjadi kuntum bunga teratai terpisah dengan pasangan menempel di pusat bunga dan garis tangkai cukup antar bunga (G1→G2→G3); sementara G4–G5 mekar merata menjadi kelopak yang mengelilingi bunga G3-nya.',
     recommendedTheme: 'dark',
     recommendedBg: 'bg-galaksi',
     recommendedOrientation: 'landscape',
-    recommendedCardMode: 'photo_name',
+    recommendedCardMode: 'photo_name_unified',
     recommendedPhotoSize: 'bulat',
-    recommendedLineStyle: 'straight',
-    recommendedGenGradient: 'ocean_blue',
+    recommendedLineStyle: 'curved',
+    recommendedGuideMode: 'gen_bands',
+    recommendedGenGradient: 'lotus_blossom',
   },
   {
     id: 'hierarchy_grid_fill',
@@ -1202,12 +1253,12 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
   },
   {
     id: 'pohon_hayat_besar',
-    title: 'Pohon Cemara Bertingkat (Batang G1–G2 ➔ Dahan Zigzag G3 ➔ Daun G4–G5)',
-    subtitle: 'Batang 75% (100→50px) • Dahan Zigzag Naik (70→40px) • Ranting (45→20px) • Daun Mirror',
+    title: 'Pohon Cemara Bertingkat · Terkunci',
+    subtitle: 'Dikunci sementara sesuai arahan · Batang 75% ➔ Dahan Zigzag ➔ Daun',
     badge: 'Pohon Besar',
     category: 'klasik',
     description:
-      'Pohon terpisah tegas dari garis konektor: batang tengah 75% tinggi kertas (100→50px) untuk G1–G2 berurutan ke atas, 3–4 lapis dahan zigzag naik (70→40px) untuk G3 di tengah dahan, ranting lurus (45→20px) untuk G4, dan daun G5 acak dekat G4 dengan posisi mirror & foto tetap tegak.',
+      'Mode Pohon Hayat Besar dikunci sementara menjaga tata letak yang ada: batang tengah 75% tinggi kertas, dahan naik untuk G3, ranting untuk G4, dan daun G5 dekat G4.',
     recommendedTheme: 'dark',
     recommendedBg: '',
     recommendedOrientation: 'landscape',
@@ -3822,69 +3873,113 @@ export function generateSmartLayoutFromTable(
   // -------------------------------------------------------------------------
   // MODE BARU 4B: TERATAI MEKAR (MANDALA PUTIK EMAS & KELOPAK MEMANCAR)
   // - G1 Putik Emas Mahkota Besar di Pusat Mandala
-  // - G2 Mahkota Dalam, G3–G5 Kelopak Teratai Meruncing Keluar
-  // - Pas Foto Bulat & Badge Nama Kapsul Tetap Tegak 0°
+  // -------------------------------------------------------------------------
+  // MODE BARU 4: KOLAM TERATAI MEKAR (MULTI-LOTUS POND)
+  // - G1, G2, G3 masing-masing menjadi BUNGA TERATAI TERPISAH
+  // - Pasangan G1/G2/G3 menempel di pusat bunga (putik tengah)
+  // - Garis konektor CUKUP antar bunga (G1 -> G2 -> G3)
+  // - G4 (kelopak dalam) & G5+ (kelopak luar) mengelilingi bunga G3-nya!
   // -------------------------------------------------------------------------
   if (presetId === 'teratai_mekar') {
-    interface LotusMeta {
+    interface LotusPondMeta {
       member: FamilyMember;
       depth: number;
-      children: LotusMeta[];
-      weight: number;
+      children: LotusPondMeta[];
+      g4Count: number;
+      g5Count: number;
+      bloomRadius: number;
     }
 
     const seenLotus = new Set<string>();
-    const buildLotusMeta = (m: FamilyMember, depth: number): LotusMeta => {
+    const buildPondMeta = (m: FamilyMember, depth: number): LotusPondMeta => {
       seenLotus.add(m.id);
       const kids = (childrenMap.get(m.id) || [])
         .filter((k) => !seenLotus.has(k.id))
-        .map((k) => buildLotusMeta(k, depth + 1));
-      const weight =
-        kids.length > 0
-          ? kids.reduce((s, k) => s + k.weight, 0) + 0.55
-          : 1 + (m.spouses?.length || 0) * 0.45;
+        .map((k) => buildPondMeta(k, depth + 1));
+
+      let g4Count = 0;
+      let g5Count = 0;
+      if (depth === 2) {
+        g4Count = kids.length;
+        kids.forEach((g4) => {
+          g5Count += g4.children.length;
+          g4.children.forEach((g5) => {
+            g5Count += g5.children.length;
+          });
+        });
+      }
+
+      const spLen = m.spouses?.length || 0;
+      const coreHalfW = (cardW * (1 + spLen)) / 2;
+      let bloomRadius = Math.max(coreHalfW + 14, cardH * 0.72);
+      if (depth === 2 && (g4Count > 0 || g5Count > 0)) {
+        const ring1Circum = Math.max(1, g4Count) * Math.max(cardW, cardH) * 0.94;
+        const r1 = Math.max(coreHalfW + cardH * 0.96, ring1Circum / (Math.PI * 2));
+        if (g5Count > 0) {
+          const ring2Circum = g5Count * Math.max(cardW, cardH) * 0.88;
+          const r2 = Math.max(r1 + cardH * 1.04, ring2Circum / (Math.PI * 2));
+          bloomRadius = r2 + cardH * 0.68;
+        } else {
+          bloomRadius = r1 + cardH * 0.68;
+        }
+      }
+
       return {
         member: m,
         depth,
         children: kids,
-        weight: Math.max(1, weight),
+        g4Count,
+        g5Count,
+        bloomRadius,
       };
     };
 
-    const lotusRoots: LotusMeta[] = [];
+    const lotusRoots: LotusPondMeta[] = [];
     roots.forEach((r) => {
       if (!seenLotus.has(r.id)) {
-        lotusRoots.push(buildLotusMeta(r, Math.max(0, r.generationLevel ?? 0)));
+        lotusRoots.push(buildPondMeta(r, Math.max(0, r.generationLevel ?? 0)));
       }
     });
     members.forEach((m) => {
       if (!seenLotus.has(m.id)) {
-        lotusRoots.push(buildLotusMeta(m, Math.max(0, m.generationLevel ?? 0)));
+        lotusRoots.push(buildPondMeta(m, Math.max(0, m.generationLevel ?? 0)));
       }
     });
 
-    const cx = Math.round(boardWidth / 2);
-    const cy = Math.round(topSafeY + usableH / 2);
-    const maxRx = Math.max(185, boardWidth / 2 - cardW * 0.9 - 30);
-    const maxRy = Math.max(145, usableH / 2 - cardH * 0.9 - 26);
-
-    const lockedLotusIds = new Set<string>();
     const placedLotusNodes: InteractiveNode[] = [];
+    const flowerZones: Array<{
+      id: string;
+      cx: number;
+      cy: number;
+      r: number;
+      meta: LotusPondMeta;
+    }> = [];
 
-    const spawnLotusUnit = (
+    const spawnLotusCardUnit = (
       m: FamilyMember,
       centerX: number,
       centerY: number,
       depth: number,
       parentNodeId: string | null,
-      outwardAngleRad: number,
-      lockRoot = false
+      lotusRole: InteractiveNode['lotusRole'],
+      petalAngleDeg: number,
+      attachCoupleInCenter: boolean,
+      tangentAngleRad = 0
     ): string => {
       const scaleMult =
-        depth === 0 ? 1.28 : depth === 1 ? 1.1 : depth === 2 ? 1.0 : depth === 3 ? 0.95 : 0.9;
+        depth === 0
+          ? 1.2
+          : depth === 1
+          ? 1.08
+          : depth === 2
+          ? 1.0
+          : depth === 3
+          ? 0.9
+          : 0.84;
+
       const unitDim = estimateSmartNodeBoxSize(
         {
-          id: `tmp_lotus_${m.id}`,
+          id: `tmp_pond_${m.id}`,
           name: m.name,
           sub: '',
           x: 0,
@@ -3892,6 +3987,7 @@ export function generateSmartLayoutFromTable(
           photo: '',
           wafat: m.isDeceased,
           scaleMultiplier: scaleMult,
+          cardShape: 'petal',
         },
         displayMode,
         photoSize,
@@ -3899,16 +3995,16 @@ export function generateSmartLayoutFromTable(
       );
 
       const spouses = m.spouses || [];
-      const coupleTightGap = 2;
-      const primaryX =
-        depth === 0 && spouses.length > 0 && lotusRoots.length === 1
-          ? Math.round(centerX - ((unitDim.w + coupleTightGap) * spouses.length) / 2 - unitDim.w / 2)
-          : Math.round(centerX - unitDim.w / 2);
+      const coupleTightGap = attachCoupleInCenter ? 2 : 3;
+      const totalCenterW =
+        attachCoupleInCenter && spouses.length > 0
+          ? unitDim.w * (1 + spouses.length) + coupleTightGap * spouses.length
+          : unitDim.w;
+
+      const primaryX = attachCoupleInCenter
+        ? Math.round(centerX - totalCenterW / 2)
+        : Math.round(centerX - unitDim.w / 2);
       const primaryY = Math.round(centerY - unitDim.h / 2);
-      const petalDeg =
-        depth === 0
-          ? 0
-          : Math.round((((outwardAngleRad * 180) / Math.PI + 90) % 360) * 10) / 10;
 
       const primaryId = `n_${m.id}`;
       const lotusStop = getBpStop(depth);
@@ -3916,12 +4012,13 @@ export function generateSmartLayoutFromTable(
         aiBlueprint?.cardShape && aiBlueprint.cardShape !== 'hex'
           ? aiBlueprint.cardShape
           : 'petal';
+
       placedLotusNodes.push({
         id: primaryId,
         name: m.name,
         sub: formatMemberLifeSubtitle(m),
-        x: Math.max(22, Math.min(boardWidth - 22 - unitDim.w, primaryX)),
-        y: Math.max(66, Math.min(boardHeight - 24 - unitDim.h, primaryY)),
+        x: Math.max(18, Math.min(boardWidth - 18 - unitDim.w, primaryX)),
+        y: Math.max(64, Math.min(boardHeight - 20 - unitDim.h, primaryY)),
         photo: m.photoUrl || '',
         wafat: m.isDeceased,
         gender: m.gender,
@@ -3929,22 +4026,21 @@ export function generateSmartLayoutFromTable(
         genLevel: m.generationLevel ?? depth,
         scaleMultiplier: scaleMult,
         cardShape: lotusShape,
-        leafAngleDeg: petalDeg,
+        lotusRole,
+        leafAngleDeg: lotusRole === 'flower_center' ? 0 : petalAngleDeg,
         customBgColor: lotusStop?.bg,
         customBorderColor: lotusStop?.border,
       });
 
-      if (lockRoot) lockedLotusIds.add(primaryId);
       if (parentNodeId) {
         edges.push({ from: parentNodeId, to: primaryId, type: 'child' });
       }
 
-      const spouseSide: 1 | -1 = depth === 0 || Math.cos(outwardAngleRad) >= -0.15 ? 1 : -1;
       spouses.forEach((sp, sIdx) => {
-        const spScale = depth === 0 ? 1.22 : scaleMult * 0.96;
+        const spScale = attachCoupleInCenter ? scaleMult * 0.98 : scaleMult * 0.94;
         const spDim = estimateSmartNodeBoxSize(
           {
-            id: `tmp_lotus_sp_${m.id}`,
+            id: `tmp_pond_sp_${m.id}`,
             name: sp.name,
             sub: '',
             x: 0,
@@ -3952,18 +4048,28 @@ export function generateSmartLayoutFromTable(
             photo: '',
             wafat: sp.status === 'cerai_mati',
             scaleMultiplier: spScale,
+            cardShape: 'petal',
           },
           displayMode,
           photoSize,
           cardScale
         );
         const spId = `n_${m.id}_sp_${sIdx + 1}`;
-        const stepX = (sIdx + 1) * (unitDim.w + coupleTightGap);
-        const spX = Math.max(
-          22,
-          Math.min(boardWidth - 22 - spDim.w, Math.round(primaryX + spouseSide * stepX))
-        );
-        const spY = Math.round(primaryY + (unitDim.h - spDim.h) / 2);
+        let spX: number;
+        let spY: number;
+        if (attachCoupleInCenter) {
+          spX = primaryX + (sIdx + 1) * (unitDim.w + coupleTightGap);
+          spY = Math.round(primaryY + (unitDim.h - spDim.h) / 2);
+        } else {
+          // Pasangan kelopak G4/G5 menempel di sisi tangen cincin bunga
+          const stepDist = (sIdx + 1) * (unitDim.w * 0.88 + 4);
+          spX = Math.round(
+            centerX + Math.cos(tangentAngleRad) * stepDist - spDim.w / 2
+          );
+          spY = Math.round(
+            centerY + Math.sin(tangentAngleRad) * stepDist - spDim.h / 2
+          );
+        }
         placedLotusNodes.push({
           id: spId,
           name: sp.name,
@@ -3974,15 +4080,16 @@ export function generateSmartLayoutFromTable(
               ? 'Cerai'
               : 'Menikah'
           })`,
-          x: spX,
-          y: Math.max(66, Math.min(boardHeight - 24 - spDim.h, spY)),
+          x: Math.max(18, Math.min(boardWidth - 18 - spDim.w, spX)),
+          y: Math.max(64, Math.min(boardHeight - 20 - spDim.h, spY)),
           photo: '',
           wafat: sp.status === 'cerai_mati',
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
           genLevel: m.generationLevel ?? depth,
           scaleMultiplier: spScale,
           cardShape: lotusShape,
-          leafAngleDeg: petalDeg,
+          lotusRole,
+          leafAngleDeg: lotusRole === 'flower_center' ? 0 : petalAngleDeg + 8,
           customBgColor: lotusStop?.bg,
           customBorderColor: lotusStop?.border,
         });
@@ -3992,90 +4099,256 @@ export function generateSmartLayoutFromTable(
       return primaryId;
     };
 
-    const getLotusRingFactor = (depth: number, siblingIdx: number): number => {
-      if (depth <= 0) return 0;
-      if (depth === 1) return 0.25;
-      if (depth === 2) return 0.49 * (siblingIdx % 2 === 0 ? 0.95 : 1.05);
-      if (depth === 3) return 0.72 * (siblingIdx % 2 === 0 ? 0.94 : 1.05);
-      return Math.min(0.97, 0.9 + (depth - 4) * 0.05) * (siblingIdx % 2 === 0 ? 0.96 : 1.02);
-    };
+    // Kumpulkan seluruh bunga G1, G2, G3 untuk ditata merata di kolam
+    const g1List = lotusRoots;
+    const g2List: Array<{ meta: LotusPondMeta; parentIdx: number }> = [];
+    const g3List: Array<{
+      meta: LotusPondMeta;
+      g2Idx: number;
+      parentG2Id: string;
+    }> = [];
 
-    const placeLotusPetalBranch = (
-      lm: LotusMeta,
-      parentNodeId: string | null,
-      sectorStart: number,
-      sectorEnd: number,
-      siblingIdx: number,
-      isSingleCore: boolean
-    ) => {
-      const midAng = (sectorStart + sectorEnd) / 2;
-      const rFactor = isSingleCore ? 0 : getLotusRingFactor(lm.depth, siblingIdx);
-      const px = isSingleCore ? cx : cx + Math.cos(midAng) * maxRx * rFactor;
-      const py = isSingleCore ? cy : cy + Math.sin(midAng) * maxRy * rFactor;
+    const availW = Math.max(320, boardWidth - 56);
+    const g1Y = Math.round(topSafeY + usableH * 0.11);
+    const g2Y = Math.round(topSafeY + usableH * 0.34);
+    const g3BaseY = Math.round(topSafeY + usableH * 0.72);
 
-      const myId = spawnLotusUnit(
-        lm.member,
-        px,
-        py,
-        lm.depth,
-        parentNodeId,
-        midAng,
-        isSingleCore
+    // 1. Tempatkan Bunga Induk G1 (menempel pasangan di pusat bunga)
+    const g1NodeIds: string[] = [];
+    g1List.forEach((g1, idx) => {
+      const gx = Math.round(
+        boardWidth / 2 +
+          (idx - (g1List.length - 1) / 2) * Math.min(260, availW / Math.max(1, g1List.length))
       );
-
-      if (lm.children.length === 0) return;
-
-      const totalChildWeight =
-        lm.children.reduce((s, c) => s + c.weight, 0) || 1;
-      const sectorSpan = sectorEnd - sectorStart;
-      // Untuk G5+, sedikit perlebar kipas di sekeliling kelopak induk agar ujung kelopak tidak rapat menumpuk
-      const effSpan =
-        lm.depth >= 3
-          ? Math.min(Math.PI * 0.72, Math.max(sectorSpan, lm.children.length * 0.24))
-          : sectorSpan;
-      let cursorAng = midAng - effSpan / 2;
-
-      // Simetri 360° seimbang: campur porsi merata (38%) + porsi bobot keturunan (62%)
-      // agar kelopak teratai mekar penuh di semua sisi walau jumlah anak tiap cabang tidak rata!
-      const equalBlend = lm.depth <= 1 ? 0.42 : 0.26;
-      const equalShare = effSpan / Math.max(1, lm.children.length);
-
-      lm.children.forEach((ch, idx) => {
-        const weightShare = (effSpan * ch.weight) / totalChildWeight;
-        const share = equalShare * equalBlend + weightShare * (1 - equalBlend);
-        const padAng = Math.min(share * 0.07, 0.05);
-        placeLotusPetalBranch(
-          ch,
-          myId,
-          cursorAng + padAng,
-          cursorAng + share - padAng,
-          idx,
-          false
-        );
-        cursorAng += share;
-      });
-    };
-
-    if (lotusRoots.length === 1) {
-      placeLotusPetalBranch(
-        lotusRoots[0],
+      const gy = g1List.length === 1 && g1.children.length === 0
+        ? Math.round(topSafeY + usableH * 0.48)
+        : g1Y;
+      const g1Id = spawnLotusCardUnit(
+        g1.member,
+        gx,
+        gy,
+        0,
         null,
-        -Math.PI / 2,
-        Math.PI * 1.5,
+        'flower_center',
         0,
         true
       );
-    } else {
-      const totalRWeight = lotusRoots.reduce((s, r) => s + r.weight, 0) || 1;
-      let cursor = -Math.PI / 2;
-      lotusRoots.forEach((rm, rIdx) => {
-        const span = (Math.PI * 2 * rm.weight) / totalRWeight;
-        placeLotusPetalBranch(rm, null, cursor, cursor + span, rIdx, false);
-        cursor += span;
+      g1NodeIds.push(g1Id);
+      g1.children.forEach((g2) => {
+        g2List.push({ meta: g2, parentIdx: idx });
       });
+    });
+
+    // Hitung bobot lebar kolam tiap G2 dari total diameter bunga G3 anaknya
+    const getG2PoolWidth = (g2Meta: LotusPondMeta): number => {
+      if (g2Meta.children.length === 0) return Math.max(cardW * 2.1, 130);
+      return g2Meta.children.reduce(
+        (sum, g3) => sum + Math.max(cardW * 2.1, g3.bloomRadius * 2 + 24),
+        0
+      );
+    };
+
+    const g2Pools = g2List.map((item) => getG2PoolWidth(item.meta));
+    const totalPoolW = g2Pools.reduce((s, w) => s + w, 0) || 1;
+    let cursorX = 28;
+
+    const g2Positions: Array<{ x: number; y: number; nodeId: string; spanW: number }> = [];
+
+    // 2. Tempatkan Bunga Utama G2 + Kuntum Bunga G3 terpisah di kolam bawahnya
+    g2List.forEach((item, g2Idx) => {
+      const shareW = (availW * g2Pools[g2Idx]) / totalPoolW;
+      const g2Cx = Math.round(cursorX + shareW / 2);
+      const g2ArcOffset =
+        g2List.length >= 3
+          ? Math.round(
+              Math.sin((g2Idx / Math.max(1, g2List.length - 1)) * Math.PI) *
+                Math.min(34, usableH * 0.05)
+            )
+          : 0;
+      const g2Cy = g2Y - g2ArcOffset;
+      const parentG1Id = g1NodeIds[item.parentIdx] || null;
+
+      const g2Id = spawnLotusCardUnit(
+        item.meta.member,
+        g2Cx,
+        g2Cy,
+        1,
+        parentG1Id,
+        'flower_center',
+        0,
+        true
+      );
+      g2Positions.push({ x: g2Cx, y: g2Cy, nodeId: g2Id, spanW: shareW });
+
+      const g3Children = item.meta.children;
+      if (g3Children.length > 0) {
+        const g3Radii = g3Children.map((c) => Math.max(70, c.bloomRadius));
+        const totalR = g3Radii.reduce((s, r) => s + r * 2, 0) || 1;
+        let g3CursorX = cursorX + 6;
+        const g3AvailW = Math.max(80, shareW - 12);
+
+        g3Children.forEach((g3, cIdx) => {
+          const g3Span = (g3AvailW * g3Radii[cIdx] * 2) / totalR;
+          const fx = Math.round(g3CursorX + g3Span / 2);
+          const staggerY =
+            g3Children.length >= 2
+              ? cIdx % 2 === 0
+                ? -Math.round(usableH * 0.09)
+                : Math.round(usableH * 0.09)
+              : 0;
+          const fy = Math.max(
+            g2Cy + cardH * 1.45,
+            Math.min(boardHeight - 50 - g3.bloomRadius * 0.55, g3BaseY + staggerY)
+          );
+          g3List.push({ meta: g3, g2Idx, parentG2Id: g2Id });
+          flowerZones.push({
+            id: g3.member.id,
+            cx: fx,
+            cy: fy,
+            r: g3.bloomRadius,
+            meta: g3,
+          });
+          g3CursorX += g3Span;
+        });
+      }
+      cursorX += shareW;
+    });
+
+    // 3. Pisahkan zona bunga G3 (2D circle separation) agar antar kuntum teratai G3+G4+G5 tidak pernah tabrakan!
+    for (let iter = 0; iter < 40; iter++) {
+      let moved = false;
+      for (let i = 0; i < flowerZones.length; i++) {
+        for (let j = i + 1; j < flowerZones.length; j++) {
+          const a = flowerZones[i];
+          const b = flowerZones[j];
+          const minDist = (a.r + b.r) * 0.88 + 16;
+          const dx = b.cx - a.cx;
+          const dy = b.cy - a.cy;
+          const dist = Math.hypot(dx, dy) || 0.01;
+          if (dist < minDist) {
+            const push = (minDist - dist) * 0.52;
+            const ux = dx / dist;
+            const uy = dy / dist;
+            a.cx -= ux * push;
+            a.cy -= uy * push * 0.8;
+            b.cx += ux * push;
+            b.cy += uy * push * 0.8;
+            moved = true;
+          }
+        }
+      }
+      for (const f of flowerZones) {
+        const padR = Math.min(f.r * 0.72, boardWidth * 0.18);
+        f.cx = Math.max(24 + padR, Math.min(boardWidth - 24 - padR, f.cx));
+        f.cy = Math.max(g2Y + cardH * 1.3, Math.min(boardHeight - 36 - padR, f.cy));
+      }
+      if (!moved) break;
     }
 
-    const solvedLotusNodes = resolveCollisionsNearParents4Dir(
+    // 4. Spawn pusat bunga G3 (pasangan menempel di pusat bunga) + G4 & G5 kelopak mengelilingi G3!
+    const g3CenterNodeIds: string[] = [];
+    const g3PetalIds = new Set<string>();
+    flowerZones.forEach((fz, zIdx) => {
+      const g3Entry = g3List[zIdx];
+      const g3Meta = fz.meta;
+      const fx = Math.round(fz.cx);
+      const fy = Math.round(fz.cy);
+
+      const g3NodeId = spawnLotusCardUnit(
+        g3Meta.member,
+        fx,
+        fy,
+        2,
+        g3Entry.parentG2Id,
+        'flower_center',
+        0,
+        true
+      );
+      g3CenterNodeIds.push(g3NodeId);
+
+      const g4Kids = g3Meta.children;
+      if (g4Kids.length === 0) return;
+
+      const spCenterCount = g3Meta.member.spouses?.length || 0;
+      const centerHalfW = (cardW * (1 + spCenterCount)) / 2;
+      const hasG5 = g4Kids.some((g4) => g4.children.length > 0);
+      const ring1R = Math.max(
+        centerHalfW + cardH * 0.92,
+        (g4Kids.length * Math.max(cardW, cardH) * 0.95) / (Math.PI * 2)
+      );
+      const ring2R = ring1R + cardH * 1.05;
+
+      // Bagi 360° di sekeliling pusat bunga G3 berdasar jumlah G5 tiap G4 (tetap seimbang merata)
+      const g4Weights = g4Kids.map((g4) => 1 + g4.children.length * 0.75);
+      const totalG4W = g4Weights.reduce((s, w) => s + w, 0) || 1;
+      let sectorStart = -Math.PI / 2;
+
+      g4Kids.forEach((g4, g4Idx) => {
+        const equalShare = (Math.PI * 2) / g4Kids.length;
+        const wShare = (Math.PI * 2 * g4Weights[g4Idx]) / totalG4W;
+        const sectorSpan = equalShare * 0.45 + wShare * 0.55;
+        const midAng = sectorStart + sectorSpan / 2;
+
+        const p4x = fx + Math.cos(midAng) * ring1R;
+        const p4y = fy + Math.sin(midAng) * ring1R;
+        const deg4 = Math.round((((midAng * 180) / Math.PI + 90) % 360) * 10) / 10;
+
+        const g4Id = spawnLotusCardUnit(
+          g4.member,
+          p4x,
+          p4y,
+          3,
+          g3NodeId,
+          'petal_inner',
+          deg4,
+          false,
+          midAng + Math.PI / 2
+        );
+        g3PetalIds.add(g4Id);
+
+        // Kelopak G5+ mengelilingi tepat di cincin luar sektor induk G4-nya!
+        const g5Flat: Array<{ meta: LotusPondMeta; parentNodeId: string }> = [];
+        g4.children.forEach((g5) => {
+          g5Flat.push({ meta: g5, parentNodeId: g4Id });
+          g5.children.forEach((g6) => {
+            g5Flat.push({ meta: g6, parentNodeId: `n_${g5.member.id}` });
+          });
+        });
+
+        if (g5Flat.length > 0) {
+          const arcSpan = Math.max(sectorSpan * 0.92, g5Flat.length * 0.36);
+          const startA = midAng - arcSpan / 2;
+          g5Flat.forEach((g5Item, g5Idx) => {
+            const frac =
+              g5Flat.length === 1 ? 0.5 : (g5Idx + 0.5) / g5Flat.length;
+            const ang5 = startA + frac * arcSpan;
+            const rLayer =
+              ring2R + (g5Flat.length >= 4 && g5Idx % 2 === 1 ? cardH * 0.32 : 0);
+            const p5x = fx + Math.cos(ang5) * rLayer;
+            const p5y = fy + Math.sin(ang5) * rLayer;
+            const deg5 =
+              Math.round((((ang5 * 180) / Math.PI + 90) % 360) * 10) / 10;
+            const g5Id = spawnLotusCardUnit(
+              g5Item.meta.member,
+              p5x,
+              p5y,
+              Math.max(4, g5Item.meta.depth),
+              g5Item.parentNodeId,
+              'petal_outer',
+              deg5,
+              false,
+              ang5 + Math.PI / 2
+            );
+            g3PetalIds.add(g5Id);
+          });
+        }
+
+        sectorStart += sectorSpan;
+      });
+    });
+
+    const lockedLotusIds = new Set<string>([...g1NodeIds, ...g3CenterNodeIds]);
+    const solvedPondNodes = resolveCollisionsNearParents4Dir(
       placedLotusNodes,
       edges,
       boardWidth,
@@ -4084,143 +4357,286 @@ export function generateSmartLayoutFromTable(
       photoSize,
       cardScale,
       {
-        minLeftX: 20,
-        rightMargin: 20,
-        minTopY: 64,
-        bottomMargin: 24,
-        padX: Math.max(12, Math.round(compactSiblingGap * 0.9)),
-        padY: Math.max(12, Math.round(cardH * 0.16)),
-        anchorMaxGen: 1,
+        minLeftX: 16,
+        rightMargin: 16,
+        minTopY: 62,
+        bottomMargin: 20,
+        padX: Math.max(8, Math.round(compactSiblingGap * 0.7)),
+        padY: Math.max(8, Math.round(cardH * 0.12)),
+        anchorMaxGen: 2,
         lockedNodeIds: lockedLotusIds,
-        radialCenter: { x: cx, y: cy },
       }
     );
 
-    // Selaraskan kembali sudut kelopak teratai pasca-solver agar setiap kelopak tetap memancar keluar dari pusat mandala
-    const orientedLotusNodes = solvedLotusNodes.map((n) => {
-      if ((n.genLevel ?? 0) === 0) {
+    // Orientasikan kembali kelopak G4 & G5 ke pusat bunga G3-nya masing-masing
+    const nodeMapPond = new Map(solvedPondNodes.map((n) => [n.id, n]));
+    const parentG3CenterOf = new Map<string, { x: number; y: number }>();
+    flowerZones.forEach((_, idx) => {
+      const cId = g3CenterNodeIds[idx];
+      const cNode = nodeMapPond.get(cId);
+      if (!cNode) return;
+      const cSz = estimateSmartNodeBoxSize(cNode, displayMode, photoSize, cardScale);
+      const centerPt = { x: cNode.x + cSz.w / 2, y: cNode.y + cSz.h / 2 };
+      const g3Meta = flowerZones[idx].meta;
+      g3Meta.children.forEach((g4) => {
+        parentG3CenterOf.set(`n_${g4.member.id}`, centerPt);
+        g4.children.forEach((g5) => {
+          parentG3CenterOf.set(`n_${g5.member.id}`, centerPt);
+          g5.children.forEach((g6) => {
+            parentG3CenterOf.set(`n_${g6.member.id}`, centerPt);
+          });
+        });
+      });
+    });
+
+    const finalPondNodes = solvedPondNodes.map((n) => {
+      if (n.lotusRole === 'flower_center' || (n.genLevel ?? 0) <= 2) {
         return { ...n, leafAngleDeg: 0 };
       }
+      const flowerCenter = parentG3CenterOf.get(n.id);
+      if (!flowerCenter) return n;
       const sz = estimateSmartNodeBoxSize(n, displayMode, photoSize, cardScale);
       const ncx = n.x + sz.w / 2;
       const ncy = n.y + sz.h / 2;
       const deg =
-        Math.round((((Math.atan2(ncy - cy, ncx - cx) * 180) / Math.PI + 90) % 360) * 10) / 10;
+        Math.round(
+          (((Math.atan2(ncy - flowerCenter.y, ncx - flowerCenter.x) * 180) /
+            Math.PI +
+            90) %
+            360) *
+            10
+        ) / 10;
       return { ...n, leafAngleDeg: deg };
     });
 
     return {
-      nodes: orientedLotusNodes,
+      nodes: finalPondNodes,
       edges,
     };
   }
 
   // -------------------------------------------------------------------------
-  // MODE BARU 5: MOLEKUL ORGANIK (TIDAK BERATURAN TAPI JELAS GARISNYA)
-  // - Card Segi Enam + Foto Bulat + Badge Nama Tipis Jelas
-  // - G1 Besar di Tengah Fleksibel + Pasangan Menempel
-  // - Gugus Organik Sudut & Panjang Ikatan Bervariasi Anti-Silang
-  // - Rantai Beradik (G2–G4), G5 Langsung ke Ortu / Menempel Rapat
+  // MODE BARU 5: SARANG LEBAH (DUAL MODE: BERTINGKAT & RATU PUSAT)
+  // - Segi enam mengunci rapat, Foto + Nama Menyatu di dalam sel
+  // - Pembatas Warna Bertingkat Pengganti Line: G2 ⊃ G3 ⊃ G4 ⊃ G5
+  // - Tanpa Garis (lineStyle: 'none') secara default
   // -------------------------------------------------------------------------
-  if (presetId === 'molekul_organik') {
-    const molHash = (str: string): number => {
-      let h = 2166136261;
-      for (let i = 0; i < str.length; i++) {
-        h ^= str.charCodeAt(i);
-        h = Math.imul(h, 16777619);
-      }
-      return ((h >>> 0) % 1000) / 1000;
-    };
+  if (
+    presetId === 'sarang_lebah_turun' ||
+    presetId === 'sarang_lebah_pusat' ||
+    presetId === 'molekul_organik'
+  ) {
+    const isRadialHive =
+      presetId === 'sarang_lebah_pusat' || presetId === 'molekul_organik';
 
-    interface MolMeta {
+    const HONEYCOMB_G2_PALETTES = [
+      {
+        g2: '#f59e0b',
+        g3List: ['#fde047', '#fb923c', '#a3e635', '#fcd34d'],
+        g4: '#fffbeb',
+      },
+      {
+        g2: '#10b981',
+        g3List: ['#6ee7b7', '#2dd4bf', '#a3e635', '#34d399'],
+        g4: '#ecfdf5',
+      },
+      {
+        g2: '#38bdf8',
+        g3List: ['#93c5fd', '#22d3ee', '#818cf8', '#7dd3fc'],
+        g4: '#eff6ff',
+      },
+      {
+        g2: '#f43f5e',
+        g3List: ['#fda4af', '#fb923c', '#f472b6', '#fb7185'],
+        g4: '#fff1f2',
+      },
+      {
+        g2: '#a855f7',
+        g3List: ['#d8b4fe', '#f472b6', '#818cf8', '#c084fc'],
+        g4: '#faf5ff',
+      },
+      {
+        g2: '#14b8a6',
+        g3List: ['#5eead4', '#38bdf8', '#6ee7b7', '#2dd4bf'],
+        g4: '#f0fdfa',
+      },
+      {
+        g2: '#f97316',
+        g3List: ['#fdba74', '#facc15', '#fb7185', '#fb923c'],
+        g4: '#fff7ed',
+      },
+      {
+        g2: '#6366f1',
+        g3List: ['#a5b4fc', '#c084fc', '#60a5fa', '#818cf8'],
+        g4: '#eef2ff',
+      },
+    ];
+
+    interface HiveMeta {
       member: FamilyMember;
       depth: number;
-      children: MolMeta[];
+      children: HiveMeta[];
       weight: number;
+      g2Idx: number;
+      g3Idx: number;
+      lineageG2Id?: string;
+      lineageG2Color?: string;
+      lineageG3Id?: string;
+      lineageG3Color?: string;
+      lineageG4Id?: string;
+      lineageG4Color?: string;
     }
 
-    const seenMol = new Set<string>();
-    const buildMolMeta = (m: FamilyMember, depth: number): MolMeta => {
-      seenMol.add(m.id);
-      const kids = (childrenMap.get(m.id) || [])
-        .filter((k) => !seenMol.has(k.id))
-        .map((k) => buildMolMeta(k, depth + 1));
+    const seenHive = new Set<string>();
+    const buildHiveMeta = (
+      m: FamilyMember,
+      depth: number,
+      ctx: {
+        g2Idx: number;
+        g3Counter: { n: number };
+        g2Id?: string;
+        g2Color?: string;
+        g3Id?: string;
+        g3Color?: string;
+        g4Id?: string;
+        g4Color?: string;
+      }
+    ): HiveMeta => {
+      seenHive.add(m.id);
+      let nextG2Id = ctx.g2Id;
+      let nextG2Col = ctx.g2Color;
+      let nextG3Id = ctx.g3Id;
+      let nextG3Col = ctx.g3Color;
+      let nextG4Id = ctx.g4Id;
+      let nextG4Col = ctx.g4Color;
+      let myG2Idx = ctx.g2Idx;
+      let myG3Idx = 0;
+
+      const pal =
+        HONEYCOMB_G2_PALETTES[Math.abs(myG2Idx) % HONEYCOMB_G2_PALETTES.length];
+      if (depth === 1) {
+        nextG2Id = m.id;
+        nextG2Col = pal.g2;
+      } else if (depth === 2) {
+        myG3Idx = ctx.g3Counter.n++;
+        nextG3Id = m.id;
+        nextG3Col = pal.g3List[myG3Idx % pal.g3List.length];
+      } else if (depth === 3) {
+        nextG4Id = m.id;
+        nextG4Col = pal.g4;
+      }
+
+      const rawKids = (childrenMap.get(m.id) || []).filter(
+        (k) => !seenHive.has(k.id)
+      );
+      const kids = rawKids.map((k, kIdx) => {
+        if (depth === 0) {
+          const branchPal =
+            HONEYCOMB_G2_PALETTES[kIdx % HONEYCOMB_G2_PALETTES.length];
+          return buildHiveMeta(k, depth + 1, {
+            g2Idx: kIdx,
+            g3Counter: { n: 0 },
+            g2Id: k.id,
+            g2Color: branchPal.g2,
+          });
+        }
+        return buildHiveMeta(k, depth + 1, {
+          g2Idx: myG2Idx,
+          g3Counter: ctx.g3Counter,
+          g2Id: nextG2Id,
+          g2Color: nextG2Col,
+          g3Id: nextG3Id,
+          g3Color: nextG3Col,
+          g4Id: nextG4Id,
+          g4Color: nextG4Col,
+        });
+      });
+
       const weight =
         kids.length > 0
-          ? kids.reduce((s, k) => s + k.weight, 0) + 0.6
+          ? kids.reduce((s, c) => s + c.weight, 0) + 0.55
           : 1 + (m.spouses?.length || 0) * 0.45;
+
       return {
         member: m,
         depth,
         children: kids,
         weight: Math.max(1, weight),
+        g2Idx: myG2Idx,
+        g3Idx: myG3Idx,
+        lineageG2Id: nextG2Id,
+        lineageG2Color: nextG2Col,
+        lineageG3Id: nextG3Id,
+        lineageG3Color: nextG3Col,
+        lineageG4Id: nextG4Id,
+        lineageG4Color: nextG4Col,
       };
     };
 
-    const rootMetas: MolMeta[] = [];
-    roots.forEach((r) => {
-      if (!seenMol.has(r.id)) {
-        rootMetas.push(buildMolMeta(r, Math.max(0, r.generationLevel ?? 0)));
+    const hiveRoots: HiveMeta[] = [];
+    roots.forEach((r, rIdx) => {
+      if (!seenHive.has(r.id)) {
+        const startDepth = Math.max(0, r.generationLevel ?? 0);
+        const pal = HONEYCOMB_G2_PALETTES[rIdx % HONEYCOMB_G2_PALETTES.length];
+        hiveRoots.push(
+          buildHiveMeta(r, startDepth, {
+            g2Idx: rIdx,
+            g3Counter: { n: 0 },
+            g2Id: startDepth >= 1 ? r.id : undefined,
+            g2Color: startDepth >= 1 ? pal.g2 : undefined,
+          })
+        );
       }
     });
-    members.forEach((m) => {
-      if (!seenMol.has(m.id)) {
-        rootMetas.push(buildMolMeta(m, Math.max(0, m.generationLevel ?? 0)));
+    members.forEach((m, mIdx) => {
+      if (!seenHive.has(m.id)) {
+        const startDepth = Math.max(0, m.generationLevel ?? 0);
+        const pal = HONEYCOMB_G2_PALETTES[mIdx % HONEYCOMB_G2_PALETTES.length];
+        hiveRoots.push(
+          buildHiveMeta(m, startDepth, {
+            g2Idx: mIdx,
+            g3Counter: { n: 0 },
+            g2Id: startDepth >= 1 ? m.id : undefined,
+            g2Color: startDepth >= 1 ? pal.g2 : undefined,
+          })
+        );
       }
     });
 
-    const boardCx = boardWidth / 2;
-    const boardCy = topSafeY + usableH / 2;
+    const hexSampleDim = estimateSmartNodeBoxSize(
+      {
+        id: 'tmp_hex',
+        name: 'Nama Anggota',
+        sub: '',
+        x: 0,
+        y: 0,
+        photo: '',
+        wafat: false,
+        cardShape: 'hex',
+      },
+      displayMode,
+      photoSize,
+      cardScale
+    );
+    const hexW = hexSampleDim.w;
+    const hexH = hexSampleDim.h;
+    const cellMortar = Math.max(10, Math.round(compactSiblingGap * 1.1));
+    const coupleHexGap = 2;
 
-    // Pusat G1 fleksibel di tengah: geser halus ke arah yang berlawanan dari cabang terpadat agar kanvas seimbang
-    let flexShiftX = 0;
-    let flexShiftY = 0;
-    if (rootMetas.length === 1 && rootMetas[0].children.length >= 2) {
-      const kids = rootMetas[0].children;
-      const totalW = kids.reduce((s, k) => s + k.weight, 0) || 1;
-      let wx = 0;
-      let wy = 0;
-      let curA = -Math.PI * 0.65;
-      kids.forEach((k) => {
-        const span = (Math.PI * 2 * k.weight) / totalW;
-        const midA = curA + span / 2;
-        wx += Math.cos(midA) * k.weight;
-        wy += Math.sin(midA) * k.weight;
-        curA += span;
-      });
-      flexShiftX = Math.max(
-        -boardWidth * 0.06,
-        Math.min(boardWidth * 0.06, (-wx / totalW) * boardWidth * 0.08)
-      );
-      flexShiftY = Math.max(
-        -usableH * 0.06,
-        Math.min(usableH * 0.06, (-wy / totalW) * usableH * 0.08)
-      );
-    }
-
-    const coreCenterX = Math.round(boardCx + flexShiftX);
-    const coreCenterY = Math.round(boardCy + flexShiftY);
-    const maxReachX = Math.max(170, boardWidth / 2 - cardW * 0.85 - 28);
-    const maxReachY = Math.max(130, usableH / 2 - cardH * 0.85 - 24);
-    const aspectRatioY = maxReachY / Math.max(1, maxReachX);
-
-    const lockedMolIds = new Set<string>();
-    const placedMolNodes: InteractiveNode[] = [];
-
-    const spawnMolUnit = (
-      m: FamilyMember,
-      centerX: number,
-      centerY: number,
-      depth: number,
+    const placedHiveNodes: InteractiveNode[] = [];
+    const spawnHiveCell = (
+      hm: HiveMeta,
+      cx: number,
+      cy: number,
       parentNodeId: string | null,
-      spouseSide: 1 | -1,
-      lockRoot = false
+      spouseSide: 1 | -1 = 1
     ): string => {
+      const m = hm.member;
       const scaleMult =
-        depth === 0 ? 1.28 : depth === 1 ? 1.08 : depth >= 4 ? 0.94 : 1.0;
-      const unitDim = estimateSmartNodeBoxSize(
+        hm.depth === 0 ? 1.18 : hm.depth === 1 ? 1.05 : hm.depth >= 4 ? 0.94 : 1.0;
+      const dim = estimateSmartNodeBoxSize(
         {
-          id: `tmp_${m.id}`,
+          id: `tmp_h_${m.id}`,
           name: m.name,
           sub: '',
           x: 0,
@@ -4228,80 +4644,65 @@ export function generateSmartLayoutFromTable(
           photo: '',
           wafat: m.isDeceased,
           scaleMultiplier: scaleMult,
+          cardShape: 'hex',
         },
         displayMode,
         photoSize,
         cardScale
       );
-
       const spouses = m.spouses || [];
-      const coupleTightGap = depth === 0 ? 2 : 3;
+      const totalPairW =
+        spouses.length > 0 && hm.depth === 0
+          ? dim.w * (1 + spouses.length) + coupleHexGap * spouses.length
+          : dim.w;
       const primaryX =
-        depth === 0 && spouses.length > 0 && rootMetas.length === 1
-          ? Math.round(centerX - ((unitDim.w + coupleTightGap) * spouses.length) / 2 - unitDim.w / 2)
-          : Math.round(centerX - unitDim.w / 2);
-      const primaryY = Math.round(centerY - unitDim.h / 2);
+        hm.depth === 0 && spouses.length > 0
+          ? Math.round(cx - totalPairW / 2)
+          : Math.round(cx - dim.w / 2);
+      const primaryY = Math.round(cy - dim.h / 2);
 
       const primaryId = `n_${m.id}`;
-      const molStop = getBpStop(depth);
-      const molShape: InteractiveNode['cardShape'] =
-        aiBlueprint?.cardShape && aiBlueprint.cardShape !== 'petal'
-          ? aiBlueprint.cardShape
-          : 'hex';
-      placedMolNodes.push({
+      const bpStop = getBpStop(hm.depth);
+      const activeBorder =
+        bpStop?.border ||
+        hm.lineageG3Color ||
+        hm.lineageG2Color ||
+        (hm.depth === 0 ? '#fbbf24' : '#38bdf8');
+      const activeBg =
+        bpStop?.bg || (hm.depth === 0 ? '#451a03' : '#0f172a');
+
+      placedHiveNodes.push({
         id: primaryId,
         name: m.name,
         sub: formatMemberLifeSubtitle(m),
-        x: Math.max(22, Math.min(boardWidth - 22 - unitDim.w, primaryX)),
-        y: Math.max(66, Math.min(boardHeight - 24 - unitDim.h, primaryY)),
+        x: primaryX,
+        y: primaryY,
         photo: m.photoUrl || '',
         wafat: m.isDeceased,
         gender: m.gender,
         memberId: m.id,
-        genLevel: m.generationLevel ?? depth,
+        genLevel: m.generationLevel ?? hm.depth,
         scaleMultiplier: scaleMult,
-        cardShape: molShape,
-        customBgColor: molStop?.bg,
-        customBorderColor: molStop?.border,
+        cardShape: 'hex',
+        lineageG2Id: hm.lineageG2Id,
+        lineageG2Color: hm.lineageG2Color,
+        lineageG3Id: hm.lineageG3Id,
+        lineageG3Color: hm.lineageG3Color,
+        lineageG4Id: hm.lineageG4Id,
+        lineageG4Color: hm.lineageG4Color,
+        customBgColor: activeBg,
+        customBorderColor: activeBorder,
       });
 
-      if (lockRoot) {
-        lockedMolIds.add(primaryId);
-      }
       if (parentNodeId) {
         edges.push({ from: parentNodeId, to: primaryId, type: 'child' });
       }
 
       spouses.forEach((sp, sIdx) => {
-        const spScale = depth === 0 ? 1.22 : scaleMult;
-        const spDim = estimateSmartNodeBoxSize(
-          {
-            id: `tmp_sp_${m.id}`,
-            name: sp.name,
-            sub: '',
-            x: 0,
-            y: 0,
-            photo: '',
-            wafat: sp.status === 'cerai_mati',
-            scaleMultiplier: spScale,
-          },
-          displayMode,
-          photoSize,
-          cardScale
-        );
         const spId = `n_${m.id}_sp_${sIdx + 1}`;
-        const stepX = (sIdx + 1) * (unitDim.w + coupleTightGap);
-        const spX = Math.max(
-          22,
-          Math.min(
-            boardWidth - 22 - spDim.w,
-            Math.round(primaryX + spouseSide * stepX)
-          )
-        );
-        const spY = Math.round(
-          primaryY + (unitDim.h - spDim.h) / 2
-        );
-        placedMolNodes.push({
+        const spDir = hm.depth === 0 ? 1 : spouseSide;
+        const spX = primaryX + spDir * (sIdx + 1) * (dim.w + coupleHexGap);
+        placedHiveNodes.push({
           id: spId,
           name: sp.name,
           sub: `Pasangan (${
@@ -4312,15 +4713,21 @@ export function generateSmartLayoutFromTable(
               : 'Menikah'
           })`,
           x: spX,
-          y: Math.max(66, Math.min(boardHeight - 24 - spDim.h, spY)),
+          y: primaryY,
           photo: '',
           wafat: sp.status === 'cerai_mati',
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
-          genLevel: m.generationLevel ?? depth,
-          scaleMultiplier: spScale,
-          cardShape: molShape,
-          customBgColor: molStop?.bg,
-          customBorderColor: molStop?.border,
+          genLevel: m.generationLevel ?? hm.depth,
+          scaleMultiplier: scaleMult,
+          cardShape: 'hex',
+          lineageG2Id: hm.lineageG2Id,
+          lineageG2Color: hm.lineageG2Color,
+          lineageG3Id: hm.lineageG3Id,
+          lineageG3Color: hm.lineageG3Color,
+          lineageG4Id: hm.lineageG4Id,
+          lineageG4Color: hm.lineageG4Color,
+          customBgColor: activeBg,
+          customBorderColor: activeBorder,
         });
         edges.push({ from: primaryId, to: spId, type: 'couple' });
       });
@@ -4328,162 +4735,258 @@ export function generateSmartLayoutFromTable(
       return primaryId;
     };
 
-    const maxGenStepPx = Math.max(cardW * 1.35, Math.min(maxReachX * 0.34, cardH * 1.65));
+    if (!isRadialHive) {
+      // ---------------------------------------------------------------------
+      // SARANG LEBAH BERTINGKAT (TOP-DOWN HONEYCOMB):
+      // Kamar G2 -> Kamar G3 -> Kantong G4 -> Baris Sarang Lebah G5 (0 tumpang)
+      // ---------------------------------------------------------------------
+      interface HiveTierBox {
+        meta: HiveMeta;
+        w: number;
+        h: number;
+        unitW: number;
+        children: HiveTierBox[];
+        g5Cols: number;
+      }
 
-    const placeOrganicMolecule = (
-      mm: MolMeta,
+      const pitchX = hexW + cellMortar;
+      const g4PocketGap = Math.max(20, cellMortar + 8);
+      const g3ChamberGap = Math.max(30, cellMortar * 2 + 8);
+      const g2ChamberGap = Math.max(42, Math.round(hexW * 0.52));
+      const rowStepY = Math.round(hexH * 0.84 + Math.max(20, cellMortar * 1.25));
+
+      const measureHiveBox = (hm: HiveMeta): HiveTierBox => {
+        const spCnt = hm.member.spouses?.length || 0;
+        const unitW = hexW * (1 + spCnt) + Math.max(0, spCnt) * coupleHexGap;
+        const kids = hm.children.map((ch) => measureHiveBox(ch));
+
+        if (kids.length === 0) {
+          return { meta: hm, w: unitW, h: hexH, unitW, children: [], g5Cols: 1 };
+        }
+
+        // Di tingkat G4 (depth === 3): kemas anak G5 sebagai baris sarang lebah rapat di bawah G4!
+        if (hm.depth >= 3 && kids.every((k) => k.children.length === 0)) {
+          const g5Cols = Math.min(3, Math.max(2, kids.length));
+          const rows = Math.ceil(kids.length / g5Cols);
+          const maxUnitW = Math.max(...kids.map((k) => k.unitW));
+          const gridW =
+            g5Cols * maxUnitW +
+            (g5Cols - 1) * cellMortar +
+            (rows > 1 ? Math.round(pitchX * 0.48) : 0);
+          return {
+            meta: hm,
+            w: Math.max(unitW, gridW),
+            h: hexH + rows * rowStepY,
+            unitW,
+            children: kids,
+            g5Cols,
+          };
+        }
+
+        const gap =
+          hm.depth === 0
+            ? g2ChamberGap
+            : hm.depth === 1
+            ? g3ChamberGap
+            : g4PocketGap;
+        const childrenW =
+          kids.reduce((s, c) => s + c.w, 0) + Math.max(0, kids.length - 1) * gap;
+        const maxChildH = Math.max(...kids.map((c) => c.h));
+
+        return {
+          meta: hm,
+          w: Math.max(unitW, childrenW),
+          h: hexH + rowStepY + maxChildH,
+          unitW,
+          children: kids,
+          g5Cols: 1,
+        };
+      };
+
+      const rootBoxes = hiveRoots.map((r) => measureHiveBox(r));
+      const totalSpanW =
+        rootBoxes.reduce((s, b) => s + b.w, 0) +
+        Math.max(0, rootBoxes.length - 1) * g2ChamberGap;
+
+      const placeHiveBox = (
+        box: HiveTierBox,
+        boxLeftX: number,
+        topY: number,
+        parentNodeId: string | null
+      ) => {
+        const spCnt = box.meta.member.spouses?.length || 0;
+        const centerClusterX = boxLeftX + box.w / 2;
+        const primaryCenterX =
+          box.meta.depth === 0 || spCnt === 0
+            ? centerClusterX
+            : centerClusterX - ((box.unitW - hexW) / 2);
+
+        const myId = spawnHiveCell(
+          box.meta,
+          primaryCenterX,
+          topY + hexH / 2,
+          parentNodeId,
+          1
+        );
+
+        if (box.children.length === 0) return;
+
+        // Baris G5+ sarang lebah bertingkat (staggered 0.48 * pitchX per baris)
+        if (
+          box.meta.depth >= 3 &&
+          box.children.every((k) => k.children.length === 0)
+        ) {
+          const maxUnitW = Math.max(...box.children.map((k) => k.unitW));
+          const cols = box.g5Cols;
+          const rowStepX = maxUnitW + cellMortar;
+          const totalRowW = cols * maxUnitW + (cols - 1) * cellMortar;
+          const baseStartX = centerClusterX - totalRowW / 2;
+
+          box.children.forEach((ch, idx) => {
+            const r = Math.floor(idx / cols);
+            const c = idx % cols;
+            const staggerShift = r % 2 === 1 ? Math.round(pitchX * 0.42) : 0;
+            const cx = baseStartX + c * rowStepX + ch.unitW / 2 + staggerShift;
+            const cy = topY + (r + 1) * rowStepY + hexH / 2;
+            spawnHiveCell(ch.meta, cx, cy, myId, 1);
+          });
+          return;
+        }
+
+        const gap =
+          box.meta.depth === 0
+            ? g2ChamberGap
+            : box.meta.depth === 1
+            ? g3ChamberGap
+            : g4PocketGap;
+        const childrenTotalW =
+          box.children.reduce((s, c) => s + c.w, 0) +
+          Math.max(0, box.children.length - 1) * gap;
+        let childCursorX = centerClusterX - childrenTotalW / 2;
+        const nextY = topY + rowStepY;
+
+        box.children.forEach((ch) => {
+          placeHiveBox(ch, childCursorX, nextY, myId);
+          childCursorX += ch.w + gap;
+        });
+      };
+
+      let rootCursorX = Math.round((boardWidth - totalSpanW) / 2);
+      const startTopY = topSafeY + 26;
+      rootBoxes.forEach((rb) => {
+        placeHiveBox(rb, rootCursorX, startTopY, null);
+        rootCursorX += rb.w + g2ChamberGap;
+      });
+
+      return fitNodesInsideBoard(
+        placedHiveNodes,
+        edges,
+        boardWidth,
+        boardHeight,
+        hexW,
+        hexH,
+        24,
+        {
+          displayMode,
+          photoSize,
+          cardScale,
+          padX: Math.max(10, cellMortar),
+          padY: Math.max(12, cellMortar),
+        }
+      );
+    }
+
+    // -----------------------------------------------------------------------
+    // SARANG LEBAH RATU PUSAT (RADIAL HONEYCOMB):
+    // G1 di Pusat Segi Enam -> G2 di 6 Sisi -> G3-G5 Mekar di Sektor Klan
+    // -----------------------------------------------------------------------
+    const cx = Math.round(boardWidth / 2);
+    const cy = Math.round(topSafeY + usableH / 2);
+    const maxRx = Math.max(190, boardWidth / 2 - hexW * 0.9 - 28);
+    const maxRy = Math.max(150, usableH / 2 - hexH * 0.9 - 26);
+    const aspectY = maxRy / Math.max(1, maxRx);
+    const lockedHiveIds = new Set<string>();
+
+    const placeRadialHiveBranch = (
+      hm: HiveMeta,
       parentNodeId: string | null,
       anchorX: number,
       anchorY: number,
       sectorStart: number,
       sectorEnd: number,
-      radialDist: number,
-      isRootSingle: boolean
+      isQueenCenter: boolean
     ) => {
       const midAng = (sectorStart + sectorEnd) / 2;
       const spouseDir: 1 | -1 = Math.cos(midAng) >= -0.2 ? 1 : -1;
 
-      const cxNode = isRootSingle
-        ? coreCenterX
-        : anchorX + Math.cos(midAng) * radialDist;
-      const cyNode = isRootSingle
-        ? coreCenterY
-        : anchorY + Math.sin(midAng) * radialDist * aspectRatioY;
+      const ringR =
+        hm.depth === 1
+          ? Math.max(hexW * 1.95, maxRx * 0.29)
+          : hm.depth === 2
+          ? Math.max(hexW * 1.45, maxRx * 0.25)
+          : hm.depth === 3
+          ? Math.max(hexW * 1.25, maxRx * 0.21)
+          : Math.max(hexW * 1.12, hexH * 1.05);
 
-      const myId = spawnMolUnit(
-        mm.member,
-        cxNode,
-        cyNode,
-        mm.depth,
-        parentNodeId,
-        spouseDir,
-        isRootSingle
-      );
+      const nx = isQueenCenter ? cx : anchorX + Math.cos(midAng) * ringR;
+      const ny = isQueenCenter
+        ? cy
+        : anchorY + Math.sin(midAng) * ringR * Math.max(0.76, aspectY);
 
-      if (mm.children.length === 0) return;
+      const myId = spawnHiveCell(hm, nx, ny, parentNodeId, spouseDir);
+      if (isQueenCenter || hm.depth <= 1) lockedHiveIds.add(myId);
 
-      // Untuk G5+ (anak dari depth >= 3): menempel rapat & memancar langsung di sekitar ortu G4!
-      if (mm.depth >= 3) {
-        const g5Count = mm.children.length;
-        const spreadArc = Math.min(Math.PI * 1.45, Math.max(0.95, g5Count * 0.56));
-        const baseOutAng = isRootSingle ? -Math.PI / 2 : midAng;
-        const compactDist = Math.max(
-          cardW * 1.12,
-          Math.min(cardH * 1.25, maxGenStepPx * 0.78)
-        );
+      if (hm.children.length === 0) return;
 
-        mm.children.forEach((g5, idx) => {
-          const frac = g5Count === 1 ? 0 : idx / (g5Count - 1) - 0.5;
-          const jitter = (molHash(g5.member.id) - 0.5) * 0.24;
-          const ang = baseOutAng + frac * spreadArc + jitter;
-          const dist = compactDist * (0.88 + molHash(`${g5.member.id}_r`) * 0.26);
-          const gx = cxNode + Math.cos(ang) * dist;
-          const gy = cyNode + Math.sin(ang) * dist * Math.max(0.78, aspectRatioY);
-          const g5Id = spawnMolUnit(
-            g5.member,
-            gx,
-            gy,
-            g5.depth,
-            myId,
-            Math.cos(ang) >= 0 ? 1 : -1,
-            false
-          );
+      const totalW = hm.children.reduce((s, c) => s + c.weight, 0) || 1;
+      const span = sectorEnd - sectorStart;
+      const effSpan =
+        hm.depth >= 2
+          ? Math.min(Math.PI * 0.78, Math.max(span, hm.children.length * 0.34))
+          : span;
+      let cursorA = hm.depth === 0 ? sectorStart : midAng - effSpan / 2;
+      const eqShare = effSpan / hm.children.length;
+      const blend = hm.depth === 0 ? 0.42 : 0.32;
 
-          // Jika ada G6+, sambung tipis lebih jauh sedikit
-          g5.children.forEach((g6, g6i) => {
-            const a6 = ang + (g6i - (g5.children.length - 1) / 2) * 0.45;
-            const d6 = compactDist * 0.85;
-            spawnMolUnit(
-              g6.member,
-              gx + Math.cos(a6) * d6,
-              gy + Math.sin(a6) * d6 * Math.max(0.78, aspectRatioY),
-              g6.depth,
-              g5Id,
-              Math.cos(a6) >= 0 ? 1 : -1,
-              false
-            );
-          });
-        });
-        return;
-      }
-
-      // G2–G4: Sektor proporsional + porsi minimum merata agar semua gugus seimbang
-      const totalChildWeight =
-        mm.children.reduce((s, c) => s + c.weight, 0) || 1;
-      const sectorSpan = sectorEnd - sectorStart;
-      const equalMolShare = sectorSpan / Math.max(1, mm.children.length);
-      const molEqBlend = mm.depth === 0 ? 0.34 : 0.22;
-      let cursorAng = sectorStart;
-
-      mm.children.forEach((ch, idx) => {
-        const wShare = (sectorSpan * ch.weight) / totalChildWeight;
-        const share = equalMolShare * molEqBlend + wShare * (1 - molEqBlend);
-        const safeMargin = Math.min(share * 0.12, 0.1);
-        const subStart = cursorAng + safeMargin;
-        const subEnd = cursorAng + share - safeMargin;
-        const hLen = molHash(`${ch.member.id}_len`);
-        const hAng = molHash(`${ch.member.id}_ang`);
-
-        // Panjang ikatan tidak seragam (0.82x..1.25x) + selang-seling stagger agar rantai beradik lega
-        const staggerFactor = idx % 2 === 0 ? 0.92 : 1.15;
-        const stepBase =
-          mm.depth === 0
-            ? Math.max(cardW * 1.55, maxReachX * 0.34)
-            : maxGenStepPx;
-        const organicDist = stepBase * staggerFactor * (0.84 + hLen * 0.36);
-
-        // Sedikit geser sudut di dalam sektor pribadinya supaya organik asimetris tapi tetap 0 silang
-        const jitterSpan = (subEnd - subStart) * 0.22;
-        const jCenter = (subStart + subEnd) / 2 + (hAng - 0.5) * jitterSpan;
-        const halfW = Math.max(0.18, (subEnd - subStart) / 2);
-
-        placeOrganicMolecule(
+      hm.children.forEach((ch) => {
+        const wShare = (effSpan * ch.weight) / totalW;
+        const share = eqShare * blend + wShare * (1 - blend);
+        const pad = Math.min(share * 0.08, 0.06);
+        placeRadialHiveBranch(
           ch,
           myId,
-          cxNode,
-          cyNode,
-          jCenter - halfW,
-          jCenter + halfW,
-          organicDist,
+          nx,
+          ny,
+          cursorA + pad,
+          cursorA + share - pad,
           false
         );
-
-        cursorAng += share;
+        cursorA += share;
       });
     };
 
-    if (rootMetas.length === 1) {
-      placeOrganicMolecule(
-        rootMetas[0],
+    if (hiveRoots.length === 1) {
+      placeRadialHiveBranch(
+        hiveRoots[0],
         null,
-        coreCenterX,
-        coreCenterY,
-        -Math.PI * 0.78,
-        Math.PI * 1.22,
-        0,
+        cx,
+        cy,
+        -Math.PI / 2,
+        Math.PI * 1.5,
         true
       );
     } else {
-      const totalRWeight = rootMetas.reduce((s, r) => s + r.weight, 0) || 1;
-      let rootCursor = -Math.PI * 0.72;
-      rootMetas.forEach((rm) => {
-        const span = (Math.PI * 2 * rm.weight) / totalRWeight;
-        placeOrganicMolecule(
-          rm,
-          null,
-          coreCenterX,
-          coreCenterY,
-          rootCursor,
-          rootCursor + span,
-          Math.max(cardW * 1.4, maxReachX * 0.28),
-          false
-        );
-        rootCursor += span;
+      const totR = hiveRoots.reduce((s, r) => s + r.weight, 0) || 1;
+      let cur = -Math.PI / 2;
+      hiveRoots.forEach((rm) => {
+        const sp = (Math.PI * 2 * rm.weight) / totR;
+        placeRadialHiveBranch(rm, null, cx, cy, cur, cur + sp, false);
+        cur += sp;
       });
     }
 
-    const solvedMolNodes = resolveCollisionsNearParents4Dir(
-      placedMolNodes,
+    const solvedHiveNodes = resolveCollisionsNearParents4Dir(
+      placedHiveNodes,
       edges,
       boardWidth,
       boardHeight,
@@ -4491,20 +4994,20 @@ export function generateSmartLayoutFromTable(
       photoSize,
       cardScale,
       {
-        minLeftX: 20,
-        rightMargin: 20,
+        minLeftX: 22,
+        rightMargin: 22,
         minTopY: 64,
         bottomMargin: 24,
-        padX: Math.max(10, Math.round(compactSiblingGap * 0.8)),
-        padY: Math.max(10, Math.round(cardH * 0.14)),
-        anchorMaxGen: 1,
-        lockedNodeIds: lockedMolIds,
-        radialCenter: { x: coreCenterX, y: coreCenterY },
+        padX: Math.max(14, cellMortar + 2),
+        padY: Math.max(14, cellMortar + 2),
+        anchorMaxGen: 2,
+        lockedNodeIds: lockedHiveIds,
+        radialCenter: { x: cx, y: cy },
       }
     );
 
     return {
-      nodes: solvedMolNodes,
+      nodes: solvedHiveNodes,
       edges,
     };
   }
@@ -5212,20 +5715,25 @@ export function applyIncrementalBranchUpdate(params: {
       aiBlueprint?.cardShape ||
       (presetId === 'teratai_mekar'
         ? 'petal'
-        : presetId === 'molekul_organik'
+        : presetId === 'sarang_lebah_turun' ||
+          presetId === 'sarang_lebah_pusat' ||
+          presetId === 'molekul_organik'
         ? 'hex'
         : presetId === 'pohon_hayat_besar' && gen >= 2
         ? 'leaf'
         : 'rect');
 
     const scaleMult =
-      presetId === 'teratai_mekar' || presetId === 'molekul_organik'
+      presetId === 'teratai_mekar' ||
+      presetId === 'sarang_lebah_turun' ||
+      presetId === 'sarang_lebah_pusat' ||
+      presetId === 'molekul_organik'
         ? gen === 0
-          ? 1.26
+          ? 1.18
           : gen === 1
-          ? 1.08
+          ? 1.06
           : gen >= 4
-          ? 0.92
+          ? 0.9
           : 1
         : 1;
 
@@ -5252,6 +5760,7 @@ export function applyIncrementalBranchUpdate(params: {
     let outX = 0;
     let outY = 1;
     let leafDeg: number | undefined;
+    let lotusRole: InteractiveNode['lotusRole'];
 
     if (pNode) {
       const pDim = estimateSmartNodeBoxSize(pNode, displayMode, photoSize, cardScale);
@@ -5268,23 +5777,36 @@ export function applyIncrementalBranchUpdate(params: {
         prefX = pcx + outX * dist - dim.w / 2;
         prefY = pcy + outY * dist - dim.h / 2;
         leafDeg = wing * (32 + ((siblingCount * 29) % 85));
-      } else if (presetId === 'teratai_mekar' || presetId === 'molekul_organik') {
+      } else if (
+        presetId === 'teratai_mekar' ||
+        presetId === 'sarang_lebah_pusat' ||
+        presetId === 'molekul_organik'
+      ) {
         const radialAng = Math.atan2(pcy - boardCy, pcx - boardCx);
-        const fanOffset = ((siblingCount % 2 === 0 ? 1 : -1) * Math.ceil(siblingCount / 2)) * 0.36;
+        const fanOffset = ((siblingCount % 2 === 0 ? 1 : -1) * Math.ceil(siblingCount / 2)) * 0.38;
         const ang = (Math.hypot(pcx - boardCx, pcy - boardCy) < 20 ? -Math.PI / 2 : radialAng) + fanOffset;
-        const dist = Math.max(dim.w * 1.18, dim.h * 1.18);
+        const dist = Math.max(dim.w * 1.15, dim.h * 1.15);
         outX = Math.cos(ang);
         outY = Math.sin(ang);
         prefX = pcx + outX * dist - dim.w / 2;
         prefY = pcy + outY * dist - dim.h / 2;
         if (presetId === 'teratai_mekar') {
-          leafDeg = Math.round((((ang * 180) / Math.PI + 90) % 360) * 10) / 10;
+          lotusRole = gen <= 2 ? 'flower_center' : gen === 3 ? 'petal_inner' : 'petal_outer';
+          leafDeg =
+            lotusRole === 'flower_center'
+              ? 0
+              : Math.round((((ang * 180) / Math.PI + 90) % 360) * 10) / 10;
         }
       } else {
-        // Vertical/grid tree fallback: place right below/next to parent
+        // Sarang lebah turun & pohon vertikal: tempatkan rapi di bawah induk dengan selisih comb
         const colShift = (siblingCount % 3) - 1;
-        prefX = pNode.x + colShift * (dim.w + 18);
-        prefY = pNode.y + pDim.h + 44;
+        prefX =
+          pNode.x +
+          colShift * (dim.w + 14) +
+          (presetId === 'sarang_lebah_turun' && siblingCount % 2 === 1
+            ? Math.round(dim.w * 0.48)
+            : 0);
+        prefY = pNode.y + pDim.h + (presetId === 'sarang_lebah_turun' ? 18 : 44);
       }
     }
 
@@ -5303,6 +5825,13 @@ export function applyIncrementalBranchUpdate(params: {
       genLevel: m.generationLevel ?? gen,
       scaleMultiplier: scaleMult,
       cardShape,
+      lotusRole,
+      lineageG2Id: pNode?.lineageG2Id || (gen === 1 ? m.id : undefined),
+      lineageG2Color: pNode?.lineageG2Color,
+      lineageG3Id: pNode?.lineageG3Id || (gen === 2 ? m.id : undefined),
+      lineageG3Color: pNode?.lineageG3Color,
+      lineageG4Id: pNode?.lineageG4Id || (gen === 3 ? m.id : undefined),
+      lineageG4Color: pNode?.lineageG4Color,
       leafAngleDeg: leafDeg,
       leafTone:
         presetId === 'pohon_hayat_besar'
@@ -5316,8 +5845,8 @@ export function applyIncrementalBranchUpdate(params: {
         presetId === 'pohon_hayat_besar'
           ? pNode?.treeWing ?? (spot.x + dim.w / 2 >= boardCx ? 1 : -1)
           : undefined,
-      customBgColor: bpStop?.bg,
-      customBorderColor: bpStop?.border,
+      customBgColor: bpStop?.bg || pNode?.customBgColor,
+      customBorderColor: bpStop?.border || pNode?.customBorderColor,
     };
 
     nextNodes.push(newNode);

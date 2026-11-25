@@ -7,6 +7,8 @@ import type {
 export type NasabAiArchetype =
   | 'tree_organic'
   | 'lotus_mandala'
+  | 'honeycomb_tier'
+  | 'honeycomb_radial'
   | 'molecule_cluster';
 
 export type NasabAiTreeShape =

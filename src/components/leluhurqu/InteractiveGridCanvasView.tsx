@@ -85,6 +85,8 @@ import {
   GridMiniNavigator,
   ComputedCanvasEdgeItem,
   TreeSkeletonData,
+  LineageHullItem,
+  LotusHaloItem,
 } from './GridHybridCanvasLayer';
 import {
   SMART_LAYOUT_PRESETS,
@@ -113,10 +115,15 @@ export type CanvasTheme = 'dark' | 'light';
 export type CanvasBackground = '' | 'bg-gunung' | 'bg-pohon' | 'bg-galaksi';
 export type GridPaperSize = 'a4' | 'a3' | 'a2' | 'a1' | 'a0';
 export type GridPaperOrientation = 'landscape' | 'portrait';
-export type CardDisplayMode = 'name_only' | 'photo_name' | 'full';
+export type CardDisplayMode = 'name_only' | 'photo_name' | 'photo_name_unified' | 'full';
 
 function normalizeCardDisplayMode(mode?: string): CardDisplayMode {
-  if (mode === 'name_only' || mode === 'photo_name' || mode === 'full') {
+  if (
+    mode === 'name_only' ||
+    mode === 'photo_name' ||
+    mode === 'photo_name_unified' ||
+    mode === 'full'
+  ) {
     return mode;
   }
   if (mode === 'photo_only') {
@@ -190,6 +197,13 @@ export interface InteractiveNode {
   genLevel?: number;
   scaleMultiplier?: number;
   cardShape?: 'rect' | 'leaf' | 'hex' | 'petal';
+  lotusRole?: 'flower_center' | 'petal_inner' | 'petal_outer';
+  lineageG2Id?: string;
+  lineageG2Color?: string;
+  lineageG3Id?: string;
+  lineageG3Color?: string;
+  lineageG4Id?: string;
+  lineageG4Color?: string;
   leafAngleDeg?: number;
   leafTone?: 'dark' | 'medium' | 'light';
   treeOriginX?: number;
@@ -587,6 +601,16 @@ function getNodeSize(
   const pDim = PHOTO_DIMENSIONS[photoSize] || PHOTO_DIMENSIONS['3x4'];
 
   if (displayMode === 'photo_name') {
+    const u = getUniformSubCardSize(displayMode, photoSize, effScale);
+    return { w: u.w, h: u.h };
+  }
+
+  if (displayMode === 'photo_name_unified') {
+    if (node.cardShape === 'hex') {
+      const w = Math.max(54, Math.round(Math.max(pDim.w + 18, 74) * effScale));
+      const h = Math.max(62, Math.round(w * 1.14));
+      return { w, h };
+    }
     const u = getUniformSubCardSize(displayMode, photoSize, effScale);
     return { w: u.w, h: u.h };
   }
@@ -4086,17 +4110,29 @@ export const InteractiveGridCanvasView: React.FC<
         setCardFrameMode('auto');
         setGenGradientPalette('lotus_blossom');
         setLinesOnTop(false);
-        setShowLineArrows(true);
+        setShowLineArrows(false);
         setShowEndpointDots(true);
-      } else if (presetId === 'molekul_organik') {
-        setLineStyle('straight');
+        nextCardMode = 'photo_name_unified';
+        nextPhotoSize = 'bulat';
+        setCardDisplayMode(nextCardMode);
+        setPhotoFrameSize(nextPhotoSize);
+      } else if (
+        presetId === 'sarang_lebah_turun' ||
+        presetId === 'sarang_lebah_pusat' ||
+        presetId === 'molekul_organik'
+      ) {
+        setLineStyle('none');
         setLineThicknessMode('uniform');
-        setLineRoutingTopology('sibling_chain_all');
+        setLineRoutingTopology('direct');
         setCardFrameMode('auto');
-        setGenGradientPalette('ocean_blue');
+        setGenGradientPalette('none');
         setLinesOnTop(false);
-        setShowLineArrows(true);
-        setShowEndpointDots(true);
+        setShowLineArrows(false);
+        setShowEndpointDots(false);
+        nextCardMode = 'photo_name_unified';
+        nextPhotoSize = 'bulat';
+        setCardDisplayMode(nextCardMode);
+        setPhotoFrameSize(nextPhotoSize);
       } else {
         setLineThicknessMode(preset.recommendedLineThicknessMode || 'uniform');
       }
@@ -4184,6 +4220,12 @@ export const InteractiveGridCanvasView: React.FC<
         preset.recommendedGuideMode || 'gen_bands';
       setGuideOverlayMode(nextGuideMode);
       if (
+        presetId === 'sarang_lebah_turun' ||
+        presetId === 'sarang_lebah_pusat' ||
+        presetId === 'teratai_mekar'
+      ) {
+        setShowGenGuides(false);
+      } else if (
         presetId === 'hierarchy_grid_fill' ||
         nextGuideMode === 'grid_9_rows' ||
         nextGuideMode === 'orbit_rings' ||
@@ -4245,23 +4287,34 @@ export const InteractiveGridCanvasView: React.FC<
           ? 'pohon_hayat_besar'
           : bp.archetype === 'lotus_mandala'
           ? 'teratai_mekar'
-          : 'molekul_organik';
+          : bp.archetype === 'honeycomb_tier'
+          ? 'sarang_lebah_turun'
+          : 'sarang_lebah_pusat';
 
       pushUndoSnapshot(`Racik AI: ${bp.themeTitle}`);
 
+      const isHoneycombTarget =
+        targetPresetId === 'sarang_lebah_turun' ||
+        targetPresetId === 'sarang_lebah_pusat';
       const nextCardMode: CardDisplayMode =
-        cardDisplayMode === 'name_only' ? 'photo_name' : cardDisplayMode;
+        isHoneycombTarget || targetPresetId === 'teratai_mekar'
+          ? 'photo_name_unified'
+          : cardDisplayMode === 'name_only'
+          ? 'photo_name'
+          : cardDisplayMode;
       const nextPhotoSize: PhotoFrameSize =
         targetPresetId === 'pohon_hayat_besar' ? photoFrameSize : 'bulat';
 
       setCardFrameMode('auto');
-      setLineStyle(bp.connectorStyle);
+      setLineStyle(isHoneycombTarget ? 'none' : bp.connectorStyle);
       setLineThicknessMode(targetPresetId === 'pohon_hayat_besar' ? 'tree_taper' : 'uniform');
       setLineRoutingTopology(
-        targetPresetId === 'teratai_mekar' ? 'direct' : 'sibling_chain_all'
+        targetPresetId === 'teratai_mekar' || isHoneycombTarget
+          ? 'direct'
+          : 'sibling_chain_all'
       );
-      setShowLineArrows(true);
-      setShowEndpointDots(true);
+      setShowLineArrows(targetPresetId === 'pohon_hayat_besar');
+      setShowEndpointDots(!isHoneycombTarget);
       setLinesOnTop(false);
       setBgStyle('');
       setChildLineColor(bp.genColors?.[0]?.line || '');
@@ -4272,7 +4325,7 @@ export const InteractiveGridCanvasView: React.FC<
       } else if (targetPresetId === 'teratai_mekar') {
         setGenGradientPalette('lotus_blossom');
       } else {
-        setGenGradientPalette('ocean_blue');
+        setGenGradientPalette('none');
       }
 
       const nextScale = computeOptimalCardScale(
@@ -6191,16 +6244,30 @@ export const InteractiveGridCanvasView: React.FC<
       return { id: n.id, x: n.x, y: n.y, w: sz.w, h: sz.h };
     });
 
-    const isMoleculePreset = activePresetId === 'molekul_organik';
+    const isHoneycombPreset =
+      activePresetId === 'sarang_lebah_turun' ||
+      activePresetId === 'sarang_lebah_pusat' ||
+      activePresetId === 'molekul_organik';
+    const isLotusPondPreset = activePresetId === 'teratai_mekar';
+    const sourceEdgesForPreset = isLotusPondPreset
+      ? edges.filter((e) => {
+          if (e.type === 'couple') return false;
+          const fn = nodeMap.get(e.from);
+          const tn = nodeMap.get(e.to);
+          if (!fn || !tn) return false;
+          // Di Kolam Teratai: garis konektor HANYA antar pusat bunga (G1 -> G2 -> G3).
+          return (fn.genLevel ?? 0) <= 1 && (tn.genLevel ?? 0) <= 2;
+        })
+      : edges;
     const displayEdges = buildDisplayEdgesWithSiblingChain(
       nodes,
-      edges,
+      sourceEdgesForPreset,
       lineRoutingTopology,
       cardDisplayMode,
       photoFrameSize,
       cardScale,
       false,
-      isMoleculePreset
+      isHoneycombPreset
     );
 
     const taperScale = Math.max(0.45, Math.min(1.05, cardScale));
@@ -6339,9 +6406,9 @@ export const InteractiveGridCanvasView: React.FC<
         );
 
         const isLotusPreset = activePresetId === 'teratai_mekar';
-        // Mode Molekul & Teratai: jalur langsung pusat-ke-pusat menempel tepi segi-enam/kelopak (hindari port kotak 4 arah)
+        // Mode Sarang Lebah & Teratai: jalur langsung pusat-ke-pusat menempel tepi segi-enam/bunga
         if (
-          (isMoleculePreset || isLotusPreset) &&
+          (isHoneycombPreset || isLotusPreset) &&
           (!edge.fromPort || edge.fromPort === 'auto') &&
           (!edge.toPort || edge.toPort === 'auto')
         ) {
@@ -6443,7 +6510,7 @@ export const InteractiveGridCanvasView: React.FC<
         );
         const MOL_BOND_WIDTHS = [3.8, 3.1, 2.5, 2.0, 1.6];
         let startW =
-          isMoleculePreset && lineThicknessMode === 'uniform'
+          isHoneycombPreset && lineThicknessMode === 'uniform'
             ? edgeKind === 'couple'
               ? 2.8
               : edgeKind === 'sibling'
@@ -6453,7 +6520,7 @@ export const InteractiveGridCanvasView: React.FC<
             ? Math.max(1.3, lineThickness * 0.85)
             : lineThickness;
         let endW =
-          isMoleculePreset && lineThicknessMode === 'uniform' && edgeKind === 'child'
+          isHoneycombPreset && lineThicknessMode === 'uniform' && edgeKind === 'child'
             ? MOL_BOND_WIDTHS[g2Idx]
             : startW;
 
@@ -6579,6 +6646,266 @@ export const InteractiveGridCanvasView: React.FC<
     childLineColor,
     coupleLineColor,
     siblingLineColor,
+    theme,
+    bgStyle,
+  ]);
+
+  // Pembatas Warna Bertingkat Sarang Lebah (G2 ⊃ G3 ⊃ G4 ⊃ G5) sebagai pengganti garis konektor
+  const lineageHullsMemo = useMemo<LineageHullItem[]>(() => {
+    const isHive =
+      activePresetId === 'sarang_lebah_turun' ||
+      activePresetId === 'sarang_lebah_pusat' ||
+      activePresetId === 'molekul_organik';
+    if (!isHive && !nodes.some((n) => n.lineageG2Id)) return [];
+
+    const buildSmoothHullPath = (
+      groupNodes: InteractiveNode[],
+      pad: number
+    ): string | null => {
+      if (groupNodes.length === 0) return null;
+      const pts: Array<{ x: number; y: number }> = [];
+      groupNodes.forEach((n) => {
+        const sz = getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale);
+        const cx = n.x + sz.w / 2;
+        const cy = n.y + sz.h / 2;
+        const hw = sz.w * 0.54 + pad;
+        const hh = sz.h * 0.54 + pad;
+        pts.push(
+          { x: cx, y: cy - hh },
+          { x: cx + hw, y: cy - hh * 0.52 },
+          { x: cx + hw, y: cy + hh * 0.52 },
+          { x: cx, y: cy + hh },
+          { x: cx - hw, y: cy + hh * 0.52 },
+          { x: cx - hw, y: cy - hh * 0.52 }
+        );
+      });
+      if (pts.length < 3) return null;
+
+      pts.sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+      const cross = (
+        o: { x: number; y: number },
+        a: { x: number; y: number },
+        b: { x: number; y: number }
+      ) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+      const lower: Array<{ x: number; y: number }> = [];
+      for (const p of pts) {
+        while (
+          lower.length >= 2 &&
+          cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0
+        ) {
+          lower.pop();
+        }
+        lower.push(p);
+      }
+      const upper: Array<{ x: number; y: number }> = [];
+      for (let i = pts.length - 1; i >= 0; i--) {
+        const p = pts[i];
+        while (
+          upper.length >= 2 &&
+          cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0
+        ) {
+          upper.pop();
+        }
+        upper.push(p);
+      }
+      const rawHull = [...lower.slice(0, -1), ...upper.slice(0, -1)];
+      const cleanHull: Array<{ x: number; y: number }> = [];
+      rawHull.forEach((p) => {
+        const prev = cleanHull[cleanHull.length - 1];
+        if (!prev || Math.hypot(p.x - prev.x, p.y - prev.y) > 4) {
+          cleanHull.push(p);
+        }
+      });
+      if (cleanHull.length < 3) return null;
+
+      const mids = cleanHull.map((p, i) => {
+        const nxt = cleanHull[(i + 1) % cleanHull.length];
+        return {
+          x: Math.round(((p.x + nxt.x) / 2) * 10) / 10,
+          y: Math.round(((p.y + nxt.y) / 2) * 10) / 10,
+        };
+      });
+      const lastMid = mids[mids.length - 1];
+      const segs = [`M ${lastMid.x} ${lastMid.y}`];
+      cleanHull.forEach((p, i) => {
+        segs.push(
+          `Q ${Math.round(p.x * 10) / 10} ${Math.round(p.y * 10) / 10}, ${mids[i].x} ${mids[i].y}`
+        );
+      });
+      segs.push('Z');
+      return segs.join(' ');
+    };
+
+    const g2Map = new Map<string, { color: string; nodes: InteractiveNode[] }>();
+    const g3Map = new Map<string, { color: string; nodes: InteractiveNode[] }>();
+    const g4Map = new Map<string, { color: string; nodes: InteractiveNode[] }>();
+
+    nodes.forEach((n) => {
+      if (n.lineageG2Id && n.lineageG2Color) {
+        if (!g2Map.has(n.lineageG2Id)) {
+          g2Map.set(n.lineageG2Id, { color: n.lineageG2Color, nodes: [] });
+        }
+        g2Map.get(n.lineageG2Id)!.nodes.push(n);
+      }
+      if (n.lineageG3Id && n.lineageG3Color) {
+        if (!g3Map.has(n.lineageG3Id)) {
+          g3Map.set(n.lineageG3Id, { color: n.lineageG3Color, nodes: [] });
+        }
+        g3Map.get(n.lineageG3Id)!.nodes.push(n);
+      }
+      if (n.lineageG4Id && n.lineageG4Color) {
+        if (!g4Map.has(n.lineageG4Id)) {
+          g4Map.set(n.lineageG4Id, { color: n.lineageG4Color, nodes: [] });
+        }
+        g4Map.get(n.lineageG4Id)!.nodes.push(n);
+      }
+    });
+
+    const isDarkCanvas = theme === 'dark' || bgStyle !== '';
+    const out: LineageHullItem[] = [];
+
+    g2Map.forEach((entry, id) => {
+      if (entry.nodes.length < 2) return;
+      const d = buildSmoothHullPath(entry.nodes, 24);
+      if (!d) return;
+      out.push({
+        id: `hull-g2-${id}`,
+        d,
+        fill: hexWithAlpha(entry.color, isDarkCanvas ? 0.08 : 0.09),
+        stroke: hexWithAlpha(entry.color, 0.78),
+        strokeWidth: 3.2,
+        level: 2,
+      });
+    });
+
+    g3Map.forEach((entry, id) => {
+      if (entry.nodes.length < 2) return;
+      const d = buildSmoothHullPath(entry.nodes, 13);
+      if (!d) return;
+      out.push({
+        id: `hull-g3-${id}`,
+        d,
+        fill: hexWithAlpha(entry.color, isDarkCanvas ? 0.11 : 0.12),
+        stroke: hexWithAlpha(entry.color, 0.88),
+        strokeWidth: 2.2,
+        level: 3,
+      });
+    });
+
+    g4Map.forEach((entry, id) => {
+      if (entry.nodes.length < 2) return;
+      const d = buildSmoothHullPath(entry.nodes, 5);
+      if (!d) return;
+      out.push({
+        id: `hull-g4-${id}`,
+        d,
+        fill: hexWithAlpha(entry.color, isDarkCanvas ? 0.09 : 0.1),
+        stroke: hexWithAlpha(entry.color, 0.76),
+        strokeWidth: 1.5,
+        dash: '5 3',
+        level: 4,
+      });
+    });
+
+    return out;
+  }, [
+    activePresetId,
+    nodes,
+    cardDisplayMode,
+    photoFrameSize,
+    cardScale,
+    theme,
+    bgStyle,
+  ]);
+
+  // Aura Kolam Teratai untuk setiap pusat bunga G1/G2/G3 & kelompok kelopak G4–G5
+  const lotusHalosMemo = useMemo<LotusHaloItem[]>(() => {
+    if (activePresetId !== 'teratai_mekar' || nodes.length === 0) return [];
+    const childIdsByParent = new Map<string, string[]>();
+    edges.forEach((e) => {
+      if (e.type === 'child') {
+        if (!childIdsByParent.has(e.from)) childIdsByParent.set(e.from, []);
+        childIdsByParent.get(e.from)!.push(e.to);
+      }
+    });
+
+    const isDarkCanvas = theme === 'dark' || bgStyle !== '';
+    const halos: LotusHaloItem[] = [];
+
+    nodes.forEach((n) => {
+      if (n.id.includes('_sp_')) return;
+      const gen = n.genLevel ?? 0;
+      if (gen > 2 || n.lotusRole !== 'flower_center') return;
+
+      const clusterNodes: InteractiveNode[] = [n];
+      // Sertakan pasangan yg menempel di bunga
+      nodes.forEach((sp) => {
+        if (sp.id.startsWith(`${n.id}_sp_`)) clusterNodes.push(sp);
+      });
+
+      // Untuk bunga G3, bungkus seluruh kelopak G4 & G5+ di sekelilingnya dalam lingkaran air kolam
+      if (gen === 2) {
+        const g4Ids = childIdsByParent.get(n.id) || [];
+        g4Ids.forEach((g4Id) => {
+          const g4n = nodeMap.get(g4Id);
+          if (g4n) {
+            clusterNodes.push(g4n);
+            nodes.forEach((sp) => {
+              if (sp.id.startsWith(`${g4Id}_sp_`)) clusterNodes.push(sp);
+            });
+          }
+          const g5Ids = childIdsByParent.get(g4Id) || [];
+          g5Ids.forEach((g5Id) => {
+            const g5n = nodeMap.get(g5Id);
+            if (g5n) clusterNodes.push(g5n);
+            (childIdsByParent.get(g5Id) || []).forEach((g6Id) => {
+              const g6n = nodeMap.get(g6Id);
+              if (g6n) clusterNodes.push(g6n);
+            });
+          });
+        });
+      }
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      clusterNodes.forEach((cn) => {
+        const sz = getNodeSize(cn, cardDisplayMode, photoFrameSize, cardScale);
+        minX = Math.min(minX, cn.x);
+        minY = Math.min(minY, cn.y);
+        maxX = Math.max(maxX, cn.x + sz.w);
+        maxY = Math.max(maxY, cn.y + sz.h);
+      });
+      if (!Number.isFinite(minX)) return;
+      const pad = gen === 2 ? 18 : 14;
+      const cx = Math.round((minX + maxX) / 2);
+      const cy = Math.round((minY + maxY) / 2);
+      const rx = Math.round((maxX - minX) / 2 + pad);
+      const ry = Math.round((maxY - minY) / 2 + pad);
+      const col = gen === 0 ? '#fbbf24' : gen === 1 ? '#f472b6' : '#38bdf8';
+
+      halos.push({
+        id: `lotus-halo-${n.id}`,
+        cx,
+        cy,
+        rx,
+        ry,
+        stroke: hexWithAlpha(col, isDarkCanvas ? 0.34 : 0.42),
+        fill: hexWithAlpha(col, isDarkCanvas ? 0.04 : 0.06),
+      });
+    });
+
+    return halos;
+  }, [
+    activePresetId,
+    nodes,
+    edges,
+    nodeMap,
+    cardDisplayMode,
+    photoFrameSize,
+    cardScale,
     theme,
     bgStyle,
   ]);
@@ -7206,6 +7533,7 @@ export const InteractiveGridCanvasView: React.FC<
                   [
                     { id: 'name_only' as const, label: 'Nama' },
                     { id: 'photo_name' as const, label: 'Foto+Nama' },
+                    { id: 'photo_name_unified' as const, label: 'Menyatu' },
                     { id: 'full' as const, label: 'Lengkap' },
                   ] as const
                 ).map((m) => (
@@ -7540,7 +7868,8 @@ export const InteractiveGridCanvasView: React.FC<
                       >
                         <option value="name_only">1. Nama Lengkap Saja</option>
                         <option value="photo_name">2. Foto + Badge Nama</option>
-                        <option value="full">3. Foto + Badge Lengkap (Nama, Lahir/Wafat, Kota)</option>
+                        <option value="photo_name_unified">3. Foto + Nama Menyatu (Dalam Bentuk)</option>
+                        <option value="full">4. Foto + Badge Lengkap (Nama, Lahir/Wafat, Kota)</option>
                       </select>
                     </div>
 
@@ -8824,8 +9153,10 @@ export const InteractiveGridCanvasView: React.FC<
                           ? Disc
                           : preset.id === 'teratai_mekar'
                           ? Sparkles
-                          : preset.id === 'molekul_organik'
-                          ? GitFork
+                          : preset.id === 'sarang_lebah_turun'
+                          ? LayoutGrid
+                          : preset.id === 'sarang_lebah_pusat' || preset.id === 'molekul_organik'
+                          ? CircleDot
                           : preset.id === 'modular_g3_I' || preset.id === 'modular_g3_L'
                           ? Layers
                           : preset.id === 'hierarchy_grid_fill'
@@ -9732,6 +10063,8 @@ export const InteractiveGridCanvasView: React.FC<
                 nodes={nodes}
                 computedEdges={computedEdges}
                 treeSkeleton={treeSkeletonMemo}
+                lineageHulls={lineageHullsMemo}
+                lotusHalos={lotusHalosMemo}
                 selectedIds={selectedIds}
                 lineStyle={lineStyle}
                 lineThickness={lineThickness}
@@ -9746,6 +10079,40 @@ export const InteractiveGridCanvasView: React.FC<
                 isDark={isDark}
                 bgStyle={bgStyle}
               />
+
+              {/* Lapisan Pembatas Warna Bertingkat Sarang Lebah (G2 ⊃ G3 ⊃ G4) & Aura Kolam Teratai */}
+              {!useSnapshotOverview && (lineageHullsMemo.length > 0 || lotusHalosMemo.length > 0) && (
+                <svg
+                  width={boardWidth}
+                  height={boardHeight}
+                  className="absolute inset-0 pointer-events-none z-[2]"
+                >
+                  {lineageHullsMemo.map((hull) => (
+                    <path
+                      key={hull.id}
+                      d={hull.d}
+                      fill={hull.fill}
+                      stroke={hull.stroke}
+                      strokeWidth={hull.strokeWidth}
+                      strokeDasharray={hull.dash}
+                      strokeLinejoin="round"
+                    />
+                  ))}
+                  {lotusHalosMemo.map((halo) => (
+                    <ellipse
+                      key={halo.id}
+                      cx={halo.cx}
+                      cy={halo.cy}
+                      rx={halo.rx}
+                      ry={halo.ry}
+                      fill={halo.fill}
+                      stroke={halo.stroke}
+                      strokeWidth={1.5}
+                      strokeDasharray="5 5"
+                    />
+                  ))}
+                </svg>
+              )}
 
               {/* Lapisan Akar, Batang, Dahan & Ranting Pohon Besar (2 Lapis terpisah tegas + Bayangan) */}
               {!useSnapshotOverview && treeSkeletonMemo && (
@@ -11264,7 +11631,12 @@ export const InteractiveGridCanvasView: React.FC<
                     <button
                       type="button"
                       onClick={() => {
-                        const order: CardDisplayMode[] = ['name_only', 'photo_name', 'full'];
+                        const order: CardDisplayMode[] = [
+                          'name_only',
+                          'photo_name',
+                          'photo_name_unified',
+                          'full',
+                        ];
                         const next =
                           order[(order.indexOf(cardDisplayMode) + 1) % order.length];
                         applySmartLiveSetting({ cardMode: next });
@@ -11273,6 +11645,8 @@ export const InteractiveGridCanvasView: React.FC<
                             ? 'Kartu: Nama Saja'
                             : next === 'photo_name'
                             ? 'Kartu: Foto + Nama'
+                            : next === 'photo_name_unified'
+                            ? 'Kartu: Foto + Nama Menyatu'
                             : 'Kartu: Lengkap'
                         );
                       }}
@@ -11281,6 +11655,8 @@ export const InteractiveGridCanvasView: React.FC<
                           ? 'Nama Saja'
                           : cardDisplayMode === 'photo_name'
                           ? 'Foto + Nama'
+                          : cardDisplayMode === 'photo_name_unified'
+                          ? 'Foto + Nama Menyatu'
                           : 'Lengkap'
                       } (klik untuk ganti)`}
                       className="px-2 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 border border-stone-700 text-emerald-300 text-[10px] font-black flex items-center gap-1 shrink-0"
@@ -11289,6 +11665,8 @@ export const InteractiveGridCanvasView: React.FC<
                         <Type className="w-3.5 h-3.5" />
                       ) : cardDisplayMode === 'photo_name' ? (
                         <ImageIcon className="w-3.5 h-3.5" />
+                      ) : cardDisplayMode === 'photo_name_unified' ? (
+                        <Sparkles className="w-3.5 h-3.5" />
                       ) : (
                         <FileText className="w-3.5 h-3.5" />
                       )}
@@ -11297,6 +11675,8 @@ export const InteractiveGridCanvasView: React.FC<
                           ? 'Aa'
                           : cardDisplayMode === 'photo_name'
                           ? '🖼'
+                          : cardDisplayMode === 'photo_name_unified'
+                          ? '✦'
                           : '🪪'}
                       </span>
                     </button>
@@ -11527,8 +11907,11 @@ export const InteractiveGridCanvasView: React.FC<
                         ? '🌳'
                         : opt.preset.id === 'teratai_mekar'
                         ? '🪷'
-                        : opt.preset.id === 'molekul_organik'
-                        ? '⬡'
+                        : opt.preset.id === 'sarang_lebah_turun'
+                        ? '🍯'
+                        : opt.preset.id === 'sarang_lebah_pusat' ||
+                          opt.preset.id === 'molekul_organik'
+                        ? '🐝'
                         : opt.preset.id === 'modular_g3_I'
                         ? '◫'
                         : opt.preset.id === 'modular_g3_L'
@@ -12052,9 +12435,10 @@ export const InteractiveGridCanvasView: React.FC<
                   {(
                     [
                       { id: 'auto' as const, label: '✨ Otomatis Ideal' },
-                      { id: 'tree_organic' as const, label: '🌳 Pohon Hayat' },
-                      { id: 'lotus_mandala' as const, label: '🪷 Teratai Mekar' },
-                      { id: 'molecule_cluster' as const, label: '⬡ Molekul Organik' },
+                      { id: 'honeycomb_tier' as const, label: '🍯 Sarang Lebah Turun' },
+                      { id: 'honeycomb_radial' as const, label: '🐝 Sarang Lebah Pusat' },
+                      { id: 'lotus_mandala' as const, label: '🪷 Teratai Kolam' },
+                      { id: 'tree_organic' as const, label: '🌳 Pohon Hayat (Kunci)' },
                     ] as const
                   ).map((item) => (
                     <button
@@ -12081,16 +12465,16 @@ export const InteractiveGridCanvasView: React.FC<
                   type="text"
                   value={aiDesignPrompt}
                   onChange={(e) => setAiDesignPrompt(e.target.value)}
-                  placeholder="Contoh: Pohon beringin megah akar lebar, nuansa hijau emas..."
+                  placeholder="Contoh: Sarang lebah emas zamrud, kolam teratai kerajaan..."
                   maxLength={140}
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs outline-hidden focus:border-violet-400"
                 />
                 <div className="flex flex-wrap gap-1 mt-1.5">
                   {[
+                    'Sarang lebah emas & zamrud',
+                    'Sarang lebah pusat kerajaan',
+                    'Teratai kolam emas malam',
                     'Beringin rindang & seimbang',
-                    'Teratai kerajaan emas malam',
-                    'Molekul biru neon modern',
-                    'Nuansa klasik kayu hangat',
                   ].map((chip) => (
                     <button
                       key={chip}
