@@ -752,10 +752,10 @@ export const StorePreviewView: React.FC<StorePreviewViewProps> = ({
             <div className="p-4 rounded-2xl border border-slate-200 space-y-2.5 text-xs text-slate-600">
               <div className="font-bold text-slate-900">Catatan Rilis Resmi</div>
               <ul className="space-y-2 leading-relaxed">
-                <li>• Sesi tunggal aktif APK vs PWA (login di satu wadah menutup sesi lama di wadah lain).</li>
-                <li>• Sinkronisasi data akun APK ↔ PWA lebih cepat dengan server relay bersama.</li>
-                <li>• Sistem timpa APK (in-place update) memakai kunci penandatanganan tetap + pengunduh pembaruan bawaan.</li>
-                <li>• Alur 3 langkah NasabQu (Ajukan → Admin Approve → Tarik Pembaruan) terisolasi per modul.</li>
+                <li>• NasabQu Smart Grid: Sarang Lebah Dual Mode (Turun &amp; Pusat) dengan batas warna generasi bertingkat serta Teratai Mekar Multi-Bunga.</li>
+                <li>• Opsi Card Baru (Foto &amp; Nama Menyatu), Cetak PDF Full-Color A0–A4, &amp; AI Peracik Blueprint Silsilah.</li>
+                <li>• Sesi tunggal aktif APK vs PWA + sinkronisasi data lebih cepat lewat server relay bersama.</li>
+                <li>• Sistem timpa APK (in-place update) otomatis via rilis GitHub terbaru tanpa uninstall.</li>
               </ul>
             </div>
           </aside>

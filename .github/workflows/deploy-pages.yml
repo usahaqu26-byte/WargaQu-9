@@ -21,10 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 1. Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 2. Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: 'npm'
@@ -37,7 +37,8 @@ jobs:
         env:
           VITE_GITHUB_REPO: ${{ github.repository }}
         run: |
-          npm run build
+          APP_VER=$(node -e "console.log((require('./package.json').version || '1.6.0').trim())")
+          VITE_APP_VERSION="${APP_VER}" npm run build
           rm -rf dist/assets/aistudio
           touch dist/.nojekyll
           cp dist/index.html dist/404.html
@@ -47,10 +48,10 @@ jobs:
           ls -la dist/
 
       - name: 5. Configure GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: 6. Upload Pages Artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: './dist'
           retention-days: 1
@@ -68,4 +69,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

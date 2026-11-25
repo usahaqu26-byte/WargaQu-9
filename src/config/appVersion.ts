@@ -4,11 +4,11 @@ const RUNTIME_ENV =
 const ENV_APP_VERSION = (RUNTIME_ENV.VITE_APP_VERSION || '').trim();
 const ENV_APP_VERSION_CODE = Number(RUNTIME_ENV.VITE_APP_VERSION_CODE || 0);
 
-export const APP_VERSION = ENV_APP_VERSION || '1.5.9';
+export const APP_VERSION = ENV_APP_VERSION || '1.6.0';
 export const APP_VERSION_CODE =
   Number.isFinite(ENV_APP_VERSION_CODE) && ENV_APP_VERSION_CODE > 0
     ? Math.floor(ENV_APP_VERSION_CODE)
-    : 4;
+    : 5;
 export const APP_BUILD_LABEL = `v${APP_VERSION} (Build ${APP_VERSION_CODE})`;
 
 export const GITHUB_REPO_STORAGE_KEY = 'wargaqu_github_repo_slug_v1';

@@ -898,7 +898,7 @@ ATURAN BLUEPRINT:
     const diagSummary = rawDiag
       ? [
           `Wadah: ${String(rawDiag.container || 'pwa').toUpperCase()}`,
-          `Versi App: ${String(rawDiag.appVersion || '1.5.9').slice(0, 24)}`,
+          `Versi App: ${String(rawDiag.appVersion || '1.6.0').slice(0, 24)}`,
           `Jaringan: ${rawDiag.online === false ? 'Offline' : 'Online'}`,
           `Relay Realtime: ${String(rawDiag.relayStatus || 'unknown').slice(0, 24)}`,
           `Penyimpanan Lokal: ${Math.max(0, Number(rawDiag.storagePct || 0))}% (${Math.max(0, Number(rawDiag.storageUsedKb || 0))} KB)`,
@@ -941,7 +941,7 @@ PENGETAHUAN NYATA MODUL WARGAQU:
 7. Akun, Sesi Tunggal APK vs PWA & Cadangan:
    - Hanya 1 sesi aktif terbaru yang berlaku per akun (jika login di APK, sesi lama PWA otomatis ditutup dan sebaliknya).
    - Gunakan login Akun (Email + No HP) atau ekspor/impor file cadangan terenkripsi (.wqbak) serta transfer 1-ketuk PWA -> APK untuk sinkronisasi aman tanpa database pusat.
-   - Update APK mendukung pengecekan versi rilis (v1.5.9+) & pasang timpa langsung tanpa uninstall jika izin "Pasang aplikasi tak dikenal" aktif.
+   - Update APK mendukung pengecekan versi rilis (v1.6.0+) & pasang timpa langsung tanpa uninstall jika izin "Pasang aplikasi tak dikenal" aktif.
 
 ATURAN MENJAWAB:
 - Jawab dalam bahasa Indonesia yang ramah, ringkas, praktis, dan jujur berdasarkan fitur WargaQu di atas (JANGAN mengarang tombol atau menu yang tidak ada).
@@ -2600,8 +2600,8 @@ Tuliskan draf balasan langsung yang siap dikirim Admin ke pelapor di field "repl
   });
 
   // Lightweight App Version & GitHub Release Discovery Endpoint (no private data)
-  const SERVER_APP_VERSION = '1.5.9';
-  const SERVER_APP_VERSION_CODE = 4;
+  const SERVER_APP_VERSION = '1.6.0';
+  const SERVER_APP_VERSION_CODE = 5;
   const cachedGithubReleases = new Map<
     string,
     {
@@ -2643,9 +2643,9 @@ Tuliskan draf balasan langsung yang siap dikirim Admin ke pelapor di field "repl
     let apkDownloadUrl = String(process.env.WARGAQU_APK_URL || '').trim();
     let releasePageUrl = validRepo ? `https://github.com/${validRepo}/releases/latest` : '';
     const changelog = [
-      'Auto-Release APK monotonik dengan Build # unik & pembaruan rilis --latest otomatis',
-      'Kontrol Sesi Tunggal APK vs PWA & pasang timpa langsung tanpa uninstall',
-      'NasabQu Smart Grid: Teratai Mekar, Molekul Organik, & Pohon Cemara Bertingkat',
+      'NasabQu Smart Grid: Sarang Lebah Dual Mode (Batas Warna Generasi) & Teratai Mekar Multi-Bunga',
+      'Opsi Card Foto & Nama Menyatu serta AI Peracik Blueprint Silsilah & Cetak A0–A4 Full-Color',
+      'Auto-Release APK monotonik dengan Build # unik, pasang timpa langsung & sinkronisasi APK-PWA',
     ];
 
     if (validRepo) {

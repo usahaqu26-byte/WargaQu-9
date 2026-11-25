@@ -7,8 +7,8 @@ android {
         applicationId "com.wargaqu.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        def resolvedVersionCode = (project.findProperty("versionCodeProp") ?: System.getenv("WARGAQU_VERSION_CODE") ?: "4").toInteger()
-        def resolvedVersionName = (project.findProperty("versionNameProp") ?: System.getenv("WARGAQU_VERSION_NAME") ?: "1.5.9").toString()
+        def resolvedVersionCode = (project.findProperty("versionCodeProp") ?: System.getenv("WARGAQU_VERSION_CODE") ?: "5").toInteger()
+        def resolvedVersionName = (project.findProperty("versionNameProp") ?: System.getenv("WARGAQU_VERSION_NAME") ?: "1.6.0").toString()
         versionCode resolvedVersionCode
         versionName resolvedVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"

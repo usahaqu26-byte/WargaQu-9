@@ -131,7 +131,7 @@ public class AppUpdaterPlugin extends Plugin {
                     conn.setInstanceFollowRedirects(false);
                     conn.setConnectTimeout(15000);
                     conn.setReadTimeout(45000);
-                    conn.setRequestProperty("User-Agent", "WargaQu-Android-Updater/1.5.8");
+                    conn.setRequestProperty("User-Agent", "WargaQu-Android-Updater/1.6.0");
                     conn.connect();
 
                     int code = conn.getResponseCode();
