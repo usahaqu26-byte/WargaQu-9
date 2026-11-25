@@ -453,79 +453,50 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
         </div>
       )}
 
-      {/* Bingkai Sarang Lebah Segi Enam + Cincin Pembatas Warna Bertingkat G2 ⊃ G3 ⊃ G4 */}
+      {/* Bingkai Sarang Lebah Segi Enam Presisi */}
       {useHexFrame && (
         <div
           aria-hidden="true"
-          className={`pointer-events-none absolute -inset-[5%] z-0 flex items-center justify-center ${
+          className={`pointer-events-none absolute inset-0 z-0 flex items-center justify-center ${
             node.wafat ? 'opacity-85' : ''
           }`}
         >
           <svg
-            viewBox="0 0 120 132"
+            viewBox="0 0 120 138"
             preserveAspectRatio="none"
-            className="w-full h-full drop-shadow-md overflow-visible"
+            className="w-full h-full drop-shadow-sm overflow-visible"
           >
-            {node.lineageG2Color && (
-              <polygon
-                points="60,0 117,33 117,99 60,132 3,99 3,33"
-                fill="none"
-                stroke={node.lineageG2Color}
-                strokeWidth={isSelected || isUnlocked ? 3.2 : 2.3}
-                strokeLinejoin="round"
-                opacity={0.92}
-              />
-            )}
             <polygon
-              points="60,4 113,34.5 113,97.5 60,128 7,97.5 7,34.5"
+              points="60,2 117,35.5 117,102.5 60,136 3,102.5 3,35.5"
               fill={hexFillCol}
               stroke={hexStrokeCol}
               strokeWidth={
-                isSelected || isUnlocked ? 4.2 : hexIsCore ? 3.4 : 2.3
+                isSelected || isUnlocked ? 4.4 : hexIsCore ? 3.6 : 2.5
               }
               strokeLinejoin="round"
               strokeDasharray={node.wafat ? '6 4' : undefined}
             />
-            {node.lineageG4Color ? (
-              <polygon
-                points="60,10 107,37 107,95 60,122 13,95 13,37"
-                fill="none"
-                stroke={node.lineageG4Color}
-                strokeWidth={1.35}
-                strokeLinejoin="round"
-                opacity={0.88}
-              />
-            ) : (
-              <polygon
-                points="60,10 107,37 107,95 60,122 13,95 13,37"
-                fill="none"
-                stroke={hexStrokeCol}
-                strokeWidth={hexIsCore ? 1.5 : 0.9}
-                strokeDasharray="3 4"
-                opacity={hexIsCore ? 0.65 : 0.35}
-              />
-            )}
+            <polygon
+              points="60,9 111,38.5 111,99.5 60,129 9,99.5 9,38.5"
+              fill="none"
+              stroke={hexStrokeCol}
+              strokeWidth={hexIsCore ? 1.4 : 0.85}
+              opacity={hexIsCore ? 0.5 : 0.25}
+            />
           </svg>
         </div>
       )}
 
-      {/* Bingkai Teratai Kolam: G1/G2/G3 Pusat Bunga Rosette / G4–G5 Kelopak Teratai (Foto & Nama tetap 0°) */}
+      {/* Bingkai Teratai Kolam: G1/G2/G3 Bintang Bunga Teratai Mekar / G4–G5 Daun Bulat Hijau */}
       {usePetalFrame && (
         <div
           aria-hidden="true"
-          style={
-            isFlowerCenter
-              ? undefined
-              : {
-                  transform: `rotate(${leafAngleDeg}deg)`,
-                }
-          }
           className={`pointer-events-none absolute ${
             isFlowerCenter
               ? petalIsStamen
-                ? '-inset-[16%]'
-                : '-inset-[13%]'
-              : '-inset-[18%]'
+                ? '-inset-[18%]'
+                : '-inset-[15%]'
+              : '-inset-[4%]'
           } z-0 flex items-center justify-center ${
             node.wafat ? 'opacity-85' : ''
           }`}
@@ -534,67 +505,50 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
             <svg
               viewBox="0 0 140 140"
               preserveAspectRatio="none"
-              className="w-full h-full drop-shadow-lg overflow-visible"
+              className="w-full h-full drop-shadow-md overflow-visible"
             >
-              {/* Mahkota Bunga Teratai Mekar (untuk Pusat Bunga G1, G2, & G3) */}
+              {/* Mahkota Bunga Teratai 14 Kelopak Runcing Simetris (seperti Mandala Teratai) */}
               <path
-                d="M 70 4 C 77 16, 86 14, 96 10 C 97 22, 106 25, 117 26 C 112 37, 118 45, 130 50 C 120 58, 121 68, 134 75 C 121 82, 120 92, 130 100 C 118 105, 112 113, 117 124 C 106 125, 97 128, 96 136 C 86 130, 77 129, 70 138 C 63 129, 54 130, 44 136 C 43 128, 34 125, 23 124 C 28 113, 22 105, 10 100 C 20 92, 19 82, 6 75 C 19 68, 20 58, 10 50 C 22 45, 28 37, 23 26 C 34 25, 43 22, 44 10 C 54 14, 63 16, 70 4 Z"
-                fill={petalFillPrimary}
+                d="M 70 2 L 79 18 L 96 7 L 97 25 L 116 21 L 110 39 L 130 42 L 117 57 L 136 68 L 119 77 L 131 94 L 112 97 L 118 115 L 99 112 L 97 130 L 81 120 L 70 138 L 59 120 L 43 130 L 41 112 L 22 115 L 28 97 L 9 94 L 21 77 L 4 68 L 23 57 L 10 42 L 30 39 L 24 21 L 43 25 L 44 7 L 61 18 Z"
+                fill={isCardLight ? hexWithAlpha(petalStrokeCol, 0.22) : petalFillPrimary}
                 stroke={petalStrokeCol}
-                strokeWidth={isSelected || isUnlocked ? 4 : 2.6}
+                strokeWidth={isSelected || isUnlocked ? 3.8 : 2.3}
                 strokeLinejoin="round"
                 strokeDasharray={node.wafat ? '6 4' : undefined}
               />
               <circle
                 cx="70"
                 cy="70"
-                r="52"
-                fill={petalFillShade}
-                stroke={petalRibCol}
+                r="47"
+                fill={isCardLight ? '#ffffff' : petalFillShade}
+                stroke={petalStrokeCol}
                 strokeWidth={1.6}
-                strokeDasharray="4 4"
-                opacity={0.92}
+                opacity={0.96}
               />
             </svg>
           ) : (
             <svg
-              viewBox="0 0 120 160"
+              viewBox="0 0 120 120"
               preserveAspectRatio="none"
-              className="w-full h-full drop-shadow-md overflow-visible"
+              className="w-full h-full drop-shadow-sm overflow-visible"
             >
-              {/* Lapisan kelopak belakang tipis (efek kelopak ganda teratai mekar) */}
-              <path
-                d="M 60 2 C 26 30, 8 78, 22 126 C 32 146, 48 153, 60 153 C 72 153, 88 146, 98 126 C 112 78, 94 30, 60 2 Z"
-                fill={petalFillShade}
-                opacity={0.48}
-              />
-              {/* Belahan kiri kelopak teratai utama */}
-              <path
-                d="M 60 6 C 20 40, 10 92, 28 134 C 38 148, 52 152, 60 151 Z"
+              {/* Daun / Kelopak Teratai Bulat Hijau */}
+              <circle
+                cx="60"
+                cy="60"
+                r="56"
                 fill={petalFillPrimary}
-              />
-              {/* Belahan kanan kelopak untuk dimensi cahaya */}
-              <path
-                d="M 60 6 C 100 40, 110 92, 92 134 C 82 148, 68 152, 60 151 Z"
-                fill={petalFillShade}
-                opacity={effectiveBg ? 0.9 : 1}
-              />
-              {/* Garis tepi luar kelopak teratai */}
-              <path
-                d="M 60 6 C 100 40, 110 92, 92 134 C 82 148, 68 152, 60 151 C 52 152, 38 148, 28 134 C 10 92, 20 40, 60 6 Z"
-                fill="none"
                 stroke={petalStrokeCol}
-                strokeWidth={isSelected || isUnlocked ? 4.2 : 2.1}
+                strokeWidth={isSelected || isUnlocked ? 4.2 : 2.2}
                 strokeDasharray={node.wafat ? '6 4' : undefined}
               />
-              {/* Guratan urat kelopak teratai halus melengkung */}
-              <path
-                d="M 60 149 L 60 18 M 60 132 Q 35 94 42 42 M 60 132 Q 85 94 78 42"
+              <circle
+                cx="60"
+                cy="60"
+                r="48"
                 fill="none"
-                stroke={petalRibCol}
-                strokeWidth={1.4}
-                strokeLinecap="round"
-                opacity={0.56}
+                stroke={isCardLight ? 'rgba(6,78,59,0.24)' : 'rgba(255,255,255,0.3)'}
+                strokeWidth={1.1}
               />
             </svg>
           )}
@@ -1081,8 +1035,8 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
               return (
                 <div
                   style={{
-                    width: `${Math.max(40, size.w - 4)}px`,
-                    height: `${Math.max(46, size.h - 4)}px`,
+                    width: `${Math.max(40, size.w - 6)}px`,
+                    height: `${Math.max(46, size.h - 6)}px`,
                     clipPath: HEXAGON_CLIP_PATH,
                   }}
                   className="relative z-10 overflow-hidden flex items-center justify-center"
@@ -1097,13 +1051,17 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
                   ) : (
                     <div
                       style={{
-                        background: `radial-gradient(circle at 50% 35%, ${hexFillCol}, #020617 95%)`,
+                        background: isCardLight
+                          ? `radial-gradient(circle at 50% 35%, ${hexFillCol}, ${hexWithAlpha(hexStrokeCol, 0.2)} 96%)`
+                          : `radial-gradient(circle at 50% 35%, ${hexFillCol}, #020617 95%)`,
                       }}
                       className="w-full h-full flex items-center justify-center pb-[20%]"
                     >
                       <span
                         style={{ fontSize: `${initialsFontPx}px` }}
-                        className="font-black text-amber-300/95 tracking-tight drop-shadow-sm"
+                        className={`font-black tracking-tight drop-shadow-xs ${
+                          isCardLight ? 'text-slate-900' : 'text-amber-300/95'
+                        }`}
                       >
                         {getInitials(node.name)}
                       </span>
@@ -1134,13 +1092,11 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
               return (
                 <div
                   style={{
-                    width: `${Math.max(38, size.w - 6)}px`,
-                    height: `${Math.max(38, size.h - 6)}px`,
+                    width: `${Math.max(36, size.w - 6)}px`,
+                    height: `${Math.max(36, size.h - 6)}px`,
                     borderColor: petalStrokeCol,
                   }}
-                  className={`relative z-10 overflow-hidden border-[1.5px] flex items-center justify-center shadow-sm ${
-                    isFlowerCenter ? 'rounded-full' : 'rounded-[44%]'
-                  }`}
+                  className="relative z-10 overflow-hidden rounded-full border-[1.5px] flex items-center justify-center shadow-sm"
                 >
                   {resolvedUnifiedPhoto ? (
                     <img
@@ -1152,13 +1108,17 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
                   ) : (
                     <div
                       style={{
-                        background: `radial-gradient(circle at 50% 35%, ${petalFillPrimary}, ${petalFillShade} 95%)`,
+                        background: isCardLight
+                          ? `radial-gradient(circle at 50% 35%, #ffffff, ${hexWithAlpha(petalStrokeCol, 0.28)} 95%)`
+                          : `radial-gradient(circle at 50% 35%, ${petalFillPrimary}, ${petalFillShade} 95%)`,
                       }}
                       className="w-full h-full flex items-center justify-center pb-[20%]"
                     >
                       <span
                         style={{ fontSize: `${initialsFontPx}px` }}
-                        className="font-black text-amber-200 tracking-tight drop-shadow-sm"
+                        className={`font-black tracking-tight drop-shadow-xs ${
+                          isCardLight ? 'text-slate-900' : 'text-amber-200'
+                        }`}
                       >
                         {getInitials(node.name)}
                       </span>

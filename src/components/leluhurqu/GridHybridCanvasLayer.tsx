@@ -91,7 +91,7 @@ export interface LineageHullItem {
   stroke: string;
   strokeWidth: number;
   dash?: string;
-  level: 2 | 3 | 4;
+  level: 1 | 2 | 3 | 4;
 }
 
 export interface LotusHaloItem {
@@ -102,6 +102,8 @@ export interface LotusHaloItem {
   ry: number;
   stroke: string;
   fill: string;
+  strokeWidth?: number;
+  solid?: boolean;
 }
 
 interface GridHybridSnapshotCanvasProps {
@@ -281,14 +283,16 @@ export const GridHybridSnapshotCanvas: React.FC<
           });
         }
 
-        // 0B. Pembatas Warna Bertingkat Sarang Lebah (G2 ⊃ G3 ⊃ G4) & Aura Kolam Teratai
+        // 0B. Pembatas Warna Celah Terhubung Sarang Lebah & Aura Kolam Teratai
         if (lineageHulls && lineageHulls.length > 0) {
           lineageHulls.forEach((hull) => {
             try {
               const p = new Path2D(hull.d);
               ctx.save();
-              ctx.fillStyle = hull.fill;
-              ctx.fill(p);
+              if (hull.fill && hull.fill !== 'none') {
+                ctx.fillStyle = hull.fill;
+                ctx.fill(p);
+              }
               ctx.strokeStyle = hull.stroke;
               ctx.lineWidth = hull.strokeWidth;
               if (hull.dash) {
@@ -298,6 +302,7 @@ export const GridHybridSnapshotCanvas: React.FC<
                   .filter((v) => !Number.isNaN(v) && v > 0);
                 if (parts.length > 0) ctx.setLineDash(parts);
               }
+              ctx.lineCap = 'round';
               ctx.lineJoin = 'round';
               ctx.stroke(p);
               ctx.restore();
@@ -312,11 +317,13 @@ export const GridHybridSnapshotCanvas: React.FC<
             ctx.save();
             ctx.beginPath();
             ctx.ellipse(halo.cx, halo.cy, halo.rx, halo.ry, 0, 0, Math.PI * 2);
-            ctx.fillStyle = halo.fill;
-            ctx.fill();
+            if (halo.fill && halo.fill !== 'none' && halo.fill !== 'transparent') {
+              ctx.fillStyle = halo.fill;
+              ctx.fill();
+            }
             ctx.strokeStyle = halo.stroke;
-            ctx.lineWidth = 1.5;
-            ctx.setLineDash([5, 5]);
+            ctx.lineWidth = halo.strokeWidth ?? 1.4;
+            if (!halo.solid) ctx.setLineDash([5, 5]);
             ctx.stroke();
             ctx.restore();
           });
@@ -814,8 +821,8 @@ export const GridHybridSnapshotCanvas: React.FC<
           if (useHexFrame) {
             const cx = node.x + size.w / 2;
             const cy = node.y + size.h / 2;
-            const hw = size.w * 0.54;
-            const hh = size.h * 0.54;
+            const hw = size.w * 0.5;
+            const hh = size.h * 0.5;
             const hexBorderCol = selectedSet.has(node.id)
               ? '#f59e0b'
               : effectiveBorder || (isDark ? '#38bdf8' : '#0284c7');
@@ -831,19 +838,10 @@ export const GridHybridSnapshotCanvas: React.FC<
               ctx.closePath();
             };
 
-            if (node.lineageG2Color) {
-              ctx.save();
-              buildHexPath(hw * 1.045, hh * 1.045);
-              ctx.strokeStyle = node.lineageG2Color;
-              ctx.lineWidth = selectedSet.has(node.id) ? 3.2 : 2.1;
-              ctx.stroke();
-              ctx.restore();
-            }
-
             ctx.save();
-            ctx.shadowColor = 'rgba(0,0,0,0.3)';
-            ctx.shadowBlur = 7;
-            ctx.shadowOffsetY = 3;
+            ctx.shadowColor = isDark ? 'rgba(0,0,0,0.35)' : 'rgba(15,23,42,0.12)';
+            ctx.shadowBlur = 5;
+            ctx.shadowOffsetY = 2;
             buildHexPath(hw, hh);
             ctx.fillStyle = fillCol;
             ctx.fill();
@@ -852,21 +850,12 @@ export const GridHybridSnapshotCanvas: React.FC<
               ? 3.2
               : (node.genLevel ?? 0) === 0
               ? 2.8
-              : 2.0;
+              : 2.1;
             if (node.wafat) ctx.setLineDash([5, 3]);
             ctx.strokeStyle = hexBorderCol;
             ctx.stroke();
             ctx.setLineDash([]);
             ctx.restore();
-
-            if (node.lineageG4Color) {
-              ctx.save();
-              buildHexPath(hw * 0.91, hh * 0.91);
-              ctx.strokeStyle = node.lineageG4Color;
-              ctx.lineWidth = 1.25;
-              ctx.stroke();
-              ctx.restore();
-            }
 
             if (cardDisplayMode === 'name_only') {
               ctx.fillStyle = isDark
@@ -983,96 +972,58 @@ export const GridHybridSnapshotCanvas: React.FC<
 
             ctx.save();
             ctx.translate(cx, cy);
-            if (!isFlowerCenter) ctx.rotate(angleRad);
-            ctx.shadowColor = 'rgba(0,0,0,0.3)';
-            ctx.shadowBlur = 7;
-            ctx.shadowOffsetY = 3;
+            ctx.shadowColor = isDark ? 'rgba(0,0,0,0.3)' : 'rgba(15,23,42,0.14)';
+            ctx.shadowBlur = 6;
+            ctx.shadowOffsetY = 2;
 
             if (isFlowerCenter) {
-              const r = Math.max(size.w, size.h) * (pGen === 0 ? 0.64 : 0.6);
+              const r = Math.max(size.w, size.h) * (pGen === 0 ? 0.65 : 0.61);
+              const outerRingCol = petalStrokeCol;
+              const innerCoreFill = isCardLight ? '#ffffff' : petalFillCol;
               ctx.beginPath();
-              for (let k = 0; k < 24; k++) {
-                const a = (k * Math.PI * 2) / 24;
-                const rad = k % 2 === 0 ? r * 1.06 : r * 0.88;
+              for (let k = 0; k < 28; k++) {
+                const a = (k * Math.PI * 2) / 28 - Math.PI / 2;
+                const rad = k % 2 === 0 ? r * 1.08 : r * 0.82;
                 const px = Math.cos(a) * rad;
                 const py = Math.sin(a) * rad;
                 if (k === 0) ctx.moveTo(px, py);
                 else ctx.lineTo(px, py);
               }
               ctx.closePath();
-              ctx.fillStyle = petalFillCol;
+              ctx.fillStyle = isCardLight ? hexWithAlpha(outerRingCol, 0.24) : petalFillCol;
               ctx.fill();
               ctx.shadowBlur = 0;
-              ctx.lineWidth = selectedSet.has(node.id) ? 3.2 : 2.2;
-              ctx.strokeStyle = petalStrokeCol;
+              ctx.lineWidth = selectedSet.has(node.id) ? 3.2 : 2.1;
+              ctx.strokeStyle = outerRingCol;
+              ctx.stroke();
+
+              // Inti lingkaran bersih bunga teratai
+              ctx.beginPath();
+              ctx.arc(0, 0, Math.min(size.w, size.h) * 0.48, 0, Math.PI * 2);
+              ctx.fillStyle = innerCoreFill;
+              ctx.fill();
+              ctx.strokeStyle = outerRingCol;
+              ctx.lineWidth = 1.4;
               ctx.stroke();
             } else {
-              // Kelopak belakang lembut (efek kelopak ganda)
-              ctx.save();
-              ctx.globalAlpha = 0.42;
+              // Daun / Kelopak Bulat Teratai (G4 hijau zamrud & G5 hijau muda)
+              const rx = Math.max(size.w, size.h) * 0.51;
               ctx.beginPath();
-              ctx.moveTo(0, -petalH * 0.58);
-              ctx.bezierCurveTo(
-                petalW * 0.56,
-                -petalH * 0.26,
-                petalW * 0.6,
-                petalH * 0.28,
-                petalW * 0.22,
-                petalH * 0.48
-              );
-              ctx.quadraticCurveTo(0, petalH * 0.56, -petalW * 0.22, petalH * 0.48);
-              ctx.bezierCurveTo(
-                -petalW * 0.6,
-                petalH * 0.28,
-                -petalW * 0.56,
-                -petalH * 0.26,
-                0,
-                -petalH * 0.58
-              );
-              ctx.closePath();
-              ctx.fillStyle = petalFillCol;
-              ctx.fill();
-              ctx.restore();
-
-              // Kelopak utama teratai mekar
-              ctx.beginPath();
-              ctx.moveTo(0, -petalH * 0.55);
-              ctx.bezierCurveTo(
-                petalW * 0.48,
-                -petalH * 0.24,
-                petalW * 0.54,
-                petalH * 0.26,
-                petalW * 0.24,
-                petalH * 0.47
-              );
-              ctx.quadraticCurveTo(0, petalH * 0.54, -petalW * 0.24, petalH * 0.47);
-              ctx.bezierCurveTo(
-                -petalW * 0.54,
-                petalH * 0.26,
-                -petalW * 0.48,
-                -petalH * 0.24,
-                0,
-                -petalH * 0.55
-              );
-              ctx.closePath();
+              ctx.arc(0, 0, rx, 0, Math.PI * 2);
               ctx.fillStyle = petalFillCol;
               ctx.fill();
               ctx.shadowBlur = 0;
-              ctx.lineWidth = selectedSet.has(node.id) ? 3.2 : 1.9;
+              ctx.lineWidth = selectedSet.has(node.id) ? 3.0 : 1.9;
               if (node.wafat) ctx.setLineDash([5, 3]);
               ctx.strokeStyle = petalStrokeCol;
               ctx.stroke();
               ctx.setLineDash([]);
 
-              // Urat kelopak halus
               ctx.beginPath();
-              ctx.moveTo(0, petalH * 0.48);
-              ctx.lineTo(0, -petalH * 0.44);
-              ctx.strokeStyle = petalStrokeCol;
-              ctx.globalAlpha = 0.45;
-              ctx.lineWidth = 1.2;
+              ctx.arc(0, 0, rx * 0.86, 0, Math.PI * 2);
+              ctx.strokeStyle = isCardLight ? 'rgba(6,78,59,0.22)' : 'rgba(255,255,255,0.28)';
+              ctx.lineWidth = 1;
               ctx.stroke();
-              ctx.globalAlpha = 1;
             }
             ctx.restore();
 

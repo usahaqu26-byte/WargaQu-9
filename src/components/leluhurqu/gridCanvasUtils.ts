@@ -187,6 +187,23 @@ export function getNodeSize(
     return { w: m.w, h: m.h };
   }
 
+  const pDim = PHOTO_DIMENSIONS[photoSize] || PHOTO_DIMENSIONS['3x4'];
+
+  if (node.cardShape === 'hex') {
+    if (displayMode === 'photo_name_unified') {
+      const w = Math.max(54, Math.round(Math.max(pDim.w + 18, 74) * effScale));
+      const h = Math.max(62, Math.round(w * 1.15));
+      return { w, h };
+    }
+    if (displayMode === 'name_only') {
+      const w = Math.max(66, Math.round(88 * effScale));
+      const h = Math.max(76, Math.round(w * 1.15));
+      return { w, h };
+    }
+    const u = getUniformSubCardSize(displayMode, photoSize, effScale);
+    return { w: u.w, h: Math.max(u.h, Math.round(u.w * 1.15)) };
+  }
+
   if (
     node.modularSubLayout === 'I' ||
     node.modularSubLayout === 'L' ||
@@ -196,19 +213,12 @@ export function getNodeSize(
     return { w: u.w, h: u.h };
   }
 
-  const pDim = PHOTO_DIMENSIONS[photoSize] || PHOTO_DIMENSIONS['3x4'];
-
   if (displayMode === 'photo_name') {
     const u = getUniformSubCardSize(displayMode, photoSize, effScale);
     return { w: u.w, h: u.h };
   }
 
   if (displayMode === 'photo_name_unified') {
-    if (node.cardShape === 'hex') {
-      const w = Math.max(54, Math.round(Math.max(pDim.w + 18, 74) * effScale));
-      const h = Math.max(62, Math.round(w * 1.14));
-      return { w, h };
-    }
     const u = getUniformSubCardSize(displayMode, photoSize, effScale);
     return { w: u.w, h: u.h };
   }

@@ -198,6 +198,10 @@ export interface InteractiveNode {
   scaleMultiplier?: number;
   cardShape?: 'rect' | 'leaf' | 'hex' | 'petal';
   lotusRole?: 'flower_center' | 'petal_inner' | 'petal_outer';
+  hexCol?: number;
+  hexRow?: number;
+  hexGap?: number;
+  hexTier?: 'g1' | 'g2' | 'g3' | 'g4plus';
   lineageG2Id?: string;
   lineageG2Color?: string;
   lineageG3Id?: string;
@@ -589,6 +593,23 @@ function getNodeSize(
     return { w: m.w, h: m.h };
   }
 
+  const pDim = PHOTO_DIMENSIONS[photoSize] || PHOTO_DIMENSIONS['3x4'];
+
+  if (node.cardShape === 'hex') {
+    if (displayMode === 'photo_name_unified') {
+      const w = Math.max(54, Math.round(Math.max(pDim.w + 18, 74) * effScale));
+      const h = Math.max(62, Math.round(w * 1.15));
+      return { w, h };
+    }
+    if (displayMode === 'name_only') {
+      const w = Math.max(66, Math.round(88 * effScale));
+      const h = Math.max(76, Math.round(w * 1.15));
+      return { w, h };
+    }
+    const u = getUniformSubCardSize(displayMode, photoSize, effScale);
+    return { w: u.w, h: Math.max(u.h, Math.round(u.w * 1.15)) };
+  }
+
   if (
     node.modularSubLayout === 'I' ||
     node.modularSubLayout === 'L' ||
@@ -598,19 +619,12 @@ function getNodeSize(
     return { w: u.w, h: u.h };
   }
 
-  const pDim = PHOTO_DIMENSIONS[photoSize] || PHOTO_DIMENSIONS['3x4'];
-
   if (displayMode === 'photo_name') {
     const u = getUniformSubCardSize(displayMode, photoSize, effScale);
     return { w: u.w, h: u.h };
   }
 
   if (displayMode === 'photo_name_unified') {
-    if (node.cardShape === 'hex') {
-      const w = Math.max(54, Math.round(Math.max(pDim.w + 18, 74) * effScale));
-      const h = Math.max(62, Math.round(w * 1.14));
-      return { w, h };
-    }
     const u = getUniformSubCardSize(displayMode, photoSize, effScale);
     return { w: u.w, h: u.h };
   }
@@ -4111,7 +4125,7 @@ export const InteractiveGridCanvasView: React.FC<
         setGenGradientPalette('lotus_blossom');
         setLinesOnTop(false);
         setShowLineArrows(false);
-        setShowEndpointDots(true);
+        setShowEndpointDots(false);
         nextCardMode = 'photo_name_unified';
         nextPhotoSize = 'bulat';
         setCardDisplayMode(nextCardMode);
@@ -6539,6 +6553,10 @@ export const InteractiveGridCanvasView: React.FC<
             endW = sibW;
           }
         }
+        if (activePresetId === 'teratai_mekar') {
+          startW = Math.min(startW, 1.5);
+          endW = Math.min(endW, 1.5);
+        }
         const avgStrokeWidth = Math.round(((startW + endW) / 2) * 10) / 10;
 
         const routePts =
@@ -6650,13 +6668,457 @@ export const InteractiveGridCanvasView: React.FC<
     bgStyle,
   ]);
 
-  // Pembatas Warna Bertingkat Sarang Lebah (G2 ⊃ G3 ⊃ G4 ⊃ G5) sebagai pengganti garis konektor
+  // Pembatas Warna Celah Terhubung Sarang Lebah (Kisi Voronoi G1->G2->G3 & Sekat G4–G5)
   const lineageHullsMemo = useMemo<LineageHullItem[]>(() => {
     const isHive =
       activePresetId === 'sarang_lebah_turun' ||
       activePresetId === 'sarang_lebah_pusat' ||
       activePresetId === 'molekul_organik';
     if (!isHive && !nodes.some((n) => n.lineageG2Id)) return [];
+
+    const isDarkCanvas = theme === 'dark' || bgStyle !== '';
+    const hexLatticeNodes = nodes.filter(
+      (n) =>
+        n.cardShape === 'hex' &&
+        typeof n.hexCol === 'number' &&
+        typeof n.hexRow === 'number'
+    );
+
+    if (isHive && hexLatticeNodes.length > 0) {
+      const refNode = hexLatticeNodes[0];
+      const refSz = getNodeSize(refNode, cardDisplayMode, photoFrameSize, cardScale);
+      const hexW = refSz.w;
+      const hexGap = refNode.hexGap ?? Math.max(8, Math.round(hexW * 0.14));
+      const stepX = hexW + hexGap;
+      const stepY = stepX * 0.8660254;
+      const rx = stepX * 0.5;
+      const ry = stepX / 1.7320508;
+
+      const refCx = refNode.x + refSz.w / 2;
+      const refCy = refNode.y + refSz.h / 2;
+      const originX =
+        refCx -
+        (refNode.hexCol! * stepX + ((refNode.hexRow! & 1) !== 0 ? stepX * 0.5 : 0));
+      const originY = refCy - refNode.hexRow! * stepY;
+
+      const cellKey = (c: number, r: number) => `${c},${r}`;
+      const vKey = (u: number, v: number) => `${u},${v}`;
+      const vToPx = (u: number, v: number) => ({
+        x: Math.round((originX + u * rx) * 10) / 10,
+        y: Math.round((originY + v * (ry * 0.5)) * 10) / 10,
+      });
+      const getCellVerts = (c: number, r: number): Array<[number, number]> => {
+        const u = 2 * c + (r & 1);
+        const v = 3 * r;
+        return [
+          [u, v - 2],
+          [u + 1, v - 1],
+          [u + 1, v + 1],
+          [u, v + 2],
+          [u - 1, v + 1],
+          [u - 1, v - 1],
+        ];
+      };
+      const getNeighborCell = (
+        c: number,
+        r: number,
+        edgeIdx: number
+      ): [number, number] => {
+        const odd = (r & 1) !== 0 ? 1 : 0;
+        switch (edgeIdx) {
+          case 0:
+            return [c + odd, r - 1];
+          case 1:
+            return [c + 1, r];
+          case 2:
+            return [c + odd, r + 1];
+          case 3:
+            return [c - 1 + odd, r + 1];
+          case 4:
+            return [c - 1, r];
+          default:
+            return [c - 1 + odd, r - 1];
+        }
+      };
+
+      const occupiedCellSet = new Set<string>();
+      const cellToCoord = new Map<string, [number, number]>();
+      let minC = Infinity;
+      let maxC = -Infinity;
+      let minR = Infinity;
+      let maxR = -Infinity;
+
+      const g1Cells = new Set<string>();
+      const g2AnchorMap = new Map<string, { color: string; cells: Set<string> }>();
+      const g2DescMap = new Map<string, { color: string; cells: Set<string> }>();
+      const g3Map = new Map<
+        string,
+        { color: string; g2Id?: string; cells: Set<string> }
+      >();
+      const g4Map = new Map<
+        string,
+        { color: string; g3Id?: string; cells: Set<string> }
+      >();
+
+      hexLatticeNodes.forEach((n) => {
+        const c = n.hexCol!;
+        const r = n.hexRow!;
+        const ck = cellKey(c, r);
+        occupiedCellSet.add(ck);
+        cellToCoord.set(ck, [c, r]);
+        minC = Math.min(minC, c);
+        maxC = Math.max(maxC, c);
+        minR = Math.min(minR, r);
+        maxR = Math.max(maxR, r);
+
+        const tier =
+          n.hexTier ??
+          ((n.genLevel ?? 0) <= 0
+            ? 'g1'
+            : (n.genLevel ?? 0) === 1
+            ? 'g2'
+            : (n.genLevel ?? 0) === 2
+            ? 'g3'
+            : 'g4plus');
+
+        if (tier === 'g1') {
+          g1Cells.add(ck);
+        }
+        if (tier === 'g2' && n.lineageG2Id && n.lineageG2Color) {
+          if (!g2AnchorMap.has(n.lineageG2Id)) {
+            g2AnchorMap.set(n.lineageG2Id, {
+              color: n.lineageG2Color,
+              cells: new Set(),
+            });
+          }
+          g2AnchorMap.get(n.lineageG2Id)!.cells.add(ck);
+        }
+        if (
+          (tier === 'g3' || tier === 'g4plus') &&
+          n.lineageG2Id &&
+          n.lineageG2Color
+        ) {
+          if (!g2DescMap.has(n.lineageG2Id)) {
+            g2DescMap.set(n.lineageG2Id, {
+              color: n.lineageG2Color,
+              cells: new Set(),
+            });
+          }
+          g2DescMap.get(n.lineageG2Id)!.cells.add(ck);
+        }
+        if (
+          (tier === 'g3' || tier === 'g4plus') &&
+          n.lineageG3Id &&
+          n.lineageG3Color
+        ) {
+          if (!g3Map.has(n.lineageG3Id)) {
+            g3Map.set(n.lineageG3Id, {
+              color: n.lineageG3Color,
+              g2Id: n.lineageG2Id,
+              cells: new Set(),
+            });
+          }
+          g3Map.get(n.lineageG3Id)!.cells.add(ck);
+        }
+        if (tier === 'g4plus' && n.lineageG4Id && n.lineageG4Color) {
+          if (!g4Map.has(n.lineageG4Id)) {
+            g4Map.set(n.lineageG4Id, {
+              color: n.lineageG4Color,
+              g3Id: n.lineageG3Id,
+              cells: new Set(),
+            });
+          }
+          g4Map.get(n.lineageG4Id)!.cells.add(ck);
+        }
+      });
+
+      const buildPerimeterFromCells = (
+        cells: Set<string>,
+        onlyIfNeighborOutsideOrDiff?: (ncKey: string) => boolean
+      ): { d: string | null; verts: Set<string> } => {
+        const adj = new Map<string, string[]>();
+        const verts = new Set<string>();
+        const vCoordMap = new Map<string, [number, number]>();
+
+        cells.forEach((ck) => {
+          const coord = cellToCoord.get(ck);
+          if (!coord) return;
+          const [c, r] = coord;
+          const cv = getCellVerts(c, r);
+          for (let k = 0; k < 6; k++) {
+            const [nc, nr] = getNeighborCell(c, r, k);
+            const nck = cellKey(nc, nr);
+            const includeEdge = onlyIfNeighborOutsideOrDiff
+              ? onlyIfNeighborOutsideOrDiff(nck)
+              : !cells.has(nck);
+            if (!includeEdge) continue;
+            const [u1, v1] = cv[k];
+            const [u2, v2] = cv[(k + 1) % 6];
+            const k1 = vKey(u1, v1);
+            const k2 = vKey(u2, v2);
+            vCoordMap.set(k1, [u1, v1]);
+            vCoordMap.set(k2, [u2, v2]);
+            verts.add(k1);
+            verts.add(k2);
+            if (!adj.has(k1)) adj.set(k1, []);
+            adj.get(k1)!.push(k2);
+          }
+        });
+
+        const pathParts: string[] = [];
+        adj.forEach((_, startKey) => {
+          while ((adj.get(startKey)?.length || 0) > 0) {
+            const chain: string[] = [startKey];
+            let cur = startKey;
+            let guard = 0;
+            while (guard++ < 4000) {
+              const list = adj.get(cur);
+              if (!list || list.length === 0) break;
+              const nxt = list.pop()!;
+              chain.push(nxt);
+              cur = nxt;
+              if (cur === startKey) break;
+            }
+            if (chain.length >= 2) {
+              const closed = chain[chain.length - 1] === chain[0];
+              const pts = (closed ? chain.slice(0, -1) : chain).map((vk) => {
+                const [u, v] = vCoordMap.get(vk)!;
+                return vToPx(u, v);
+              });
+              if (pts.length >= 2) {
+                pathParts.push(
+                  `M ${pts[0].x} ${pts[0].y} ` +
+                    pts
+                      .slice(1)
+                      .map((p) => `L ${p.x} ${p.y}`)
+                      .join(' ') +
+                    (closed ? ' Z' : '')
+                );
+              }
+            }
+          }
+        });
+
+        return {
+          d: pathParts.length > 0 ? pathParts.join(' ') : null,
+          verts,
+        };
+      };
+
+      // Bangun graf celah Voronoi untuk menghubungkan warna pembatas melintasi ruang kosong G1 -> G2 -> G3
+      const vorGraph = new Map<string, Array<{ to: string; cost: number }>>();
+      const vorCoords = new Map<string, [number, number]>();
+      const seenUndirEdge = new Set<string>();
+      for (let r = minR - 2; r <= maxR + 2; r++) {
+        for (let c = minC - 2; c <= maxC + 2; c++) {
+          const cv = getCellVerts(c, r);
+          const occA = occupiedCellSet.has(cellKey(c, r));
+          for (let k = 0; k < 6; k++) {
+            const [nc, nr] = getNeighborCell(c, r, k);
+            const occB = occupiedCellSet.has(cellKey(nc, nr));
+            const [u1, v1] = cv[k];
+            const [u2, v2] = cv[(k + 1) % 6];
+            const k1 = vKey(u1, v1);
+            const k2 = vKey(u2, v2);
+            const ek = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
+            if (seenUndirEdge.has(ek)) continue;
+            seenUndirEdge.add(ek);
+            vorCoords.set(k1, [u1, v1]);
+            vorCoords.set(k2, [u2, v2]);
+            const cost = !occA && !occB ? 1 : !occA || !occB ? 3 : 8;
+            if (!vorGraph.has(k1)) vorGraph.set(k1, []);
+            if (!vorGraph.has(k2)) vorGraph.set(k2, []);
+            vorGraph.get(k1)!.push({ to: k2, cost });
+            vorGraph.get(k2)!.push({ to: k1, cost });
+          }
+        }
+      }
+
+      const findVoronoiBridgePath = (
+        srcVerts: Set<string>,
+        dstVerts: Set<string>
+      ): string | null => {
+        if (srcVerts.size === 0 || dstVerts.size === 0) return null;
+        for (const sv of srcVerts) {
+          if (dstVerts.has(sv)) return null;
+        }
+        const dist = new Map<string, number>();
+        const prev = new Map<string, string>();
+        const queue: Array<{ k: string; d: number }> = [];
+        srcVerts.forEach((sv) => {
+          if (vorGraph.has(sv)) {
+            dist.set(sv, 0);
+            queue.push({ k: sv, d: 0 });
+          }
+        });
+
+        let targetHit: string | null = null;
+        let guard = 0;
+        while (queue.length > 0 && guard++ < 6000) {
+          let bestIdx = 0;
+          for (let i = 1; i < queue.length; i++) {
+            if (queue[i].d < queue[bestIdx].d) bestIdx = i;
+          }
+          const cur = queue.splice(bestIdx, 1)[0];
+          if (cur.d > (dist.get(cur.k) ?? Infinity)) continue;
+          if (dstVerts.has(cur.k)) {
+            targetHit = cur.k;
+            break;
+          }
+          const nbrs = vorGraph.get(cur.k);
+          if (!nbrs) continue;
+          for (const edge of nbrs) {
+            const nd = cur.d + edge.cost;
+            if (nd < (dist.get(edge.to) ?? Infinity)) {
+              dist.set(edge.to, nd);
+              prev.set(edge.to, cur.k);
+              queue.push({ k: edge.to, d: nd });
+            }
+          }
+        }
+
+        if (!targetHit) return null;
+        const revKeys: string[] = [];
+        let trace: string | undefined = targetHit;
+        while (trace) {
+          revKeys.push(trace);
+          if (srcVerts.has(trace)) break;
+          trace = prev.get(trace);
+        }
+        if (revKeys.length < 2) return null;
+        revKeys.reverse();
+        const pts = revKeys.map((vk) => {
+          const [u, v] = vorCoords.get(vk)!;
+          return vToPx(u, v);
+        });
+        return (
+          `M ${pts[0].x} ${pts[0].y} ` +
+          pts
+            .slice(1)
+            .map((p) => `L ${p.x} ${p.y}`)
+            .join(' ')
+        );
+      };
+
+      const out: LineageHullItem[] = [];
+
+      // 1. Pembatas luar cabang G2 melingkupi klaster G3–G5
+      g2DescMap.forEach((entry, id) => {
+        const res = buildPerimeterFromCells(entry.cells);
+        if (!res.d) return;
+        out.push({
+          id: `hull-g2-desc-${id}`,
+          d: res.d,
+          fill: 'none',
+          stroke: hexWithAlpha(entry.color, isDarkCanvas ? 0.84 : 0.78),
+          strokeWidth: 3.4,
+          level: 2,
+        });
+      });
+
+      // 2. Pembatas kelompok G3 melingkupi G4 dan G5 di dalamnya
+      const g3PerimMap = new Map<
+        string,
+        { verts: Set<string>; g2Id?: string; color: string }
+      >();
+      g3Map.forEach((entry, id) => {
+        const res = buildPerimeterFromCells(entry.cells);
+        g3PerimMap.set(id, {
+          verts: res.verts,
+          g2Id: entry.g2Id,
+          color: entry.color,
+        });
+        if (!res.d) return;
+        out.push({
+          id: `hull-g3-${id}`,
+          d: res.d,
+          fill: 'none',
+          stroke: hexWithAlpha(entry.color, isDarkCanvas ? 0.92 : 0.88),
+          strokeWidth: 2.8,
+          level: 3,
+        });
+      });
+
+      // 3. Sekat warna berbeda untuk tiap kelompok G4+G5 di dalam G3!
+      g4Map.forEach((entry, id) => {
+        const res = buildPerimeterFromCells(entry.cells);
+        if (!res.d) return;
+        out.push({
+          id: `hull-g4-${id}`,
+          d: res.d,
+          fill: 'none',
+          stroke: hexWithAlpha(entry.color, isDarkCanvas ? 0.92 : 0.9),
+          strokeWidth: 2.3,
+          level: 4,
+        });
+      });
+
+      // 4. Bingkai emas G1 dan pembatas G2 jangkar
+      const g1Perim = buildPerimeterFromCells(g1Cells);
+      if (g1Perim.d) {
+        out.push({
+          id: 'hull-g1-core',
+          d: g1Perim.d,
+          fill: 'none',
+          stroke: hexWithAlpha('#f59e0b', 0.95),
+          strokeWidth: 3.8,
+          level: 1,
+        });
+      }
+
+      const g2AnchorVertMap = new Map<string, Set<string>>();
+      g2AnchorMap.forEach((entry, id) => {
+        const res = buildPerimeterFromCells(entry.cells);
+        g2AnchorVertMap.set(id, res.verts);
+        if (res.d) {
+          out.push({
+            id: `hull-g2-anchor-${id}`,
+            d: res.d,
+            fill: 'none',
+            stroke: hexWithAlpha(entry.color, 0.92),
+            strokeWidth: 3.4,
+            level: 2,
+          });
+        }
+      });
+
+      // 5. Jalur celah terhubung melintasi ruang kosong polos: G1 -> G2 dan G2 -> G3
+      g2AnchorMap.forEach((entry, g2Id) => {
+        const g2Verts = g2AnchorVertMap.get(g2Id);
+        if (g1Perim.verts.size > 0 && g2Verts && g2Verts.size > 0) {
+          const bridge12 = findVoronoiBridgePath(g1Perim.verts, g2Verts);
+          if (bridge12) {
+            out.push({
+              id: `hull-bridge-g1-g2-${g2Id}`,
+              d: bridge12,
+              fill: 'none',
+              stroke: hexWithAlpha(entry.color, isDarkCanvas ? 0.88 : 0.85),
+              strokeWidth: 3.0,
+              level: 2,
+            });
+          }
+        }
+      });
+
+      g3PerimMap.forEach((g3Entry, g3Id) => {
+        if (!g3Entry.g2Id) return;
+        const g2Verts = g2AnchorVertMap.get(g3Entry.g2Id);
+        if (!g2Verts || g2Verts.size === 0 || g3Entry.verts.size === 0) return;
+        const bridge23 = findVoronoiBridgePath(g2Verts, g3Entry.verts);
+        if (bridge23) {
+          out.push({
+            id: `hull-bridge-g2-g3-${g3Id}`,
+            d: bridge23,
+            fill: 'none',
+            stroke: hexWithAlpha(g3Entry.color, isDarkCanvas ? 0.88 : 0.84),
+            strokeWidth: 2.6,
+            level: 3,
+          });
+        }
+      });
+
+      return out;
+    }
 
     const buildSmoothHullPath = (
       groupNodes: InteractiveNode[],
@@ -6762,7 +7224,6 @@ export const InteractiveGridCanvasView: React.FC<
       }
     });
 
-    const isDarkCanvas = theme === 'dark' || bgStyle !== '';
     const out: LineageHullItem[] = [];
 
     g2Map.forEach((entry, id) => {
@@ -6819,7 +7280,7 @@ export const InteractiveGridCanvasView: React.FC<
     bgStyle,
   ]);
 
-  // Aura Kolam Teratai untuk setiap pusat bunga G1/G2/G3 & kelompok kelopak G4–G5
+  // Riak Air Kolam Mandala & Aura Bunga Teratai (G1–G2 pusat & klaster G3+G4+G5)
   const lotusHalosMemo = useMemo<LotusHaloItem[]>(() => {
     if (activePresetId !== 'teratai_mekar' || nodes.length === 0) return [];
     const childIdsByParent = new Map<string, string[]>();
@@ -6833,39 +7294,89 @@ export const InteractiveGridCanvasView: React.FC<
     const isDarkCanvas = theme === 'dark' || bgStyle !== '';
     const halos: LotusHaloItem[] = [];
 
+    // 1. Cincin riak air konsentris lembut di seluruh kolam berpusat pada bunga G1
+    const g1Nodes = nodes.filter(
+      (n) => (n.genLevel ?? 0) === 0 && !n.id.includes('_sp_')
+    );
+    if (g1Nodes.length > 0) {
+      let sumX = 0;
+      let sumY = 0;
+      g1Nodes.forEach((g1) => {
+        const sz = getNodeSize(g1, cardDisplayMode, photoFrameSize, cardScale);
+        sumX += g1.x + sz.w / 2;
+        sumY += g1.y + sz.h / 2;
+      });
+      const pondCx = Math.round(sumX / g1Nodes.length);
+      const pondCy = Math.round(sumY / g1Nodes.length);
+
+      let sumG2R = 0;
+      let countG2 = 0;
+      let maxOuterR = 0;
+      nodes.forEach((n) => {
+        const sz = getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale);
+        const cx = n.x + sz.w / 2;
+        const cy = n.y + sz.h / 2;
+        const d = Math.hypot(cx - pondCx, cy - pondCy);
+        if ((n.genLevel ?? 0) === 1 && !n.id.includes('_sp_')) {
+          sumG2R += d;
+          countG2++;
+        }
+        maxOuterR = Math.max(maxOuterR, d + Math.max(sz.w, sz.h) * 0.55);
+      });
+
+      const rG2 = countG2 > 0 ? Math.round(sumG2R / countG2) : 110;
+      const rOuter = Math.max(rG2 + 120, Math.round(maxOuterR + 18));
+      const rippleRadii = [
+        rG2,
+        Math.round(rG2 + (rOuter - rG2) * 0.34),
+        Math.round(rG2 + (rOuter - rG2) * 0.68),
+        rOuter,
+      ];
+      rippleRadii.forEach((rr, idx) => {
+        halos.push({
+          id: `pond-ripple-${idx}`,
+          cx: pondCx,
+          cy: pondCy,
+          rx: rr,
+          ry: rr,
+          stroke: hexWithAlpha('#0d9488', isDarkCanvas ? 0.18 : 0.14),
+          fill: 'transparent',
+          strokeWidth: 1.1,
+          solid: true,
+        });
+      });
+    }
+
+    // 2. Aura lembut mengelilingi kuntum bunga G3 beserta daun G4–G5
     nodes.forEach((n) => {
       if (n.id.includes('_sp_')) return;
       const gen = n.genLevel ?? 0;
-      if (gen > 2 || n.lotusRole !== 'flower_center') return;
+      if (gen !== 2 || n.lotusRole !== 'flower_center') return;
 
       const clusterNodes: InteractiveNode[] = [n];
-      // Sertakan pasangan yg menempel di bunga
       nodes.forEach((sp) => {
         if (sp.id.startsWith(`${n.id}_sp_`)) clusterNodes.push(sp);
       });
 
-      // Untuk bunga G3, bungkus seluruh kelopak G4 & G5+ di sekelilingnya dalam lingkaran air kolam
-      if (gen === 2) {
-        const g4Ids = childIdsByParent.get(n.id) || [];
-        g4Ids.forEach((g4Id) => {
-          const g4n = nodeMap.get(g4Id);
-          if (g4n) {
-            clusterNodes.push(g4n);
-            nodes.forEach((sp) => {
-              if (sp.id.startsWith(`${g4Id}_sp_`)) clusterNodes.push(sp);
-            });
-          }
-          const g5Ids = childIdsByParent.get(g4Id) || [];
-          g5Ids.forEach((g5Id) => {
-            const g5n = nodeMap.get(g5Id);
-            if (g5n) clusterNodes.push(g5n);
-            (childIdsByParent.get(g5Id) || []).forEach((g6Id) => {
-              const g6n = nodeMap.get(g6Id);
-              if (g6n) clusterNodes.push(g6n);
-            });
+      const g4Ids = childIdsByParent.get(n.id) || [];
+      g4Ids.forEach((g4Id) => {
+        const g4n = nodeMap.get(g4Id);
+        if (g4n) {
+          clusterNodes.push(g4n);
+          nodes.forEach((sp) => {
+            if (sp.id.startsWith(`${g4Id}_sp_`)) clusterNodes.push(sp);
+          });
+        }
+        const g5Ids = childIdsByParent.get(g4Id) || [];
+        g5Ids.forEach((g5Id) => {
+          const g5n = nodeMap.get(g5Id);
+          if (g5n) clusterNodes.push(g5n);
+          (childIdsByParent.get(g5Id) || []).forEach((g6Id) => {
+            const g6n = nodeMap.get(g6Id);
+            if (g6n) clusterNodes.push(g6n);
           });
         });
-      }
+      });
 
       let minX = Infinity;
       let minY = Infinity;
@@ -6879,12 +7390,12 @@ export const InteractiveGridCanvasView: React.FC<
         maxY = Math.max(maxY, cn.y + sz.h);
       });
       if (!Number.isFinite(minX)) return;
-      const pad = gen === 2 ? 18 : 14;
+      const pad = 16;
       const cx = Math.round((minX + maxX) / 2);
       const cy = Math.round((minY + maxY) / 2);
       const rx = Math.round((maxX - minX) / 2 + pad);
       const ry = Math.round((maxY - minY) / 2 + pad);
-      const col = gen === 0 ? '#fbbf24' : gen === 1 ? '#f472b6' : '#38bdf8';
+      const col = n.customBorderColor || '#14b8a6';
 
       halos.push({
         id: `lotus-halo-${n.id}`,
@@ -6892,8 +7403,10 @@ export const InteractiveGridCanvasView: React.FC<
         cy,
         rx,
         ry,
-        stroke: hexWithAlpha(col, isDarkCanvas ? 0.34 : 0.42),
-        fill: hexWithAlpha(col, isDarkCanvas ? 0.04 : 0.06),
+        stroke: hexWithAlpha(col, isDarkCanvas ? 0.28 : 0.24),
+        fill: hexWithAlpha(col, isDarkCanvas ? 0.04 : 0.03),
+        strokeWidth: 1.2,
+        solid: false,
       });
     });
 
@@ -10095,6 +10608,7 @@ export const InteractiveGridCanvasView: React.FC<
                       stroke={hull.stroke}
                       strokeWidth={hull.strokeWidth}
                       strokeDasharray={hull.dash}
+                      strokeLinecap="round"
                       strokeLinejoin="round"
                     />
                   ))}
@@ -10107,8 +10621,8 @@ export const InteractiveGridCanvasView: React.FC<
                       ry={halo.ry}
                       fill={halo.fill}
                       stroke={halo.stroke}
-                      strokeWidth={1.5}
-                      strokeDasharray="5 5"
+                      strokeWidth={halo.strokeWidth ?? 1.5}
+                      strokeDasharray={halo.solid ? undefined : '5 5'}
                     />
                   ))}
                 </svg>
