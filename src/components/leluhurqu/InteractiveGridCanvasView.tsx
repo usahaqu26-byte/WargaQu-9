@@ -59,6 +59,7 @@ import {
   Type,
   ArrowUpRight,
   GitFork,
+  Zap,
 } from 'lucide-react';
 import { FamilyMember, TrahCategory } from './LeluhurQuView';
 import { MonetizationService } from '../../services/monetizationService';
@@ -97,7 +98,15 @@ import {
   getUniformSubCardSize,
   formatMemberLifeSubtitle,
   generateSmartLayoutFromTable,
+  applyIncrementalBranchUpdate,
 } from './smartGridLayouts';
+import {
+  NasabAiBlueprint,
+  NasabAiArchetype,
+  AiDesignerQuotaInfo,
+  getAiDesignerQuotaInfo,
+  requestNasabAiBlueprint,
+} from '../../services/nasabAiDesignerService';
 
 export type GridLayoutMode = 'auto' | 'manual';
 export type CanvasTheme = 'dark' | 'light';
@@ -245,6 +254,7 @@ export interface SavedGridDesign {
   cardBorderColor?: string;
   captionInfo?: CanvasCaptionInfo;
   activePresetId?: SmartPresetId;
+  aiBlueprint?: NasabAiBlueprint | null;
   structureSig?: string;
 }
 
@@ -2004,10 +2014,19 @@ export const InteractiveGridCanvasView: React.FC<
     initOffsetY: 0,
   });
 
-  // Manajemen Desain Tersimpan
+  // Manajemen Desain Tersimpan & Blueprint Desain AI (0 token saat edit/ganti kertas/download)
   const [savedDesigns, setSavedDesigns] = useState<SavedGridDesign[]>([]);
   const [activeDesignId, setActiveDesignId] = useState<string>('');
   const [activePresetId, setActivePresetId] = useState<SmartPresetId | undefined>(undefined);
+  const [aiBlueprint, setAiBlueprint] = useState<NasabAiBlueprint | null>(null);
+  const [isAiDesignModalOpen, setIsAiDesignModalOpen] = useState<boolean>(false);
+  const [aiDesignArchetype, setAiDesignArchetype] = useState<NasabAiArchetype | 'auto'>('auto');
+  const [aiDesignPrompt, setAiDesignPrompt] = useState<string>('');
+  const [isAiDesigning, setIsAiDesigning] = useState<boolean>(false);
+  const [aiDesignError, setAiDesignError] = useState<string | null>(null);
+  const [aiQuotaInfo, setAiQuotaInfo] = useState<AiDesignerQuotaInfo>(() =>
+    getAiDesignerQuotaInfo()
+  );
   const [designNameInput, setDesignNameInput] = useState<string>('');
 
   const boardRef = useRef<HTMLDivElement>(null);
@@ -2182,19 +2201,22 @@ export const InteractiveGridCanvasView: React.FC<
   ]);
 
   const executeGridPosterExport = useCallback(
-    async (format: 'png' | 'pdf') => {
+    async (format: 'draft' | 'png' | 'pdf') => {
       if (isExportingPoster || !boardRef.current) return;
       setIsExportingPoster(true);
       try {
-        const photoUrls = collectBoardPhotoUrls();
+        const isDraft = format === 'draft';
+        const photoUrls = isDraft ? [] : collectBoardPhotoUrls();
         showNotification(
-          photoUrls.length > 0
+          isDraft
+            ? `Merender Draft Ringan ${paperDim.label} (cepat & hemat kuota, tanpa upscale)...`
+            : photoUrls.length > 0
             ? `Auto-Upscale ${photoUrls.length} foto & merender poster ${paperDim.label} penuh warna...`
             : `Merender poster ${paperDim.label} penuh warna...`
         );
 
         const upscaledMap =
-          photoUrls.length > 0
+          !isDraft && photoUrls.length > 0
             ? await upscalePhotoMap(photoUrls, {
                 scaleFactor: 2.5,
                 minDimension: 880,
@@ -2204,7 +2226,7 @@ export const InteractiveGridCanvasView: React.FC<
               })
             : {};
 
-        if (photoUrls.length > 0) {
+        if (!isDraft && photoUrls.length > 0) {
           setExportPhotoMap(upscaledMap);
           await new Promise((r) => window.setTimeout(r, 160));
         }
@@ -2216,7 +2238,7 @@ export const InteractiveGridCanvasView: React.FC<
           a1: 1.25,
           a0: 1.0,
         };
-        const pixelRatio = pixelRatioByPaper[paperSize] || 1.8;
+        const pixelRatio = isDraft ? 1.0 : pixelRatioByPaper[paperSize] || 1.8;
         const captureOptions = {
           width: boardWidth,
           height: boardHeight,
@@ -2246,7 +2268,31 @@ export const InteractiveGridCanvasView: React.FC<
 
         const { toPng, toJpeg } = await import('html-to-image');
 
-        if (format === 'png') {
+        if (format === 'draft') {
+          const dataUrl = await toJpeg(boardRef.current, {
+            ...captureOptions,
+            quality: 0.84,
+          });
+          const filename = `${safeTrah || 'Poster_Silsilah'}_${paperDim.label}_Draft.jpg`;
+          const blob = dataUrlToBlob(dataUrl);
+          const method = await saveOrShareFileBlob(
+            blob,
+            filename,
+            `Draft Silsilah ${activeTrah.name} (${paperDim.label})`
+          );
+          if (isNativeCapacitorApk() || method === 'downloaded') {
+            setPosterPreviewModal({
+              dataUrl,
+              filename,
+              width: Math.round(boardWidth * pixelRatio),
+              height: Math.round(boardHeight * pixelRatio),
+              upscaledCount: 0,
+            });
+          }
+          showNotification(
+            `Draft cepat ${paperDim.label} selesai (ukuran file ringan, siap koreksi keluarga)!`
+          );
+        } else if (format === 'png') {
           const dataUrl = await toPng(boardRef.current, captureOptions);
           const filename = `${safeTrah || 'Poster_Silsilah'}_${paperDim.label}_HD.png`;
           const blob = dataUrlToBlob(dataUrl);
@@ -2315,7 +2361,11 @@ export const InteractiveGridCanvasView: React.FC<
   );
 
   const handleTriggerGridExportAction = useCallback(
-    (action: 'print' | 'png' | 'pdf') => {
+    (action: 'print' | 'png' | 'pdf' | 'draft') => {
+      if (action === 'draft') {
+        void executeGridPosterExport('draft');
+        return;
+      }
       const rule = MonetizationService.getRule('leluhurqu_export');
       if (rule.enabled && !MonetizationService.hasActiveUnlock('leluhurqu_export')) {
         setPendingExportAction(action);
@@ -2376,7 +2426,8 @@ export const InteractiveGridCanvasView: React.FC<
       phSize: PhotoFrameSize,
       cScale: number,
       gapMm = cardGapMm,
-      modPos = modularG12Position
+      modPos = modularG12Position,
+      overrideBp?: NasabAiBlueprint | null
     ) => {
       const sampleDim = getNodeSize(
         {
@@ -2398,6 +2449,7 @@ export const InteractiveGridCanvasView: React.FC<
         phSize,
         cScale
       );
+      const effectiveBp = overrideBp !== undefined ? overrideBp : aiBlueprint;
       const rebuilt = generateSmartLayoutFromTable(
         members,
         presetId,
@@ -2410,6 +2462,7 @@ export const InteractiveGridCanvasView: React.FC<
           cardScale: cScale,
           cardGapMm: gapMm,
           modularG12Position: modPos,
+          aiBlueprint: effectiveBp,
         }
       );
       const oldStyleByMemberId = new Map<
@@ -2466,7 +2519,7 @@ export const InteractiveGridCanvasView: React.FC<
       });
       return { nodes: hydratedNodes, edges: rebuilt.edges };
     },
-    [cardGapMm, modularG12Position]
+    [cardGapMm, modularG12Position, aiBlueprint]
   );
 
   // Muat daftar desain tersimpan saat berganti Trah
@@ -2523,35 +2576,76 @@ export const InteractiveGridCanvasView: React.FC<
           inferredPreset !== 'modular_g3_L';
 
         if (structChanged && !hasManualOnlyMerge) {
-          const optScale = computeOptimalCardScale(
-            targetMembers,
-            pW,
-            pH,
-            cMode,
-            phSize,
-            inferredPreset
-          );
-          const rebuilt = rebuildSmartLayoutPreservingVisuals(
-            targetMembers,
-            inferredPreset,
-            target.nodes,
-            pW,
-            pH,
-            cMode,
-            phSize,
-            target.cardScale ?? optScale,
-            target.cardGapMm ?? 3.5,
-            target.modularG12Position ?? 'center'
-          );
-          target = {
-            ...target,
-            nodes: rebuilt.nodes,
-            edges: rebuilt.edges,
-            quickText: buildQuickTextFromTrah(targetMembers),
-            activePresetId: inferredPreset,
-            structureSig: currentStructSig,
-            updatedAt: Date.now(),
-          };
+          const existingMemberIds = new Set<string>();
+          target.nodes.forEach((n) => {
+            if (n.memberId) existingMemberIds.add(n.memberId);
+          });
+          const nextMemberIds = new Set(targetMembers.map((m) => m.id));
+          const deltaAdded = targetMembers.filter((m) => !existingMemberIds.has(m.id)).length;
+          let deltaRemoved = 0;
+          existingMemberIds.forEach((id) => {
+            if (!nextMemberIds.has(id)) deltaRemoved++;
+          });
+          const useIncremental =
+            target.nodes.length > 0 &&
+            !target.nodes.some((n) => n.mergedMembers && n.mergedMembers.length >= 2) &&
+            deltaAdded + deltaRemoved > 0 &&
+            deltaAdded + deltaRemoved <= 6;
+
+          if (useIncremental) {
+            const grown = applyIncrementalBranchUpdate({
+              existingNodes: target.nodes,
+              existingEdges: target.edges,
+              members: targetMembers,
+              presetId: inferredPreset,
+              boardWidth: pW,
+              boardHeight: pH,
+              displayMode: cMode,
+              photoSize: phSize,
+              cardScale: curScale,
+              aiBlueprint: target.aiBlueprint ?? null,
+            });
+            target = {
+              ...target,
+              nodes: grown.nodes,
+              edges: grown.edges,
+              quickText: buildQuickTextFromTrah(targetMembers),
+              activePresetId: inferredPreset,
+              structureSig: currentStructSig,
+              updatedAt: Date.now(),
+            };
+          } else {
+            const optScale = computeOptimalCardScale(
+              targetMembers,
+              pW,
+              pH,
+              cMode,
+              phSize,
+              inferredPreset
+            );
+            const rebuilt = rebuildSmartLayoutPreservingVisuals(
+              targetMembers,
+              inferredPreset,
+              target.nodes,
+              pW,
+              pH,
+              cMode,
+              phSize,
+              target.cardScale ?? optScale,
+              target.cardGapMm ?? 3.5,
+              target.modularG12Position ?? 'center',
+              target.aiBlueprint ?? null
+            );
+            target = {
+              ...target,
+              nodes: rebuilt.nodes,
+              edges: rebuilt.edges,
+              quickText: buildQuickTextFromTrah(targetMembers),
+              activePresetId: inferredPreset,
+              structureSig: currentStructSig,
+              updatedAt: Date.now(),
+            };
+          }
           nextDesigns = loadedDesigns.map((d) => (d.id === target.id ? target : d));
           try {
             localStorage.setItem(designsStorageKey, JSON.stringify(nextDesigns));
@@ -2595,6 +2689,7 @@ export const InteractiveGridCanvasView: React.FC<
       setSavedDesigns(nextDesigns);
       setActiveDesignId(target.id);
       setActivePresetId(target.activePresetId || inferredPreset);
+      setAiBlueprint(target.aiBlueprint ?? null);
       setDesignNameInput(target.name);
       setNodes(target.nodes);
       setEdges(target.edges);
@@ -2725,6 +2820,7 @@ export const InteractiveGridCanvasView: React.FC<
     setSavedDesigns([initialDesign]);
     setActiveDesignId(initialDesign.id);
     setActivePresetId(defaultPresetId);
+    setAiBlueprint(null);
     setDesignNameInput(initialDesign.name);
     setNodes(initialDesign.nodes);
     setEdges(initialDesign.edges);
@@ -2780,6 +2876,7 @@ export const InteractiveGridCanvasView: React.FC<
         if (!target) return;
         setSavedDesigns(parsed as SavedGridDesign[]);
         setActiveDesignId(target.id);
+        setAiBlueprint(target.aiBlueprint ?? null);
         setDesignNameInput(target.name);
         setNodes(target.nodes || []);
         setEdges(target.edges || []);
@@ -2813,10 +2910,12 @@ export const InteractiveGridCanvasView: React.FC<
       overrideEdges?: InteractiveEdge[],
       overrideQuickText?: string,
       overrideCardScale?: number,
-      overridePresetId?: SmartPresetId
+      overridePresetId?: SmartPresetId,
+      overrideAiBlueprint?: NasabAiBlueprint | null
     ) => {
       if (!activeDesignId) return;
       const curStructSig = getStructureSig(activeTrah.members);
+      const nextBp = overrideAiBlueprint !== undefined ? overrideAiBlueprint : aiBlueprint;
       setSavedDesigns((prev) => {
         const nextList = prev.map((d) =>
           d.id === activeDesignId
@@ -2857,6 +2956,7 @@ export const InteractiveGridCanvasView: React.FC<
                 cardBorderColor,
                 captionInfo,
                 activePresetId: overridePresetId ?? activePresetId ?? d.activePresetId,
+                aiBlueprint: nextBp,
                 structureSig: curStructSig,
               }
             : d
@@ -2872,6 +2972,7 @@ export const InteractiveGridCanvasView: React.FC<
     [
       activeDesignId,
       activePresetId,
+      aiBlueprint,
       activeTrah.members,
       nodes,
       edges,
@@ -3049,6 +3150,57 @@ export const InteractiveGridCanvasView: React.FC<
       presetToUse !== 'modular_g3_L';
 
     if (structChanged && !hasManualOnlyMerge && windowedMembers.length > 0) {
+      const existingMemberIds = new Set<string>();
+      nodes.forEach((n) => {
+        if (n.memberId) existingMemberIds.add(n.memberId);
+        n.mergedMembers?.forEach((mm) => {
+          if (mm.memberId) existingMemberIds.add(mm.memberId);
+        });
+      });
+      const nextMemberIds = new Set(windowedMembers.map((m) => m.id));
+      const deltaAdded = windowedMembers.filter((m) => !existingMemberIds.has(m.id)).length;
+      let deltaRemoved = 0;
+      existingMemberIds.forEach((id) => {
+        if (!nextMemberIds.has(id)) deltaRemoved++;
+      });
+
+      const canGrowIncrementally =
+        nodes.length > 0 &&
+        !nodes.some((n) => n.mergedMembers && n.mergedMembers.length >= 2) &&
+        deltaAdded + deltaRemoved > 0 &&
+        deltaAdded + deltaRemoved <= 6;
+
+      if (canGrowIncrementally) {
+        const grown = applyIncrementalBranchUpdate({
+          existingNodes: nodes,
+          existingEdges: edges,
+          members: windowedMembers,
+          presetId: presetToUse,
+          boardWidth,
+          boardHeight,
+          displayMode: cardDisplayMode,
+          photoSize: photoFrameSize,
+          cardScale,
+          aiBlueprint,
+        });
+        setNodes(grown.nodes);
+        setEdges(grown.edges);
+        setQuickText(refreshedQuickText);
+        persistCurrentDesign(
+          grown.nodes,
+          grown.edges,
+          refreshedQuickText,
+          cardScale,
+          presetToUse
+        );
+        if (grown.addedCount > 0) {
+          showNotification(
+            `+${grown.addedCount} kartu cabang baru ditumbuhkan rapi tanpa mengacak posisi kartu lain (0 token AI)!`
+          );
+        }
+        return;
+      }
+
       const rebuilt = rebuildSmartLayoutPreservingVisuals(
         windowedMembers,
         presetToUse,
@@ -3463,6 +3615,7 @@ export const InteractiveGridCanvasView: React.FC<
               cardBorderColor,
               captionInfo,
               activePresetId,
+              aiBlueprint,
             }
           : d
       );
@@ -3505,6 +3658,7 @@ export const InteractiveGridCanvasView: React.FC<
         cardBorderColor,
         captionInfo,
         activePresetId,
+        aiBlueprint,
       };
       nextList = [created, ...savedDesigns];
       setActiveDesignId(created.id);
@@ -3570,11 +3724,13 @@ export const InteractiveGridCanvasView: React.FC<
       cardBorderColor,
       captionInfo,
       activePresetId,
+      aiBlueprint: null,
     };
 
     const nextList = [freshDesign, ...savedDesigns];
     setSavedDesigns(nextList);
     setActiveDesignId(newId);
+    setAiBlueprint(null);
     setDesignNameInput(newName);
     setNodes(freshDesign.nodes);
     setEdges(freshDesign.edges);
@@ -3594,6 +3750,7 @@ export const InteractiveGridCanvasView: React.FC<
   const handleLoadDesign = (design: SavedGridDesign) => {
     setActiveDesignId(design.id);
     setActivePresetId(design.activePresetId);
+    setAiBlueprint(design.aiBlueprint ?? null);
     setDesignNameInput(design.name);
     setNodes(design.nodes);
     setEdges(design.edges);
@@ -4037,12 +4194,13 @@ export const InteractiveGridCanvasView: React.FC<
 
       const refreshedText = buildQuickTextFromTrah(sourceMembers);
       setActivePresetId(presetId);
+      setAiBlueprint(null);
       setNodes(result.nodes);
       setEdges(result.edges);
       setQuickText(refreshedText);
       setSelectedIds([]);
       setLayoutMode('manual');
-      persistCurrentDesign(result.nodes, result.edges, refreshedText, nextScale, presetId);
+      persistCurrentDesign(result.nodes, result.edges, refreshedText, nextScale, presetId, null);
 
       showNotification(
         `Tata letak "${preset.badge}" ditata pas di ${targetPaperObj.label} (Skala ${Math.round(
@@ -4066,6 +4224,144 @@ export const InteractiveGridCanvasView: React.FC<
       showNotification,
     ]
   );
+
+  // Racik Blueprint Desain AI (ringan: hanya kirim struktur ID & generasi, tanpa foto/nama pribadi)
+  const handleRunAiBlueprintDesigner = useCallback(async () => {
+    if (isAiDesigning || windowedMembers.length === 0) return;
+    setAiDesignError(null);
+    setIsAiDesigning(true);
+    try {
+      const bp = await requestNasabAiBlueprint({
+        members: windowedMembers,
+        archetypeHint: aiDesignArchetype,
+        stylePrompt: aiDesignPrompt,
+        paperSize,
+        paperOrientation,
+      });
+      setAiQuotaInfo(getAiDesignerQuotaInfo());
+
+      const targetPresetId: SmartPresetId =
+        bp.archetype === 'tree_organic'
+          ? 'pohon_hayat_besar'
+          : bp.archetype === 'lotus_mandala'
+          ? 'teratai_mekar'
+          : 'molekul_organik';
+
+      pushUndoSnapshot(`Racik AI: ${bp.themeTitle}`);
+
+      const nextCardMode: CardDisplayMode =
+        cardDisplayMode === 'name_only' ? 'photo_name' : cardDisplayMode;
+      const nextPhotoSize: PhotoFrameSize =
+        targetPresetId === 'pohon_hayat_besar' ? photoFrameSize : 'bulat';
+
+      setCardFrameMode('auto');
+      setLineStyle(bp.connectorStyle);
+      setLineThicknessMode(targetPresetId === 'pohon_hayat_besar' ? 'tree_taper' : 'uniform');
+      setLineRoutingTopology(
+        targetPresetId === 'teratai_mekar' ? 'direct' : 'sibling_chain_all'
+      );
+      setShowLineArrows(true);
+      setShowEndpointDots(true);
+      setLinesOnTop(false);
+      setBgStyle('');
+      setChildLineColor(bp.genColors?.[0]?.line || '');
+      setCoupleLineColor('#f59e0b');
+      setSiblingLineColor(bp.genColors?.[2]?.line || '');
+      if (targetPresetId === 'pohon_hayat_besar') {
+        setGenGradientPalette('wood_leaf');
+      } else if (targetPresetId === 'teratai_mekar') {
+        setGenGradientPalette('lotus_blossom');
+      } else {
+        setGenGradientPalette('ocean_blue');
+      }
+
+      const nextScale = computeOptimalCardScale(
+        windowedMembers,
+        boardWidth,
+        boardHeight,
+        nextCardMode,
+        nextPhotoSize,
+        targetPresetId
+      );
+      setCardScale(nextScale);
+      setPhotoFrameSize(nextPhotoSize);
+      setCardDisplayMode(nextCardMode);
+
+      const sampleDim = getNodeSize(
+        {
+          id: 'ai_sample',
+          name: 'Nama Anggota',
+          sub: '',
+          x: 0,
+          y: 0,
+          photo: '',
+          wafat: false,
+        },
+        nextCardMode,
+        nextPhotoSize,
+        nextScale
+      );
+      const built = generateSmartLayoutFromTable(
+        windowedMembers,
+        targetPresetId,
+        boardWidth,
+        boardHeight,
+        sampleDim,
+        {
+          displayMode: nextCardMode,
+          photoSize: nextPhotoSize,
+          cardScale: nextScale,
+          cardGapMm,
+          modularG12Position,
+          aiBlueprint: bp,
+        }
+      );
+
+      const refreshedText = buildQuickTextFromTrah(windowedMembers);
+      setAiBlueprint(bp);
+      setActivePresetId(targetPresetId);
+      setNodes(built.nodes);
+      setEdges(built.edges);
+      setQuickText(refreshedText);
+      setSelectedIds([]);
+      setLayoutMode('manual');
+      persistCurrentDesign(
+        built.nodes,
+        built.edges,
+        refreshedText,
+        nextScale,
+        targetPresetId,
+        bp
+      );
+      setIsAiDesignModalOpen(false);
+      showNotification(
+        `${bp.themeTitle} diterapkan (${bp.fromCache ? '⚡ Cache 0 token' : '✨ Blueprint AI Baru'})!`
+      );
+    } catch (err) {
+      setAiDesignError(
+        err instanceof Error ? err.message : 'Gagal meracik blueprint desain AI.'
+      );
+      setAiQuotaInfo(getAiDesignerQuotaInfo());
+    } finally {
+      setIsAiDesigning(false);
+    }
+  }, [
+    isAiDesigning,
+    windowedMembers,
+    aiDesignArchetype,
+    aiDesignPrompt,
+    paperSize,
+    theme,
+    cardDisplayMode,
+    photoFrameSize,
+    boardWidth,
+    boardHeight,
+    cardGapMm,
+    modularG12Position,
+    pushUndoSnapshot,
+    persistCurrentDesign,
+    showNotification,
+  ]);
 
   // Saat pengguna mengubah Kertas / Orientasi / Mode Card di Mode Smart, otomatis tata ulang dengan skala bebas-tumpuk
   const applySmartLiveSetting = useCallback(
@@ -4111,7 +4407,8 @@ export const InteractiveGridCanvasView: React.FC<
         nextPhoto,
         optScale,
         cardGapMm,
-        modularG12Position
+        modularG12Position,
+        aiBlueprint
       );
       setNodes(rebuilt.nodes);
       setEdges(rebuilt.edges);
@@ -4129,6 +4426,7 @@ export const InteractiveGridCanvasView: React.FC<
       nodes,
       cardGapMm,
       modularG12Position,
+      aiBlueprint,
       rebuildSmartLayoutPreservingVisuals,
       persistCurrentDesign,
     ]
@@ -4160,7 +4458,8 @@ export const InteractiveGridCanvasView: React.FC<
         photoFrameSize,
         optimal,
         cardGapMm,
-        modularG12Position
+        modularG12Position,
+        aiBlueprint
       );
       setNodes(rebuilt.nodes);
       setEdges(rebuilt.edges);
@@ -4179,6 +4478,7 @@ export const InteractiveGridCanvasView: React.FC<
     photoFrameSize,
     cardGapMm,
     modularG12Position,
+    aiBlueprint,
     paperDim.label,
     rebuildSmartLayoutPreservingVisuals,
     persistCurrentDesign,
@@ -4206,7 +4506,8 @@ export const InteractiveGridCanvasView: React.FC<
         photoFrameSize,
         cardScale,
         clamped,
-        modularG12Position
+        modularG12Position,
+        aiBlueprint
       );
       setNodes(rebuilt.nodes);
       setEdges(rebuilt.edges);
@@ -4225,6 +4526,7 @@ export const InteractiveGridCanvasView: React.FC<
       photoFrameSize,
       cardScale,
       modularG12Position,
+      aiBlueprint,
       rebuildSmartLayoutPreservingVisuals,
       persistCurrentDesign,
       pushUndoSnapshot,
@@ -6036,10 +6338,10 @@ export const InteractiveGridCanvasView: React.FC<
           edgeKind === 'sibling' ? obstacleBoxes : undefined
         );
 
-        // Mode Molekul: ikatan lurus langsung antar tepi segi-enam/atom mengikuti sudut garis pusat-ke-pusat!
+        const isLotusPreset = activePresetId === 'teratai_mekar';
+        // Mode Molekul & Teratai: jalur langsung pusat-ke-pusat menempel tepi segi-enam/kelopak (hindari port kotak 4 arah)
         if (
-          isMoleculePreset &&
-          edgeKind !== 'couple' &&
+          (isMoleculePreset || isLotusPreset) &&
           (!edge.fromPort || edge.fromPort === 'auto') &&
           (!edge.toPort || edge.toPort === 'auto')
         ) {
@@ -6053,14 +6355,25 @@ export const InteractiveGridCanvasView: React.FC<
           const vy = c2y - c1y;
           const len = Math.hypot(vx, vy);
           if (len > 4) {
-            const clipBoxEdge = (
+            const clipOrganicEdge = (
               cx: number,
               cy: number,
-              hw: number,
-              hh: number,
+              w: number,
+              h: number,
               dx: number,
               dy: number
             ) => {
+              if (isLotusPreset) {
+                const rx = Math.max(8, w * 0.45);
+                const ry = Math.max(8, h * 0.45);
+                const denom = Math.hypot(dx / rx, dy / ry) || 1;
+                return {
+                  x: Math.round((cx + dx / denom) * 10) / 10,
+                  y: Math.round((cy + dy / denom) * 10) / 10,
+                };
+              }
+              const hw = w * 0.49 + 1;
+              const hh = h * 0.49 + 1;
               const tx = Math.abs(dx) > 1e-4 ? hw / Math.abs(dx) : Infinity;
               const ty = Math.abs(dy) > 1e-4 ? hh / Math.abs(dy) : Infinity;
               const t = Math.min(tx, ty);
@@ -6071,8 +6384,8 @@ export const InteractiveGridCanvasView: React.FC<
             };
             const ux = vx / len;
             const uy = vy / len;
-            const aPt = clipBoxEdge(c1x, c1y, s1.w * 0.5 + 1, s1.h * 0.5 + 1, ux, uy);
-            const bPt = clipBoxEdge(c2x, c2y, s2.w * 0.5 + 1, s2.h * 0.5 + 1, -ux, -uy);
+            const aPt = clipOrganicEdge(c1x, c1y, s1.w, s1.h, ux, uy);
+            const bPt = clipOrganicEdge(c2x, c2y, s2.w, s2.h, -ux, -uy);
             const absX = Math.abs(vx);
             const absY = Math.abs(vy);
             pts = {
@@ -6360,6 +6673,33 @@ export const InteractiveGridCanvasView: React.FC<
       return out;
     };
 
+    const sampleCubic = (
+      p0: { x: number; y: number },
+      c1: { x: number; y: number },
+      c2: { x: number; y: number },
+      p1: { x: number; y: number },
+      steps = 14
+    ) => {
+      const out: Array<{ x: number; y: number }> = [];
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const mt = 1 - t;
+        out.push({
+          x:
+            mt * mt * mt * p0.x +
+            3 * mt * mt * t * c1.x +
+            3 * mt * t * t * c2.x +
+            t * t * t * p1.x,
+          y:
+            mt * mt * mt * p0.y +
+            3 * mt * mt * t * c1.y +
+            3 * mt * t * t * c2.y +
+            t * t * t * p1.y,
+        });
+      }
+      return out;
+    };
+
     const rootPaths: TreeSkeletonData['rootPaths'] = [];
     const trunkOuterPaths: TreeSkeletonData['trunkOuterPaths'] = [];
     const trunkInnerPaths: TreeSkeletonData['trunkInnerPaths'] = [];
@@ -6367,6 +6707,23 @@ export const InteractiveGridCanvasView: React.FC<
     const twigPaths: TreeSkeletonData['twigPaths'] = [];
     const accentLeaves: TreeSkeletonData['accentLeaves'] = [];
     const arrowChevrons: TreeSkeletonData['arrowChevrons'] = [];
+
+    const activeTreeBp =
+      aiBlueprint?.archetype === 'tree_organic' ? aiBlueprint : null;
+    const trunkCurveVal = activeTreeBp?.trunkCurve ?? 0.08;
+    const rootSpreadVal = activeTreeBp?.rootSpread ?? 1.08;
+    const curveTensionVal = activeTreeBp?.curveTension ?? 0.34;
+    const barkOuterCol = activeTreeBp?.barkOuterColor || '#5c2408';
+    const barkInnerCol = activeTreeBp?.barkInnerColor || '#b45309';
+    const rootFillCol = activeTreeBp?.barkOuterColor || '#451a03';
+    const accentLeafPrimary =
+      activeTreeBp?.genColors?.[2]?.bg ||
+      activeTreeBp?.genColors?.[1]?.border ||
+      '#15803d';
+    const accentLeafSecondary =
+      activeTreeBp?.genColors?.[3]?.bg ||
+      activeTreeBp?.genColors?.[2]?.border ||
+      '#22c55e';
 
     const mainRoot = g1Nodes[0];
     const rc = boxCenter(mainRoot);
@@ -6378,56 +6735,102 @@ export const InteractiveGridCanvasView: React.FC<
       mainRoot.treeTipY ??
       Math.max(44, trunkBaseY - Math.max(220, Math.round(boardHeight * 0.75)));
 
-    // 1. 5 Akar Kokoh di bawah pangkal batang
-    const rootSpanX = Math.max(150, Math.round(boardWidth * 0.145));
+    // 1. Akar Kokoh & Bercabang Organik di bawah pangkal batang
+    const rootSpanX = Math.max(150, Math.round(boardWidth * 0.148 * rootSpreadVal));
     const rootSpanY = Math.max(
       28,
-      Math.min(boardHeight - trunkBaseY - 10, Math.round(54 * woodScale))
+      Math.min(boardHeight - trunkBaseY - 8, Math.round(58 * woodScale))
     );
     const rootSpecs = [
-      { dx: -rootSpanX * 1.12, dy: rootSpanY * 0.9, cx: -rootSpanX * 0.42, cy: rootSpanY * 0.62, w0: 34 * woodScale },
-      { dx: -rootSpanX * 0.54, dy: rootSpanY * 1.0, cx: -rootSpanX * 0.22, cy: rootSpanY * 0.66, w0: 24 * woodScale },
-      { dx: 0, dy: rootSpanY * 1.04, cx: -6, cy: rootSpanY * 0.58, w0: 26 * woodScale },
-      { dx: rootSpanX * 0.54, dy: rootSpanY * 1.0, cx: rootSpanX * 0.22, cy: rootSpanY * 0.66, w0: 24 * woodScale },
-      { dx: rootSpanX * 1.12, dy: rootSpanY * 0.9, cx: rootSpanX * 0.42, cy: rootSpanY * 0.62, w0: 34 * woodScale },
+      { dx: -rootSpanX * 1.15, dy: rootSpanY * 0.88, c1x: -rootSpanX * 0.34, c1y: rootSpanY * 0.32, c2x: -rootSpanX * 0.78, c2y: rootSpanY * 0.96, w0: 36 * woodScale },
+      { dx: -rootSpanX * 0.56, dy: rootSpanY * 1.0, c1x: -rootSpanX * 0.16, c1y: rootSpanY * 0.42, c2x: -rootSpanX * 0.36, c2y: rootSpanY * 0.92, w0: 25 * woodScale },
+      { dx: 4 * Math.sign(trunkCurveVal || 1), dy: rootSpanY * 1.05, c1x: -10, c1y: rootSpanY * 0.45, c2x: 8, c2y: rootSpanY * 0.85, w0: 27 * woodScale },
+      { dx: rootSpanX * 0.56, dy: rootSpanY * 1.0, c1x: rootSpanX * 0.16, c1y: rootSpanY * 0.42, c2x: rootSpanX * 0.36, c2y: rootSpanY * 0.92, w0: 25 * woodScale },
+      { dx: rootSpanX * 1.15, dy: rootSpanY * 0.88, c1x: rootSpanX * 0.34, c1y: rootSpanY * 0.32, c2x: rootSpanX * 0.78, c2y: rootSpanY * 0.96, w0: 36 * woodScale },
     ];
-    rootSpecs.forEach((rs) => {
-      const pts = sampleQuad(
-        { x: trunkX + (rs.dx === 0 ? 0 : rs.dx > 0 ? 12 : -12), y: trunkBaseY - 8 },
-        { x: trunkX + rs.cx, y: trunkBaseY + rs.cy },
-        { x: trunkX + rs.dx, y: Math.min(boardHeight - 10, trunkBaseY + rs.dy) },
-        10
+    rootSpecs.forEach((rs, rIdx) => {
+      const startPt = {
+        x: trunkX + (rIdx === 2 ? 0 : rs.dx > 0 ? 14 * woodScale : -14 * woodScale),
+        y: trunkBaseY - 10,
+      };
+      const endPt = {
+        x: trunkX + rs.dx,
+        y: Math.min(boardHeight - 8, trunkBaseY + rs.dy),
+      };
+      const pts = sampleCubic(
+        startPt,
+        { x: trunkX + rs.c1x, y: trunkBaseY + rs.c1y },
+        { x: trunkX + rs.c2x, y: trunkBaseY + rs.c2y },
+        endPt,
+        12
       );
       const d = buildTaperPoly(pts, rs.w0, 4 * woodScale);
       if (d) {
-        rootPaths.push({ d, color: '#451a03', strokeColor: '#290f02' });
+        rootPaths.push({ d, color: rootFillCol, strokeColor: '#290f02' });
+      }
+      // Cabang akar sekunder kiri-kanan untuk akar utama terluar
+      if (rIdx === 0 || rIdx === 4) {
+        const forkBase = pts[Math.floor(pts.length * 0.52)] || startPt;
+        const forkDir = rs.dx > 0 ? 1 : -1;
+        const forkPts = sampleQuad(
+          forkBase,
+          { x: forkBase.x + forkDir * rootSpanX * 0.16, y: forkBase.y - 6 },
+          {
+            x: forkBase.x + forkDir * rootSpanX * 0.32,
+            y: Math.min(boardHeight - 8, forkBase.y + 18 * woodScale),
+          },
+          8
+        );
+        const forkD = buildTaperPoly(forkPts, 14 * woodScale, 3 * woodScale);
+        if (forkD) {
+          rootPaths.push({ d: forkD, color: rootFillCol, strokeColor: '#290f02' });
+        }
       }
     });
 
-    // 2. Batang Utama Lurus (75% tinggi kertas, 100px bawah -> 50px ujung atas)
-    const trunkPts = [
-      { x: trunkX, y: trunkBaseY + 4 },
-      { x: trunkX, y: trunkTopY },
-    ];
+    // 2. Batang Utama Melengkung Organik (S-curve natural + pangkal melebar)
+    const swayAmp = Math.round(boardWidth * 0.048 * trunkCurveVal);
+    const trunkMidY = (trunkBaseY + trunkTopY) / 2;
+    const trunkPts = sampleCubic(
+      { x: trunkX, y: trunkBaseY + 6 },
+      { x: trunkX - swayAmp, y: trunkBaseY - (trunkBaseY - trunkMidY) * 0.54 },
+      { x: trunkX + swayAmp, y: trunkTopY + (trunkMidY - trunkTopY) * 0.46 },
+      { x: trunkX + Math.round(swayAmp * 0.18), y: trunkTopY },
+      16
+    );
+    const trunkSpineXAtY = (targetY: number) => {
+      if (trunkPts.length === 0) return trunkX;
+      let bestPt = trunkPts[0];
+      let bestDist = Infinity;
+      for (let i = 0; i < trunkPts.length; i++) {
+        const dist = Math.abs(trunkPts[i].y - targetY);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestPt = trunkPts[i];
+        }
+      }
+      return bestPt.x;
+    };
+
     const trunkD = buildTaperPoly(
       trunkPts,
-      100 * woodScale,
-      50 * woodScale
+      110 * woodScale,
+      46 * woodScale
     );
     const trunkInnerD = buildTaperPoly(
       trunkPts,
-      52 * woodScale,
-      22 * woodScale
+      54 * woodScale,
+      20 * woodScale
     );
     if (trunkD) {
       trunkOuterPaths.push({
         d: trunkD,
-        color: '#5c2408',
+        color: barkOuterCol,
         strokeColor: '#290f02',
       });
     }
     if (trunkInnerD) {
-      trunkInnerPaths.push({ d: trunkInnerD, color: '#b45309' });
+      trunkInnerPaths.push({ d: trunkInnerD, color: barkInnerCol });
     }
 
     // Panah arah halus di batang (G1 -> G2 -> Puncak) bila aktif
@@ -6436,7 +6839,7 @@ export const InteractiveGridCanvasView: React.FC<
       for (let i = 0; i < spineCenters.length - 1; i++) {
         const yMid = (spineCenters[i].y + spineCenters[i + 1].y) / 2;
         arrowChevrons.push({
-          x: trunkX,
+          x: trunkSpineXAtY(yMid),
           y: yMid,
           angleDeg: -90,
           size: Math.max(7, 10 * woodScale),
@@ -6444,7 +6847,7 @@ export const InteractiveGridCanvasView: React.FC<
         });
       }
       arrowChevrons.push({
-        x: trunkX,
+        x: trunkSpineXAtY(trunkTopY + Math.max(18, 28 * woodScale)),
         y: trunkTopY + Math.max(18, 28 * woodScale),
         angleDeg: -90,
         size: Math.max(7, 10 * woodScale),
@@ -6452,38 +6855,39 @@ export const InteractiveGridCanvasView: React.FC<
       });
     }
 
-    // Pucuk daun mahkota di ujung atas batang
+    // Pucuk daun mahkota di ujung atas batang melengkung
+    const topCrownX = trunkPts[trunkPts.length - 1]?.x ?? trunkX;
     accentLeaves.push(
       {
-        cx: trunkX,
+        cx: topCrownX,
         cy: trunkTopY - 16 * woodScale,
         w: 24 * woodScale,
         h: 38 * woodScale,
         angleDeg: 0,
-        fill: '#15803d',
+        fill: accentLeafPrimary,
         stroke: '#4ade80',
       },
       {
-        cx: trunkX - 18 * woodScale,
+        cx: topCrownX - 18 * woodScale,
         cy: trunkTopY - 6 * woodScale,
         w: 18 * woodScale,
         h: 30 * woodScale,
         angleDeg: -38,
-        fill: '#16a34a',
+        fill: accentLeafSecondary,
         stroke: '#86efac',
       },
       {
-        cx: trunkX + 18 * woodScale,
+        cx: topCrownX + 18 * woodScale,
         cy: trunkTopY - 6 * woodScale,
         w: 18 * woodScale,
         h: 30 * woodScale,
         angleDeg: 38,
-        fill: '#16a34a',
+        fill: accentLeafSecondary,
         stroke: '#86efac',
       }
     );
 
-    // 3. Dahan Zigzag Naik (3-4 Lapis Piramida, 70px -> 40px, lurus kaku & tertutup garis)
+    // 3. Dahan Utama Melengkung S-Curve (Mengikuti posisi pusat kartu G3 aktual agar selalu menempel)
     const parentEdgeOf = new Map<string, string>();
     edges.forEach((e) => {
       if (e.type === 'child') parentEdgeOf.set(e.to, e.from);
@@ -6498,106 +6902,115 @@ export const InteractiveGridCanvasView: React.FC<
       const g3c = boxCenter(g3);
       const wing: -1 | 1 =
         g3.treeWing ?? (g3c.x >= trunkX ? 1 : -1);
-      const originX = g3.treeOriginX ?? trunkX;
       const originY =
         g3.treeOriginY ??
         Math.max(
-          trunkTopY + 30,
-          Math.min(trunkBaseY - 40, g3c.y + 38)
+          trunkTopY + 28,
+          Math.min(trunkBaseY - 38, g3c.y + 42)
         );
-      const tipX =
-        g3.treeTipX ??
-        Math.round(originX + (g3c.x - originX) * 2.0);
-      const tipY =
-        g3.treeTipY ??
-        Math.round(originY + (g3c.y - originY) * 2.0);
+      const originX = trunkSpineXAtY(originY);
+      const tipX = Math.round(originX + (g3c.x - originX) * 1.38);
+      const tipY = Math.round(originY + (g3c.y - originY) * 1.38 - 10 * woodScale);
 
       const tierFrac = Math.max(
         0,
         Math.min(1, (trunkBaseY - originY) / trunkSpanY)
       );
-      const wStart = (70 - tierFrac * 10) * woodScale;
-      const wEnd = (40 - tierFrac * 6) * woodScale;
+      const wStart = (68 - tierFrac * 10) * woodScale;
+      const wEnd = (32 - tierFrac * 5) * woodScale;
 
-      const boughPts = [
+      const spanX = tipX - originX;
+      const spanY = tipY - originY;
+      const lift = Math.max(14, Math.abs(spanX) * 0.14 * curveTensionVal);
+      const boughPts = sampleCubic(
         { x: originX, y: originY },
+        { x: originX + spanX * 0.34, y: originY + spanY * 0.12 - lift * 0.45 },
+        { x: originX + spanX * 0.68, y: originY + spanY * 0.86 + lift * 0.55 },
         { x: tipX, y: tipY },
-      ];
+        14
+      );
       const outerD = buildTaperPoly(boughPts, wStart, wEnd);
       const innerD = buildTaperPoly(
         boughPts,
-        32 * woodScale,
-        16 * woodScale
+        30 * woodScale,
+        13 * woodScale
       );
 
       if (outerD) {
         boughPaths.push({
           d: outerD,
-          color: '#5c2408',
+          color: barkOuterCol,
           strokeColor: '#290f02',
           innerD: innerD || undefined,
-          innerColor: '#b45309',
+          innerColor: barkInnerCol,
         });
       }
 
       const bAngleDeg =
         (Math.atan2(tipY - originY, tipX - originX) * 180) / Math.PI;
       if (showLineArrows) {
+        const arrPt = boughPts[Math.floor(boughPts.length * 0.72)] || g3c;
         arrowChevrons.push({
-          x: originX + (tipX - originX) * 0.78,
-          y: originY + (tipY - originY) * 0.78,
+          x: arrPt.x,
+          y: arrPt.y,
           angleDeg: bAngleDeg,
           size: Math.max(6.5, 9 * woodScale),
           color: '#bef264',
         });
       }
 
-      // Daun aksen hijau tua di ujung dahan agar puncak dahan tetap rimbun
+      // Daun aksen hijau tua di ujung dahan agar kanopi rimbun
       accentLeaves.push({
         cx: tipX + wing * 12 * woodScale,
         cy: tipY - 8 * woodScale,
         w: 20 * woodScale,
         h: 32 * woodScale,
-        angleDeg: wing * (52 + (g3Idx % 2) * 10),
-        fill: '#15803d',
+        angleDeg: wing * (48 + (g3Idx % 2) * 12),
+        fill: accentLeafPrimary,
         stroke: '#4ade80',
       });
     });
 
-    // 4. Ranting Lurus/Tajam (45px -> 20px, tertutup garis + daun aksen hijau muda)
-    const g4Nodes = nodes.filter(
-      (n) => (n.genLevel ?? 0) === 3 && !n.id.includes('_sp_')
-    );
-    g4Nodes.forEach((g4, g4Idx) => {
-      const g4c = boxCenter(g4);
-      const pNode = parentEdgeOf.get(g4.id)
-        ? nodeMap.get(parentEdgeOf.get(g4.id)!)
+    // 4. Ranting Melengkung Organik G4 & G5+ (Selalu melengkung tepat ke pusat kartu anak aktual)
+    const twigNodes = nodes
+      .filter((n) => (n.genLevel ?? 0) >= 3 && !n.id.includes('_sp_'))
+      .sort((a, b) => (a.genLevel ?? 0) - (b.genLevel ?? 0));
+    twigNodes.forEach((tn, tIdx) => {
+      const tnc = boxCenter(tn);
+      const pNode = parentEdgeOf.get(tn.id)
+        ? nodeMap.get(parentEdgeOf.get(tn.id)!)
         : undefined;
       const pc = pNode ? boxCenter(pNode) : rc;
+      const gen = tn.genLevel ?? 3;
 
-      const originX = g4.treeOriginX ?? pc.x;
-      const originY = g4.treeOriginY ?? pc.y;
-      const tipX =
-        g4.treeTipX ??
-        Math.round(originX + (g4c.x - originX) * 1.85);
-      const tipY =
-        g4.treeTipY ??
-        Math.round(originY + (g4c.y - originY) * 1.85);
+      const originX = pc.x;
+      const originY = pc.y;
+      const dx = tnc.x - originX;
+      const dy = tnc.y - originY;
+      const tipX = Math.round(originX + dx * 1.32);
+      const tipY = Math.round(originY + dy * 1.32 - (gen >= 4 ? 6 : 8) * woodScale);
 
-      const twigPts = [
+      const arch = (tIdx % 2 === 0 ? 1 : -1) * Math.max(8, Math.hypot(dx, dy) * 0.14 * curveTensionVal);
+      const perpX = -dy / (Math.hypot(dx, dy) || 1);
+      const perpY = dx / (Math.hypot(dx, dy) || 1);
+
+      const twigPts = sampleCubic(
         { x: originX, y: originY },
+        {
+          x: originX + dx * 0.36 + perpX * arch,
+          y: originY + dy * 0.36 + perpY * arch,
+        },
+        {
+          x: originX + dx * 0.72 - perpX * arch * 0.65,
+          y: originY + dy * 0.72 - perpY * arch * 0.65,
+        },
         { x: tipX, y: tipY },
-      ];
-      const outerD = buildTaperPoly(
-        twigPts,
-        45 * woodScale,
-        20 * woodScale
+        12
       );
-      const innerD = buildTaperPoly(
-        twigPts,
-        18 * woodScale,
-        7 * woodScale
-      );
+      const startW = (gen >= 4 ? 26 : 42) * woodScale;
+      const endW = (gen >= 4 ? 8 : 16) * woodScale;
+      const outerD = buildTaperPoly(twigPts, startW, endW);
+      const innerD = buildTaperPoly(twigPts, startW * 0.4, endW * 0.38);
       if (outerD) {
         twigPaths.push({
           d: outerD,
@@ -6611,23 +7024,24 @@ export const InteractiveGridCanvasView: React.FC<
       const tAngleRad = Math.atan2(tipY - originY, tipX - originX);
       const tAngleDeg = (tAngleRad * 180) / Math.PI;
       if (showLineArrows) {
+        const arrPt = twigPts[Math.floor(twigPts.length * 0.74)] || tnc;
         arrowChevrons.push({
-          x: originX + (tipX - originX) * 0.78,
-          y: originY + (tipY - originY) * 0.78,
+          x: arrPt.x,
+          y: arrPt.y,
           angleDeg: tAngleDeg,
           size: Math.max(5.5, 7.5 * woodScale),
           color: '#bef264',
         });
       }
 
-      const wing: -1 | 1 = g4.treeWing ?? (tipX >= trunkX ? 1 : -1);
+      const wing: -1 | 1 = tn.treeWing ?? (tipX >= trunkX ? 1 : -1);
       accentLeaves.push({
-        cx: tipX + Math.cos(tAngleRad) * 10 * woodScale,
-        cy: tipY + Math.sin(tAngleRad) * 10 * woodScale,
-        w: 16 * woodScale,
-        h: 26 * woodScale,
-        angleDeg: wing * (36 + (g4Idx % 3) * 18),
-        fill: g4Idx % 2 === 0 ? '#22c55e' : '#84cc16',
+        cx: tipX + Math.cos(tAngleRad) * 9 * woodScale,
+        cy: tipY + Math.sin(tAngleRad) * 9 * woodScale,
+        w: (gen >= 4 ? 13 : 16) * woodScale,
+        h: (gen >= 4 ? 22 : 26) * woodScale,
+        angleDeg: wing * (36 + (tIdx % 3) * 18),
+        fill: tIdx % 2 === 0 ? accentLeafSecondary : '#84cc16',
         stroke: '#bef264',
       });
     });
@@ -6653,6 +7067,7 @@ export const InteractiveGridCanvasView: React.FC<
     cardScale,
     boardWidth,
     boardHeight,
+    aiBlueprint,
   ]);
 
   const getBoardBackgroundStyle = (): React.CSSProperties => {
@@ -6672,6 +7087,12 @@ export const InteractiveGridCanvasView: React.FC<
       return {
         background:
           'radial-gradient(ellipse at center, #311042 0%, #0f172a 65%, #020617 100%)',
+      };
+    }
+    if (aiBlueprint?.canvasBgColor) {
+      return {
+        backgroundColor: aiBlueprint.canvasBgColor,
+        backgroundImage: `radial-gradient(circle at 50% 45%, rgba(255,255,255,0.06) 0%, transparent 70%)`,
       };
     }
     return {
@@ -6966,6 +7387,17 @@ export const InteractiveGridCanvasView: React.FC<
           >
             <Maximize2 className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Studio Penuh</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isExportingPoster}
+            onClick={() => handleTriggerGridExportAction('draft')}
+            className="px-2 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 disabled:opacity-60 border border-amber-400/45 text-amber-300 text-[11px] font-black flex items-center gap-1"
+            title={`Unduh Draft Ringan ${paperDim.label} (Cepat & hemat kuota tanpa upscale foto)`}
+          >
+            <Zap className="w-3.5 h-3.5" />
+            <span>Draft</span>
           </button>
 
           <button
@@ -8115,7 +8547,20 @@ export const InteractiveGridCanvasView: React.FC<
                       className="flex-1 py-1.5 px-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-[11px] flex items-center justify-center gap-1 shadow-xs"
                     >
                       <RefreshCw className="w-3 h-3" />
-                      <span>Terapkan Rekomendasi #1</span>
+                      <span>Terapkan #1</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAiQuotaInfo(getAiDesignerQuotaInfo());
+                        setAiDesignError(null);
+                        setIsAiDesignModalOpen(true);
+                      }}
+                      className="py-1.5 px-2.5 rounded-lg bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white font-black text-[11px] flex items-center gap-1 shadow-xs"
+                      title="Racik Blueprint Desain AI (ringan: hanya struktur pohon/teratai/molekul tanpa kirim foto)"
+                    >
+                      <Sparkles className="w-3 h-3 text-amber-200" />
+                      <span>Racik AI</span>
                     </button>
                     {onOpenTable && (
                       <button
@@ -10127,6 +10572,15 @@ export const InteractiveGridCanvasView: React.FC<
                 <button
                   type="button"
                   disabled={isExportingPoster}
+                  onClick={() => handleTriggerGridExportAction('draft')}
+                  className="p-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-amber-300 border border-amber-400/40"
+                  title={`Unduh Draft Ringan ${paperDim.label} (tanpa upscale)`}
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  disabled={isExportingPoster}
                   onClick={() => handleTriggerGridExportAction('png')}
                   className="p-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white"
                   title={`Unduh PNG HD ${paperDim.label}`}
@@ -10472,6 +10926,17 @@ export const InteractiveGridCanvasView: React.FC<
             <button
               type="button"
               disabled={isExportingPoster}
+              onClick={() => handleTriggerGridExportAction('draft')}
+              className="px-2 py-1.5 rounded-xl bg-stone-900/90 hover:bg-stone-800 border border-amber-400/40 text-amber-300 text-[11px] font-black flex items-center gap-1 shadow-lg"
+              title={`Unduh Draft Ringan ${paperDim.label} (cepat, tanpa upscale)`}
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Draft</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isExportingPoster}
               onClick={() => handleTriggerGridExportAction('png')}
               className="px-2 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black flex items-center gap-1 shadow-lg"
               title={`Unduh PNG HD ${paperDim.label} (Full Color + Auto-Upscale)`}
@@ -10777,6 +11242,24 @@ export const InteractiveGridCanvasView: React.FC<
 
                   {/* Baris Ikon & Simbol Kontrol Cepat Smart */}
                   <div className="flex items-center gap-1 overflow-x-auto">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAiQuotaInfo(getAiDesignerQuotaInfo());
+                        setAiDesignError(null);
+                        setIsAiDesignModalOpen(true);
+                      }}
+                      title="Racik Blueprint Desain AI (Pohon / Teratai / Molekul sesuai struktur keluarga)"
+                      className={`px-2 py-1 rounded-lg border text-[10px] font-black flex items-center gap-1 shrink-0 transition ${
+                        aiBlueprint
+                          ? 'bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white border-fuchsia-300 shadow-xs'
+                          : 'bg-violet-600/80 hover:bg-violet-500 text-white border-violet-400/60'
+                      }`}
+                    >
+                      <Sparkles className="w-3 h-3 text-amber-200" />
+                      <span>Desain AI</span>
+                    </button>
+
                     {/* 1. Mode Isi Kartu (Nama / Foto+Nama / Lengkap) */}
                     <button
                       type="button"
@@ -11471,12 +11954,18 @@ export const InteractiveGridCanvasView: React.FC<
               <div className="min-w-0">
                 <h3 className="text-xs sm:text-sm font-black text-amber-300 flex items-center gap-1.5 truncate">
                   <ImageIcon className="w-4 h-4 shrink-0" />
-                  <span>Poster Silsilah HD Siap (Penuh Warna)</span>
+                  <span>
+                    {posterPreviewModal.filename.includes('_Draft.')
+                      ? 'Draft Silsilah Ringan Siap'
+                      : 'Poster Silsilah HD Siap (Penuh Warna)'}
+                  </span>
                 </h3>
                 <p className="text-[10.5px] text-slate-400 truncate">
                   {posterPreviewModal.width} × {posterPreviewModal.height} px •{' '}
                   {posterPreviewModal.upscaledCount > 0
                     ? `${posterPreviewModal.upscaledCount} foto otomatis di-upscale 2.5× tajam`
+                    : posterPreviewModal.filename.includes('_Draft.')
+                    ? 'Ukuran file ringan untuk pratinjau cepat (tanpa upscale)'
                     : 'Resolusi tinggi penuh warna'}
                 </p>
               </div>
@@ -11496,28 +11985,212 @@ export const InteractiveGridCanvasView: React.FC<
               />
             </div>
             <div className="px-4 py-3 border-t border-slate-800 flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const blob = dataUrlToBlob(posterPreviewModal.dataUrl);
+                    await saveOrShareFileBlob(
+                      blob,
+                      posterPreviewModal.filename,
+                      `Poster Silsilah ${activeTrah.name}`
+                    );
+                    showNotification(`Menyimpan / membagikan ${posterPreviewModal.filename}...`);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Simpan / Bagikan</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPosterPreviewModal(null)}
+                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      {/* Modal Racik Blueprint Desain AI (Hanya kirim kerangka struktur ringkas, 0 foto & 0 data pribadi) */}
+      {isAiDesignModalOpen && (
+        <div
+          onClick={() => !isAiDesigning && setIsAiDesignModalOpen(false)}
+          className="fixed inset-0 z-[75] bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 print:hidden"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md bg-slate-900 border border-violet-500/45 rounded-2xl shadow-2xl overflow-hidden text-slate-100 flex flex-col max-h-[90dvh]"
+          >
+            <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between gap-2 bg-gradient-to-r from-violet-950/60 to-slate-900">
+              <div className="min-w-0">
+                <h3 className="text-xs sm:text-sm font-black text-violet-200 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-amber-300 shrink-0" />
+                  <span>Racik Blueprint Desain AI</span>
+                </h3>
+                <p className="text-[10.5px] text-slate-400">
+                  Menyesuaikan lekuk, warna &amp; keseimbangan cabang ke struktur tabel Anda
+                </p>
+              </div>
               <button
                 type="button"
-                onClick={async () => {
-                  const blob = dataUrlToBlob(posterPreviewModal.dataUrl);
-                  await saveOrShareFileBlob(
-                    blob,
-                    posterPreviewModal.filename,
-                    `Poster Silsilah ${activeTrah.name}`
-                  );
-                  showNotification(`Menyimpan / membagikan ${posterPreviewModal.filename}...`);
-                }}
-                className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs flex items-center gap-1.5"
+                disabled={isAiDesigning}
+                onClick={() => setIsAiDesignModalOpen(false)}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-50"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span>Simpan / Bagikan PNG HD</span>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 overflow-y-auto text-xs">
+              <div>
+                <label className="text-[11px] font-bold text-slate-300 block mb-1.5">
+                  Gaya Dasar Organik
+                </label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {(
+                    [
+                      { id: 'auto' as const, label: '✨ Otomatis Ideal' },
+                      { id: 'tree_organic' as const, label: '🌳 Pohon Hayat' },
+                      { id: 'lotus_mandala' as const, label: '🪷 Teratai Mekar' },
+                      { id: 'molecule_cluster' as const, label: '⬡ Molekul Organik' },
+                    ] as const
+                  ).map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setAiDesignArchetype(item.id)}
+                      className={`px-2.5 py-2 rounded-xl border text-[11px] font-extrabold text-left transition ${
+                        aiDesignArchetype === item.id
+                          ? 'bg-violet-500/25 border-violet-400 text-white'
+                          : 'bg-slate-800/70 border-slate-700 text-slate-300 hover:border-slate-500'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-300 block mb-1.5">
+                  Arahan Nuansa / Keseimbangan (Opsional)
+                </label>
+                <input
+                  type="text"
+                  value={aiDesignPrompt}
+                  onChange={(e) => setAiDesignPrompt(e.target.value)}
+                  placeholder="Contoh: Pohon beringin megah akar lebar, nuansa hijau emas..."
+                  maxLength={140}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs outline-hidden focus:border-violet-400"
+                />
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                  {[
+                    'Beringin rindang & seimbang',
+                    'Teratai kerajaan emas malam',
+                    'Molekul biru neon modern',
+                    'Nuansa klasik kayu hangat',
+                  ].map((chip) => (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => setAiDesignPrompt(chip)}
+                      className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[10px] text-slate-300"
+                    >
+                      {chip}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-slate-950/90 border border-slate-800 text-[10.5px] text-slate-300 space-y-1">
+                <div className="flex items-center justify-between font-bold text-emerald-300">
+                  <span>Hemat Token &amp; Privasi Aman</span>
+                  <span className="font-mono">
+                    Jatah AI: {aiQuotaInfo.remainingToday}/{aiQuotaInfo.maxPerDay}
+                  </span>
+                </div>
+                <p className="text-slate-400 leading-relaxed">
+                  Hanya mengirim kerangka jumlah generasi &amp; cabang (tanpa foto/nama pribadi).
+                  Ubah kertas, edit cabang G3–G5, atau unduh ulang memakai <b>0 token AI</b>.
+                </p>
+              </div>
+
+              {aiBlueprint && (
+                <div className="p-2.5 rounded-xl bg-violet-950/35 border border-violet-500/35 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-[10.5px] font-black text-violet-200 truncate">
+                      Aktif: {aiBlueprint.themeTitle}
+                    </div>
+                    <div className="text-[9.5px] text-slate-400 truncate">
+                      {aiBlueprint.designRationale}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiBlueprint(null);
+                      const pId = activePresetId || 'pohon_hayat_besar';
+                      const rebuilt = rebuildSmartLayoutPreservingVisuals(
+                        windowedMembers,
+                        pId,
+                        nodes,
+                        boardWidth,
+                        boardHeight,
+                        cardDisplayMode,
+                        photoFrameSize,
+                        cardScale,
+                        cardGapMm,
+                        modularG12Position,
+                        null
+                      );
+                      setNodes(rebuilt.nodes);
+                      setEdges(rebuilt.edges);
+                      persistCurrentDesign(rebuilt.nodes, rebuilt.edges, undefined, cardScale, pId, null);
+                      setIsAiDesignModalOpen(false);
+                      showNotification('Blueprint AI direset ke gaya standar preset.');
+                    }}
+                    className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[10px] font-bold shrink-0"
+                  >
+                    Reset
+                  </button>
+                </div>
+              )}
+
+              {aiDesignError && (
+                <div className="p-2.5 rounded-xl bg-rose-950/50 border border-rose-500/50 text-rose-200 text-[11px]">
+                  {aiDesignError}
+                </div>
+              )}
+            </div>
+
+            <div className="px-4 py-3 border-t border-slate-800 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={isAiDesigning}
+                onClick={() => setIsAiDesignModalOpen(false)}
+                className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs disabled:opacity-50"
+              >
+                Batal
               </button>
               <button
                 type="button"
-                onClick={() => setPosterPreviewModal(null)}
-                className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs"
+                disabled={isAiDesigning || windowedMembers.length === 0}
+                onClick={() => void handleRunAiBlueprintDesigner()}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 hover:from-violet-400 hover:to-fuchsia-400 disabled:opacity-50 text-white font-black text-xs flex items-center gap-1.5 shadow-lg"
               >
-                Tutup
+                {isAiDesigning ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Meracik...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Racik &amp; Terapkan</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

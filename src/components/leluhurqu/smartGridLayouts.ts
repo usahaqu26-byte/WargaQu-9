@@ -1,4 +1,5 @@
 import { FamilyMember } from './LeluhurQuView';
+import type { NasabAiBlueprint } from '../../services/nasabAiDesignerService';
 import type {
   InteractiveNode,
   InteractiveEdge,
@@ -1323,6 +1324,7 @@ export function generateSmartLayoutFromTable(
     cardScale?: number;
     cardGapMm?: number;
     modularG12Position?: 'top' | 'center';
+    aiBlueprint?: NasabAiBlueprint | null;
   }
 ): { nodes: InteractiveNode[]; edges: InteractiveEdge[] } {
   if (!members || members.length === 0) {
@@ -1334,6 +1336,12 @@ export function generateSmartLayoutFromTable(
   const cardScale: number = options?.cardScale ?? 1;
   const cardGapMm: number = Math.max(1, Math.min(5, options?.cardGapMm ?? 3.5));
   const modularG12Position: 'top' | 'center' = options?.modularG12Position ?? 'center';
+  const aiBlueprint: NasabAiBlueprint | null = options?.aiBlueprint ?? null;
+  const getBpStop = (gen: number) => {
+    if (!aiBlueprint?.genColors || aiBlueprint.genColors.length === 0) return undefined;
+    const idx = Math.max(0, Math.min(aiBlueprint.genColors.length - 1, Math.floor(gen)));
+    return aiBlueprint.genColors[idx];
+  };
 
   const { roots, childrenMap } = buildHierarchyFromMembers(members);
   const nodes: InteractiveNode[] = [];
@@ -1710,7 +1718,7 @@ export function generateSmartLayoutFromTable(
       parentNodeId: string | null,
       optsNode?: {
         spouseDir?: 1 | -1;
-        cardShape?: 'rect' | 'leaf';
+        cardShape?: 'rect' | 'leaf' | 'petal';
         leafAngleDeg?: number;
         leafTone?: 'dark' | 'medium' | 'light';
         lockUnit?: boolean;
@@ -1736,6 +1744,7 @@ export function generateSmartLayoutFromTable(
       );
       const primaryId = `n_${m.id}`;
 
+    const bpStop0 = getBpStop(gen);
       nodes.push({
         id: primaryId,
         name: m.name,
@@ -1747,9 +1756,11 @@ export function generateSmartLayoutFromTable(
         gender: m.gender,
         memberId: m.id,
         genLevel: m.generationLevel ?? gen,
-        cardShape: optsNode?.cardShape ?? (gen >= 2 ? 'leaf' : 'rect'),
+        cardShape: optsNode?.cardShape ?? (gen >= 2 ? (aiBlueprint?.cardShape && aiBlueprint.cardShape !== 'hex' ? aiBlueprint.cardShape : 'leaf') : 'rect'),
         leafAngleDeg: optsNode?.leafAngleDeg,
         leafTone: optsNode?.leafTone,
+        customBgColor: bpStop0?.bg,
+        customBorderColor: bpStop0?.border,
         treeOriginX: optsNode?.treeOriginX,
         treeOriginY: optsNode?.treeOriginY,
         treeTipX: optsNode?.treeTipX,
@@ -1797,12 +1808,14 @@ export function generateSmartLayoutFromTable(
           wafat: sp.status === 'cerai_mati',
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
           genLevel: m.generationLevel ?? gen,
-          cardShape: optsNode?.cardShape ?? (gen >= 2 ? 'leaf' : 'rect'),
+          cardShape: optsNode?.cardShape ?? (gen >= 2 ? (aiBlueprint?.cardShape && aiBlueprint.cardShape !== 'hex' ? aiBlueprint.cardShape : 'leaf') : 'rect'),
           leafAngleDeg:
             optsNode?.leafAngleDeg !== undefined
               ? optsNode.leafAngleDeg + (spDir > 0 ? 12 : -12)
               : undefined,
           leafTone: optsNode?.leafTone,
+          customBgColor: bpStop0?.bg,
+          customBorderColor: bpStop0?.border,
         });
         edges.push({ from: primaryId, to: spId, type: 'couple' });
       });
@@ -1810,10 +1823,14 @@ export function generateSmartLayoutFromTable(
       return primaryId;
     };
 
-    // 1. G1 di pangkal bawah Batang (100px bawah -> 50px atas), pasangan keluar ke samping bebas
+    // 1. G1 di pangkal bawah Batang (dengan sedikit offset S-curve alami bila di-blueprint)
     const primaryRoots = roots.length > 0 ? roots : members.slice(0, 1);
-    const g1Y = Math.max(minTopBound + 140, trunkBaseY - cardH - 10);
+    const g1Y = Math.max(minTopBound + 140, trunkBaseY - cardH - 12);
     const rootSpreadStep = Math.max(cardW * 2.2, Math.round(boardWidth * 0.24));
+    const trunkSwayFactor = aiBlueprint?.trunkCurve ?? 0.08;
+    const trunkTopOffsetX = Math.round(boardWidth * 0.055 * trunkSwayFactor);
+    const trunkTopX = Math.max(minLeftBound + cardW, Math.min(maxRightBound, trunkX + trunkTopOffsetX));
+
     primaryRoots.forEach((rootM, rIdx) => {
       const offsetMul =
         rIdx === 0
@@ -1826,12 +1843,12 @@ export function generateSmartLayoutFromTable(
         lockUnit: true,
         treeOriginX: trunkX,
         treeOriginY: trunkBaseY,
-        treeTipX: trunkX,
+        treeTipX: trunkTopX,
         treeTipY: trunkTopY,
       });
     });
 
-    // 2. G2 menempel 1 baris berurutan lurus ke atas sepanjang Batang Utama
+    // 2. G2 menempel sepanjang Batang Utama yang melengkung lembut
     interface TrunkEntry {
       member: FamilyMember;
       nodeId: string;
@@ -1849,10 +1866,10 @@ export function generateSmartLayoutFromTable(
       });
     });
 
-    const g2BottomY = g1Y - cardH - Math.max(12, Math.round(cardH * 0.16));
+    const g2BottomY = g1Y - cardH - Math.max(14, Math.round(cardH * 0.22));
     const g2TopLimitY = Math.max(
       minTopBound + 34,
-      trunkTopY + Math.round(trunkHeight * 0.12)
+      trunkTopY + Math.round(trunkHeight * 0.14)
     );
     const g2SpanH = Math.max(cardH + 10, g2BottomY - g2TopLimitY);
     const g2Count = g2All.length;
@@ -1871,10 +1888,14 @@ export function generateSmartLayoutFromTable(
           ? Math.round((g2BottomY + g2TopLimitY) / 2)
           : Math.round(g2BottomY - revIdx * g2StepY);
       const safeY = Math.max(minTopBound + 24, Math.min(g2BottomY, yPos));
+      const spineFrac = Math.max(0, Math.min(1, (trunkBaseY - safeY) / Math.max(1, trunkHeight)));
+      const swayX = Math.round(
+        trunkX + Math.sin(spineFrac * Math.PI) * (-trunkTopOffsetX * 0.7) + spineFrac * trunkTopOffsetX
+      );
       const spDir: 1 | -1 = idx % 2 === 0 ? 1 : -1;
       const g2Id = addMemberUnit(
         g2M,
-        trunkX - cardW / 2,
+        swayX - cardW / 2,
         safeY,
         g2M.generationLevel ?? 1,
         parentNodeId,
@@ -1895,8 +1916,7 @@ export function generateSmartLayoutFromTable(
       }
     });
 
-    // 3. Dahan Lurus Zigzag 3-4 Tingkatan Naik (bawah 40% lebar kertas -> atas 20% lebar kertas)
-    // Kartu G3 menempel tepat di TENGAH Dahan dengan bingkai Daun Hijau Tua posisi mirror!
+    // 3. Dahan Organik Melengkung (mendukung preferensi keseimbangan AI & bentuk siluet banyan/cemara/kanopi)
     interface PlacedBough {
       member: FamilyMember;
       nodeId: string;
@@ -1905,12 +1925,14 @@ export function generateSmartLayoutFromTable(
       originY: number;
       tipX: number;
       tipY: number;
-      tierFrac: number; // 0 = terbawah (terpanjang), 1 = teratas (terpendek)
+      tierFrac: number;
     }
     const leftG3Queue: Array<{ child: FamilyMember; parent: TrunkEntry }> = [];
     const rightG3Queue: Array<{ child: FamilyMember; parent: TrunkEntry }> = [];
     let leftWt = 0;
     let rightWt = 0;
+    const aiLeftSet = new Set(aiBlueprint?.balanceLeftIds || []);
+    const aiRightSet = new Set(aiBlueprint?.balanceRightIds || []);
 
     g2Entries.forEach((g2e) => {
       const g3Kids = (childrenMap.get(g2e.member.id) || []).filter(
@@ -1918,7 +1940,9 @@ export function generateSmartLayoutFromTable(
       );
       g3Kids.forEach((g3k) => {
         const w = countSubtreeSize(g3k);
-        if (leftWt <= rightWt) {
+        const forceLeft = aiLeftSet.has(g3k.id);
+        const forceRight = aiRightSet.has(g3k.id);
+        if (forceLeft || (!forceRight && leftWt <= rightWt)) {
           leftG3Queue.push({ child: g3k, parent: g2e });
           leftWt += w;
         } else {
@@ -1928,18 +1952,24 @@ export function generateSmartLayoutFromTable(
       });
     });
 
-    // Panjang dahan: 40% lebar kertas (bawah) -> 20% lebar kertas (atas), diamankan agar ranting/daun tetap muat
-    const maxSideReach = Math.max(140, boardWidth * 0.5 - Math.max(cardW * 1.15, 92));
-    const boughMaxLen = Math.min(boardWidth * 0.4, maxSideReach);
-    const boughMinLen = Math.min(boardWidth * 0.2, boughMaxLen * 0.52);
+    const treeShape = aiBlueprint?.treeShape ?? 'banyan_arch';
+    const maxSideReach = Math.max(150, boardWidth * 0.5 - Math.max(cardW * 1.15, 92));
+    const boughMaxLen =
+      treeShape === 'pine_tiered'
+        ? Math.min(boardWidth * 0.38, maxSideReach)
+        : Math.min(boardWidth * 0.43, maxSideReach * 1.04);
+    const boughMinLen =
+      treeShape === 'banyan_arch'
+        ? Math.min(boardWidth * 0.27, boughMaxLen * 0.68)
+        : Math.min(boardWidth * 0.21, boughMaxLen * 0.52);
 
     const boughBandBottomY = Math.min(
-      g1Y - cardH * 0.4,
-      trunkTopY + Math.round(trunkHeight * 0.86)
+      g1Y - cardH * 0.55,
+      trunkTopY + Math.round(trunkHeight * 0.84)
     );
     const boughBandTopY = Math.max(
-      minTopBound + Math.round(cardH * 1.15),
-      trunkTopY + Math.round(trunkHeight * 0.1)
+      minTopBound + Math.round(cardH * 1.05),
+      trunkTopY + Math.round(trunkHeight * 0.08)
     );
     const boughBandSpan = Math.max(80, boughBandBottomY - boughBandTopY);
 
@@ -1951,14 +1981,11 @@ export function generateSmartLayoutFromTable(
     ) => {
       const n = queue.length;
       if (n === 0) return;
-      // Urutkan dari terbawah (indeks 0 = paling panjang) naik ke teratas (indeks n-1 = paling pendek)
       queue.forEach((item, idx) => {
-        const tierFrac = n === 1 ? 0.35 : idx / (n - 1); // 0 bawah -> 1 atas
-        // Zigzag 1-2 naik antar sisi kiri vs kanan agar siluet pohon natal terlihat alami & lapang
+        const tierFrac = n === 1 ? 0.38 : idx / (n - 1);
         const zigzagShift =
           (wing === 1 ? -1 : 1) *
-          Math.round(boughBandSpan / Math.max(6, n * 3.2));
-        const originX = trunkX;
+          Math.round(boughBandSpan / Math.max(6, n * 3.0));
         const originY = Math.max(
           boughBandTopY,
           Math.min(
@@ -1968,16 +1995,26 @@ export function generateSmartLayoutFromTable(
             )
           )
         );
+        const spineFrac = Math.max(0, Math.min(1, (trunkBaseY - originY) / Math.max(1, trunkHeight)));
+        const originX = Math.round(
+          trunkX + Math.sin(spineFrac * Math.PI) * (-trunkTopOffsetX * 0.7) + spineFrac * trunkTopOffsetX
+        );
 
         const boughLen = Math.round(
           boughMaxLen - tierFrac * (boughMaxLen - boughMinLen)
         );
-        // Sudut naik zigzag 1-2 (~15° di dahan bawah, makin terangkat ~24° di dahan atas)
-        const riseAngleRad = ((14 + tierFrac * 11) * Math.PI) / 180;
+        // Banyan arch lifts gracefully upward toward upper canopy; pine rises cleanly
+        const riseDeg =
+          treeShape === 'banyan_arch'
+            ? 16 + tierFrac * 20
+            : treeShape === 'royal_canopy'
+            ? 14 + tierFrac * 16
+            : 12 + tierFrac * 11;
+        const riseAngleRad = (riseDeg * Math.PI) / 180;
         const tipX = Math.max(
-          minLeftBound + cardW * 0.45,
+          minLeftBound + cardW * 0.48,
           Math.min(
-            boardWidth - 24 - cardW * 0.45,
+            boardWidth - 24 - cardW * 0.48,
             Math.round(originX + wing * Math.cos(riseAngleRad) * boughLen)
           )
         );
@@ -1986,12 +2023,10 @@ export function generateSmartLayoutFromTable(
           Math.round(originY - Math.sin(riseAngleRad) * boughLen)
         );
 
-        // Kartu G3 menempel TEPAT di TENGAH Dahan
-        const midX = (originX + tipX) / 2;
-        const midY = (originY + tipY) / 2;
+        const midX = originX + (tipX - originX) * 0.56;
+        const midY = originY + (tipY - originY) * 0.52 - Math.round(12 * (1 - tierFrac * 0.4));
 
-        // Posisi daun G3 MIRROR antara dahan kiri (-56°) & dahan kanan (+56°)
-        const g3LeafAngle = wing * (52 + Math.round(tierFrac * 12));
+        const g3LeafAngle = wing * (46 + Math.round(tierFrac * 14));
 
         const g3Id = addMemberUnit(
           item.child,
@@ -2001,9 +2036,9 @@ export function generateSmartLayoutFromTable(
           item.parent.nodeId,
           {
             spouseDir: wing,
-            cardShape: 'leaf',
+            cardShape: aiBlueprint?.cardShape && aiBlueprint.cardShape !== 'hex' ? aiBlueprint.cardShape : 'leaf',
             leafAngleDeg: g3LeafAngle,
-            leafTone: 'dark', // G3: Hijau paling tua
+            leafTone: 'dark',
             lockUnit: true,
             treeOriginX: originX,
             treeOriginY: originY,
@@ -3876,6 +3911,11 @@ export function generateSmartLayoutFromTable(
           : Math.round((((outwardAngleRad * 180) / Math.PI + 90) % 360) * 10) / 10;
 
       const primaryId = `n_${m.id}`;
+      const lotusStop = getBpStop(depth);
+      const lotusShape: InteractiveNode['cardShape'] =
+        aiBlueprint?.cardShape && aiBlueprint.cardShape !== 'hex'
+          ? aiBlueprint.cardShape
+          : 'petal';
       placedLotusNodes.push({
         id: primaryId,
         name: m.name,
@@ -3888,8 +3928,10 @@ export function generateSmartLayoutFromTable(
         memberId: m.id,
         genLevel: m.generationLevel ?? depth,
         scaleMultiplier: scaleMult,
-        cardShape: 'petal',
+        cardShape: lotusShape,
         leafAngleDeg: petalDeg,
+        customBgColor: lotusStop?.bg,
+        customBorderColor: lotusStop?.border,
       });
 
       if (lockRoot) lockedLotusIds.add(primaryId);
@@ -3939,8 +3981,10 @@ export function generateSmartLayoutFromTable(
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
           genLevel: m.generationLevel ?? depth,
           scaleMultiplier: spScale,
-          cardShape: 'petal',
+          cardShape: lotusShape,
           leafAngleDeg: petalDeg,
+          customBgColor: lotusStop?.bg,
+          customBorderColor: lotusStop?.border,
         });
         edges.push({ from: primaryId, to: spId, type: 'couple' });
       });
@@ -3951,7 +3995,7 @@ export function generateSmartLayoutFromTable(
     const getLotusRingFactor = (depth: number, siblingIdx: number): number => {
       if (depth <= 0) return 0;
       if (depth === 1) return 0.25;
-      if (depth === 2) return 0.48 * (siblingIdx % 2 === 0 ? 0.95 : 1.06);
+      if (depth === 2) return 0.49 * (siblingIdx % 2 === 0 ? 0.95 : 1.05);
       if (depth === 3) return 0.72 * (siblingIdx % 2 === 0 ? 0.94 : 1.05);
       return Math.min(0.97, 0.9 + (depth - 4) * 0.05) * (siblingIdx % 2 === 0 ? 0.96 : 1.02);
     };
@@ -3987,13 +4031,19 @@ export function generateSmartLayoutFromTable(
       // Untuk G5+, sedikit perlebar kipas di sekeliling kelopak induk agar ujung kelopak tidak rapat menumpuk
       const effSpan =
         lm.depth >= 3
-          ? Math.min(Math.PI * 0.72, Math.max(sectorSpan, lm.children.length * 0.22))
+          ? Math.min(Math.PI * 0.72, Math.max(sectorSpan, lm.children.length * 0.24))
           : sectorSpan;
       let cursorAng = midAng - effSpan / 2;
 
+      // Simetri 360° seimbang: campur porsi merata (38%) + porsi bobot keturunan (62%)
+      // agar kelopak teratai mekar penuh di semua sisi walau jumlah anak tiap cabang tidak rata!
+      const equalBlend = lm.depth <= 1 ? 0.42 : 0.26;
+      const equalShare = effSpan / Math.max(1, lm.children.length);
+
       lm.children.forEach((ch, idx) => {
-        const share = (effSpan * ch.weight) / totalChildWeight;
-        const padAng = Math.min(share * 0.08, 0.06);
+        const weightShare = (effSpan * ch.weight) / totalChildWeight;
+        const share = equalShare * equalBlend + weightShare * (1 - equalBlend);
+        const padAng = Math.min(share * 0.07, 0.05);
         placeLotusPetalBranch(
           ch,
           myId,
@@ -4193,6 +4243,11 @@ export function generateSmartLayoutFromTable(
       const primaryY = Math.round(centerY - unitDim.h / 2);
 
       const primaryId = `n_${m.id}`;
+      const molStop = getBpStop(depth);
+      const molShape: InteractiveNode['cardShape'] =
+        aiBlueprint?.cardShape && aiBlueprint.cardShape !== 'petal'
+          ? aiBlueprint.cardShape
+          : 'hex';
       placedMolNodes.push({
         id: primaryId,
         name: m.name,
@@ -4205,7 +4260,9 @@ export function generateSmartLayoutFromTable(
         memberId: m.id,
         genLevel: m.generationLevel ?? depth,
         scaleMultiplier: scaleMult,
-        cardShape: 'hex',
+        cardShape: molShape,
+        customBgColor: molStop?.bg,
+        customBorderColor: molStop?.border,
       });
 
       if (lockRoot) {
@@ -4261,7 +4318,9 @@ export function generateSmartLayoutFromTable(
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
           genLevel: m.generationLevel ?? depth,
           scaleMultiplier: spScale,
-          cardShape: 'hex',
+          cardShape: molShape,
+          customBgColor: molStop?.bg,
+          customBorderColor: molStop?.border,
         });
         edges.push({ from: primaryId, to: spId, type: 'couple' });
       });
@@ -4348,15 +4407,18 @@ export function generateSmartLayoutFromTable(
         return;
       }
 
-      // G2–G4: Sektor proporsional bobot + variasi panjang & sudut organik + stagger radial untuk rantai beradik
+      // G2–G4: Sektor proporsional + porsi minimum merata agar semua gugus seimbang
       const totalChildWeight =
         mm.children.reduce((s, c) => s + c.weight, 0) || 1;
       const sectorSpan = sectorEnd - sectorStart;
+      const equalMolShare = sectorSpan / Math.max(1, mm.children.length);
+      const molEqBlend = mm.depth === 0 ? 0.34 : 0.22;
       let cursorAng = sectorStart;
 
       mm.children.forEach((ch, idx) => {
-        const share = (sectorSpan * ch.weight) / totalChildWeight;
-        const safeMargin = Math.min(share * 0.14, 0.12);
+        const wShare = (sectorSpan * ch.weight) / totalChildWeight;
+        const share = equalMolShare * molEqBlend + wShare * (1 - molEqBlend);
+        const safeMargin = Math.min(share * 0.12, 0.1);
         const subStart = cursorAng + safeMargin;
         const subEnd = cursorAng + share - safeMargin;
         const hLen = molHash(`${ch.member.id}_len`);
@@ -4891,4 +4953,421 @@ function fitNodesInsideBoard(
   }
 
   return { nodes: adjusted, edges };
+}
+
+/**
+ * Pertumbuhan Cabang Inkremental (0 Token AI):
+ * Saat pengguna menambah/mengedit anggota di 1 cabang (mis. G3–G5) setelah desain terbentuk,
+ * posisi semua kartu lain yang sudah rapi/diedit TIDAK diacak ulang — hanya node baru yang
+ * ditumbuhkan menempel rapi di dekat induknya mengikuti gaya preset aktif.
+ */
+export function applyIncrementalBranchUpdate(params: {
+  existingNodes: InteractiveNode[];
+  existingEdges: InteractiveEdge[];
+  members: FamilyMember[];
+  presetId?: SmartPresetId;
+  boardWidth: number;
+  boardHeight: number;
+  displayMode: CardDisplayMode;
+  photoSize: PhotoFrameSize;
+  cardScale: number;
+  aiBlueprint?: NasabAiBlueprint | null;
+}): {
+  nodes: InteractiveNode[];
+  edges: InteractiveEdge[];
+  addedCount: number;
+  updatedCount: number;
+} {
+  const {
+    existingNodes,
+    existingEdges,
+    members,
+    presetId,
+    boardWidth,
+    boardHeight,
+    displayMode,
+    photoSize,
+    cardScale,
+    aiBlueprint,
+  } = params;
+
+  const memberById = new Map<string, FamilyMember>();
+  members.forEach((m) => memberById.set(m.id, m));
+
+  const spouseKey = (memberId: string, spIdx: number) => `n_${memberId}_sp_${spIdx + 1}`;
+  const altSpouseKey = (memberId: string, spIdx: number) => `node_${memberId}_sp_${spIdx}`;
+
+  // 1. Update text/photo/metadata of surviving nodes without touching their (x, y) or rotation
+  let updatedCount = 0;
+  const survivingIds = new Set<string>();
+  const nextNodes: InteractiveNode[] = [];
+
+  existingNodes.forEach((n) => {
+    // Handle merged modular containers defensively by keeping intact if head exists
+    if (n.mergedMembers && n.mergedMembers.length >= 2) {
+      nextNodes.push({ ...n });
+      survivingIds.add(n.id);
+      return;
+    }
+
+    if (n.memberId) {
+      const m = memberById.get(n.memberId);
+      if (!m) return; // removed from table
+      survivingIds.add(n.id);
+      const nextSub = formatMemberLifeSubtitle(m);
+      if (
+        n.name !== m.name ||
+        n.sub !== nextSub ||
+        n.photo !== (m.photoUrl || '') ||
+        n.wafat !== m.isDeceased ||
+        n.gender !== m.gender
+      ) {
+        updatedCount++;
+      }
+      nextNodes.push({
+        ...n,
+        name: m.name,
+        sub: nextSub,
+        photo: m.photoUrl || '',
+        wafat: m.isDeceased,
+        gender: m.gender,
+        genLevel: m.generationLevel ?? n.genLevel,
+      });
+      return;
+    }
+
+    const spMatch = n.id.match(/^(?:n|node)_(.+)_sp_(\d+)$/);
+    if (spMatch) {
+      const primaryMemberId = spMatch[1];
+      const spRawNum = Number(spMatch[2]);
+      const m = memberById.get(primaryMemberId);
+      if (!m) return;
+      const spIdx = n.id.startsWith('n_') ? spRawNum - 1 : spRawNum;
+      const sp = m.spouses?.[spIdx];
+      if (!sp) return;
+      survivingIds.add(n.id);
+      nextNodes.push({
+        ...n,
+        name: sp.name,
+        wafat: sp.status === 'cerai_mati',
+        gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : n.gender,
+        genLevel: m.generationLevel ?? n.genLevel,
+      });
+      return;
+    }
+
+    // Manual custom node not tied to table member -> keep
+    survivingIds.add(n.id);
+    nextNodes.push({ ...n });
+  });
+
+  const nextEdges: InteractiveEdge[] = existingEdges
+    .filter((e) => survivingIds.has(e.from) && survivingIds.has(e.to))
+    .map((e) => ({ ...e }));
+
+  const presentMemberIds = new Set<string>();
+  nextNodes.forEach((n) => {
+    if (n.memberId) presentMemberIds.add(n.memberId);
+    n.mergedMembers?.forEach((mm) => {
+      if (mm.memberId) presentMemberIds.add(mm.memberId);
+    });
+  });
+
+  const nodeByMemberId = new Map<string, InteractiveNode>();
+  nextNodes.forEach((n) => {
+    if (n.memberId) nodeByMemberId.set(n.memberId, n);
+  });
+
+  const occupied: Array<{ x: number; y: number; w: number; h: number }> = nextNodes.map((n) => {
+    const sz = estimateSmartNodeBoxSize(n, displayMode, photoSize, cardScale);
+    return { x: n.x, y: n.y, w: sz.w, h: sz.h };
+  });
+
+  const overlapsAny = (x: number, y: number, w: number, h: number, pad = 10): boolean => {
+    if (x < 16 || y < 56 || x + w > boardWidth - 16 || y + h > boardHeight - 16) return true;
+    for (let i = 0; i < occupied.length; i++) {
+      const o = occupied[i];
+      if (
+        x < o.x + o.w + pad &&
+        x + w + pad > o.x &&
+        y < o.y + o.h + pad &&
+        y + h + pad > o.y
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const findNearestBranchSpot = (
+    prefX: number,
+    prefY: number,
+    w: number,
+    h: number,
+    outDirX: number,
+    outDirY: number
+  ): { x: number; y: number } => {
+    const clampX = (v: number) => Math.max(18, Math.min(boardWidth - 18 - w, Math.round(v)));
+    const clampY = (v: number) => Math.max(60, Math.min(boardHeight - 18 - h, Math.round(v)));
+    const baseX = clampX(prefX);
+    const baseY = clampY(prefY);
+    if (!overlapsAny(baseX, baseY, w, h, 8)) return { x: baseX, y: baseY };
+
+    const stepX = Math.max(24, Math.round(w * 0.52));
+    const stepY = Math.max(24, Math.round(h * 0.52));
+    let best = { x: baseX, y: baseY };
+    let bestScore = Infinity;
+
+    for (let ring = 1; ring <= 9; ring++) {
+      for (let rx = -ring; rx <= ring; rx++) {
+        for (let ry = -ring; ry <= ring; ry++) {
+          if (Math.max(Math.abs(rx), Math.abs(ry)) !== ring) continue;
+          const cx = clampX(baseX + rx * stepX);
+          const cy = clampY(baseY + ry * stepY);
+          if (!overlapsAny(cx, cy, w, h, 8)) {
+            const dx = cx - baseX;
+            const dy = cy - baseY;
+            const alignmentPenalty = dx * outDirX + dy * outDirY < 0 ? 35 : 0;
+            const score = Math.hypot(dx, dy) + alignmentPenalty;
+            if (score < bestScore) {
+              bestScore = score;
+              best = { x: cx, y: cy };
+            }
+          }
+        }
+      }
+      if (bestScore < Infinity) return best;
+    }
+    return best;
+  };
+
+  const getBpStop = (gen: number) => {
+    if (!aiBlueprint?.genColors || aiBlueprint.genColors.length === 0) return undefined;
+    const idx = Math.max(0, Math.min(aiBlueprint.genColors.length - 1, Math.floor(gen)));
+    return aiBlueprint.genColors[idx];
+  };
+
+  // Check missing spouses on existing members too
+  let addedCount = 0;
+  const existingIdSet = new Set(nextNodes.map((n) => n.id));
+  members.forEach((m) => {
+    const primary = nodeByMemberId.get(m.id);
+    if (!primary || !m.spouses?.length) return;
+    const pDim = estimateSmartNodeBoxSize(primary, displayMode, photoSize, cardScale);
+    m.spouses.forEach((sp, sIdx) => {
+      const k1 = spouseKey(m.id, sIdx);
+      const k2 = altSpouseKey(m.id, sIdx);
+      if (existingIdSet.has(k1) || existingIdSet.has(k2)) return;
+      const spot = findNearestBranchSpot(
+        primary.x + (sIdx + 1) * (pDim.w + 2),
+        primary.y,
+        pDim.w,
+        pDim.h,
+        1,
+        0
+      );
+      const spNode: InteractiveNode = {
+        id: k1,
+        name: sp.name,
+        sub: `Pasangan (${sp.status === 'cerai_mati' ? 'Wafat' : sp.status === 'cerai_hidup' ? 'Cerai' : 'Menikah'})`,
+        x: spot.x,
+        y: spot.y,
+        photo: '',
+        wafat: sp.status === 'cerai_mati',
+        gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
+        genLevel: m.generationLevel ?? primary.genLevel,
+        scaleMultiplier: primary.scaleMultiplier,
+        cardShape: primary.cardShape,
+        leafAngleDeg: primary.leafAngleDeg,
+        leafTone: primary.leafTone,
+        customBgColor: primary.customBgColor,
+        customBorderColor: primary.customBorderColor,
+      };
+      nextNodes.push(spNode);
+      existingIdSet.add(k1);
+      occupied.push({ x: spot.x, y: spot.y, w: pDim.w, h: pDim.h });
+      nextEdges.push({ from: primary.id, to: k1, type: 'couple' });
+      addedCount++;
+    });
+  });
+
+  // 2. Grow newly added members near their parent node on the active branch
+  const missingMembers = members
+    .filter((m) => !presentMemberIds.has(m.id))
+    .sort(
+      (a, b) =>
+        (a.generationLevel ?? 0) - (b.generationLevel ?? 0) ||
+        (a.orderIndex ?? 0) - (b.orderIndex ?? 0)
+    );
+
+  const boardCx = boardWidth / 2;
+  const boardCy = boardHeight / 2;
+
+  missingMembers.forEach((m, mIdx) => {
+    const gen = m.generationLevel ?? 0;
+    const pNode = m.parentId ? nodeByMemberId.get(m.parentId) : undefined;
+    const bpStop = getBpStop(gen);
+
+    const cardShape: InteractiveNode['cardShape'] =
+      aiBlueprint?.cardShape ||
+      (presetId === 'teratai_mekar'
+        ? 'petal'
+        : presetId === 'molekul_organik'
+        ? 'hex'
+        : presetId === 'pohon_hayat_besar' && gen >= 2
+        ? 'leaf'
+        : 'rect');
+
+    const scaleMult =
+      presetId === 'teratai_mekar' || presetId === 'molekul_organik'
+        ? gen === 0
+          ? 1.26
+          : gen === 1
+          ? 1.08
+          : gen >= 4
+          ? 0.92
+          : 1
+        : 1;
+
+    const estNode: InteractiveNode = {
+      id: `n_${m.id}`,
+      name: m.name,
+      sub: formatMemberLifeSubtitle(m),
+      x: 0,
+      y: 0,
+      photo: m.photoUrl || '',
+      wafat: m.isDeceased,
+      scaleMultiplier: scaleMult,
+      cardShape,
+    };
+    const dim = estimateSmartNodeBoxSize(estNode, displayMode, photoSize, cardScale);
+
+    // Count existing siblings under the same parent to stagger outward fan cleanly
+    const siblingCount = pNode
+      ? nextEdges.filter((e) => e.from === pNode.id && e.type === 'child').length
+      : mIdx;
+
+    let prefX = boardCx - dim.w / 2;
+    let prefY = 80 + gen * (dim.h + 44);
+    let outX = 0;
+    let outY = 1;
+    let leafDeg: number | undefined;
+
+    if (pNode) {
+      const pDim = estimateSmartNodeBoxSize(pNode, displayMode, photoSize, cardScale);
+      const pcx = pNode.x + pDim.w / 2;
+      const pcy = pNode.y + pDim.h / 2;
+
+      if (presetId === 'pohon_hayat_besar') {
+        const wing: -1 | 1 = pNode.treeWing ?? (pcx >= boardCx ? 1 : -1);
+        const fan = (siblingCount % 5) - 2;
+        const baseAng = wing === 1 ? -0.35 + fan * 0.42 : Math.PI + 0.35 - fan * 0.42;
+        const dist = Math.max(dim.w * 1.12, dim.h * 1.15);
+        outX = Math.cos(baseAng);
+        outY = Math.sin(baseAng);
+        prefX = pcx + outX * dist - dim.w / 2;
+        prefY = pcy + outY * dist - dim.h / 2;
+        leafDeg = wing * (32 + ((siblingCount * 29) % 85));
+      } else if (presetId === 'teratai_mekar' || presetId === 'molekul_organik') {
+        const radialAng = Math.atan2(pcy - boardCy, pcx - boardCx);
+        const fanOffset = ((siblingCount % 2 === 0 ? 1 : -1) * Math.ceil(siblingCount / 2)) * 0.36;
+        const ang = (Math.hypot(pcx - boardCx, pcy - boardCy) < 20 ? -Math.PI / 2 : radialAng) + fanOffset;
+        const dist = Math.max(dim.w * 1.18, dim.h * 1.18);
+        outX = Math.cos(ang);
+        outY = Math.sin(ang);
+        prefX = pcx + outX * dist - dim.w / 2;
+        prefY = pcy + outY * dist - dim.h / 2;
+        if (presetId === 'teratai_mekar') {
+          leafDeg = Math.round((((ang * 180) / Math.PI + 90) % 360) * 10) / 10;
+        }
+      } else {
+        // Vertical/grid tree fallback: place right below/next to parent
+        const colShift = (siblingCount % 3) - 1;
+        prefX = pNode.x + colShift * (dim.w + 18);
+        prefY = pNode.y + pDim.h + 44;
+      }
+    }
+
+    const spot = findNearestBranchSpot(prefX, prefY, dim.w, dim.h, outX, outY);
+    const newId = `n_${m.id}`;
+    const newNode: InteractiveNode = {
+      id: newId,
+      memberId: m.id,
+      name: m.name,
+      sub: formatMemberLifeSubtitle(m),
+      x: spot.x,
+      y: spot.y,
+      photo: m.photoUrl || '',
+      wafat: m.isDeceased,
+      gender: m.gender,
+      genLevel: m.generationLevel ?? gen,
+      scaleMultiplier: scaleMult,
+      cardShape,
+      leafAngleDeg: leafDeg,
+      leafTone:
+        presetId === 'pohon_hayat_besar'
+          ? gen <= 2
+            ? 'dark'
+            : gen === 3
+            ? 'medium'
+            : 'light'
+          : undefined,
+      treeWing:
+        presetId === 'pohon_hayat_besar'
+          ? pNode?.treeWing ?? (spot.x + dim.w / 2 >= boardCx ? 1 : -1)
+          : undefined,
+      customBgColor: bpStop?.bg,
+      customBorderColor: bpStop?.border,
+    };
+
+    nextNodes.push(newNode);
+    nodeByMemberId.set(m.id, newNode);
+    existingIdSet.add(newId);
+    occupied.push({ x: spot.x, y: spot.y, w: dim.w, h: dim.h });
+    addedCount++;
+
+    if (pNode) {
+      nextEdges.push({ from: pNode.id, to: newId, type: 'child' });
+    }
+
+    (m.spouses || []).forEach((sp, sIdx) => {
+      const spId = spouseKey(m.id, sIdx);
+      const spSpot = findNearestBranchSpot(
+        spot.x + (sIdx + 1) * (dim.w + 2),
+        spot.y,
+        dim.w,
+        dim.h,
+        1,
+        0
+      );
+      nextNodes.push({
+        id: spId,
+        name: sp.name,
+        sub: `Pasangan (${sp.status === 'cerai_mati' ? 'Wafat' : sp.status === 'cerai_hidup' ? 'Cerai' : 'Menikah'})`,
+        x: spSpot.x,
+        y: spSpot.y,
+        photo: '',
+        wafat: sp.status === 'cerai_mati',
+        gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
+        genLevel: m.generationLevel ?? gen,
+        scaleMultiplier: scaleMult,
+        cardShape,
+        leafAngleDeg: leafDeg,
+        leafTone: newNode.leafTone,
+        customBgColor: bpStop?.bg,
+        customBorderColor: bpStop?.border,
+      });
+      existingIdSet.add(spId);
+      occupied.push({ x: spSpot.x, y: spSpot.y, w: dim.w, h: dim.h });
+      nextEdges.push({ from: newId, to: spId, type: 'couple' });
+      addedCount++;
+    });
+  });
+
+  return {
+    nodes: nextNodes,
+    edges: nextEdges,
+    addedCount,
+    updatedCount,
+  };
 }

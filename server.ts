@@ -482,6 +482,318 @@ ATURAN EKSTRAKSI:
     }
   });
 
+  // Stateless Gemini AI Blueprint Designer for NasabQu Smart Grid (0 PII/Photo payload, cached by topology signature)
+  const NASAB_BLUEPRINT_TTL_MS = 20 * 60 * 1000;
+  const volatileNasabBlueprints = new Map<
+    string,
+    { blueprint: Record<string, unknown>; expiresAt: number }
+  >();
+
+  app.post('/api/nasabqu/ai-design', express.json({ limit: '160kb' }), async (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({
+        error: 'Layanan Desain AI NasabQu belum dikonfigurasi di server (GEMINI_API_KEY tidak tersedia).',
+      });
+      return;
+    }
+
+    const body = req.body as {
+      signature?: unknown;
+      archetypeHint?: unknown;
+      stylePrompt?: unknown;
+      skeleton?: {
+        paper?: unknown;
+        totalMembers?: unknown;
+        totalWithSpouses?: unknown;
+        genCounts?: unknown;
+        nodes?: Array<{
+          id?: unknown;
+          g?: unknown;
+          pid?: unknown;
+          sp?: unknown;
+          kids?: unknown;
+          desc?: unknown;
+          nLen?: unknown;
+        }>;
+      };
+    };
+
+    const rawNodes = Array.isArray(body?.skeleton?.nodes)
+      ? body.skeleton!.nodes.slice(0, 180)
+      : [];
+    if (rawNodes.length === 0) {
+      res.status(400).json({ error: 'Struktur tabel silsilah kosong.' });
+      return;
+    }
+
+    const signature =
+      typeof body?.signature === 'string' && body.signature.trim()
+        ? body.signature.trim().slice(0, 80)
+        : '';
+
+    const now = Date.now();
+    for (const [k, v] of volatileNasabBlueprints.entries()) {
+      if (v.expiresAt <= now) volatileNasabBlueprints.delete(k);
+    }
+    if (signature && volatileNasabBlueprints.has(signature)) {
+      const cached = volatileNasabBlueprints.get(signature)!;
+      res.json({ ok: true, serverCached: true, blueprint: cached.blueprint });
+      return;
+    }
+
+    const allowedArchetypeHints = new Set(['auto', 'tree_organic', 'lotus_mandala', 'molecule_cluster']);
+    const archetypeHint =
+      typeof body?.archetypeHint === 'string' && allowedArchetypeHints.has(body.archetypeHint)
+        ? body.archetypeHint
+        : 'auto';
+    const stylePrompt =
+      typeof body?.stylePrompt === 'string'
+        ? body.stylePrompt.replace(/[\r\n]+/g, ' ').trim().slice(0, 220)
+        : '';
+
+    const sanitizeNodes = rawNodes.map((n) => ({
+      id: typeof n?.id === 'string' ? n.id.slice(0, 48) : '',
+      g: typeof n?.g === 'number' ? Math.max(0, Math.min(20, Math.floor(n.g))) : 0,
+      pid: typeof n?.pid === 'string' ? n.pid.slice(0, 48) : null,
+      sp: typeof n?.sp === 'number' ? Math.max(0, Math.min(10, Math.floor(n.sp))) : 0,
+      kids: typeof n?.kids === 'number' ? Math.max(0, Math.min(50, Math.floor(n.kids))) : 0,
+      desc: typeof n?.desc === 'number' ? Math.max(0, Math.min(500, Math.floor(n.desc))) : 0,
+      nLen: typeof n?.nLen === 'number' ? Math.max(1, Math.min(60, Math.floor(n.nLen))) : 12,
+    }));
+
+    const compactPayload = {
+      paper: typeof body?.skeleton?.paper === 'string' ? body.skeleton.paper.slice(0, 32) : 'a3 landscape',
+      totalMembers: Number(body?.skeleton?.totalMembers || sanitizeNodes.length),
+      totalWithSpouses: Number(body?.skeleton?.totalWithSpouses || sanitizeNodes.length),
+      genCounts: body?.skeleton?.genCounts || {},
+      nodes: sanitizeNodes,
+    };
+
+    const g3BranchIds = sanitizeNodes.filter((n) => n.g === 2).map((n) => n.id);
+
+    const promptText = `Anda adalah art-director & layout architect untuk diagram silsilah keluarga (NasabQu Smart Grid).
+Tugas Anda HANYA meracik BLUEPRINT JSON komposisi visual & keseimbangan cabang dari kerangka tabel anonim berikut (tanpa mengarang data anggota baru).
+
+Pilihan gaya yang diminta pengguna: "${archetypeHint}"
+Arahan artistik pengguna (opsional): "${stylePrompt || 'Estetik organik harmonis, rapi, penuh karakter alami, mudah dibaca saat cetak A4-A0'}"
+
+Data kerangka tabel (hanya ID, generasi g=0..4+, parent pid, jumlah pasangan sp, anak kids, total keturunan desc):
+${JSON.stringify(compactPayload)}
+
+ATURAN BLUEPRINT:
+1. archetype:
+   - "tree_organic": Pohon Hayat Organik (batang melengkung alami, akar bercabang, dahan/ranting kurva S, daun rimbun tua->muda).
+   - "lotus_mandala": Teratai Mekar Mandala (inti putik emas di pusat, kelopak berlapis seimbang 360°).
+   - "molecule_cluster": Molekul Organik (simpul heksagon/bulat berantai seimbang, garis ikatan langsung antar pusat).
+   (Jika archetypeHint bukan "auto", patuhi archetypeHint tersebut!)
+2. Penyeimbangan Cabang (balanceLeftIds & balanceRightIds):
+   - Jika tree_organic: bagi ID generasi ke-3 (g=2, daftar: ${JSON.stringify(g3BranchIds.slice(0, 40))}) ke sisi kiri (balanceLeftIds) vs kanan (balanceRightIds) agar total bobot keturunan (desc) kiri dan kanan SEIMBANG secara visual.
+3. Siluet & Kurva:
+   - treeShape: "banyan_arch" (beringin melebar rimbun), "pine_tiered" (cemara bertingkat), atau "royal_canopy" (kanopi megah simetris).
+   - curveTension: angka 0.30 sampai 0.90 (kehalusan kelengkungan dahan/tangkai).
+   - trunkCurve: angka -0.25 sampai 0.25 (kemiringan halus S pada batang utama agar terasa seperti pohon nyata, 0.06–0.14 ideal).
+   - rootSpread: angka 0.85 sampai 1.35.
+4. Bingkai & Palet Warna Harmonis (G1->G6 gradasi alami tua/hangat ke cerah/segar, pastikan teks kontras!):
+   - cardShape: "leaf" | "petal" | "hex" | "rect"
+   - leafVariant: "pointed" | "banyan" | "sakura"
+   - spouseMode: "compact_beside" | "vertical_pair"
+   - connectorStyle: "curved" | "straight"
+   - canvasBgColor: hex warna latar papan gelap/terang yang menyatu (contoh "#071a12" untuk hutan malam, "#0f172a" untuk galaksi, "#fdf8f6" untuk teratai terang)
+   - barkOuterColor & barkInnerColor: hex warna kulit kayu luar & urat dalam batang pohon
+   - genColors: tepat 6 item warna G1..G6 masing-masing { bg, border, line } format hex #RRGGBB.
+5. themeTitle & designRationale: singkat dalam Bahasa Indonesia (maks 1 kalimat).`;
+
+    const safeHex = (val: unknown, fallback: string): string => {
+      if (typeof val === 'string' && /^#[0-9a-fA-F]{6}$/.test(val.trim())) {
+        return val.trim().toLowerCase();
+      }
+      return fallback;
+    };
+    const clampNum = (val: unknown, min: number, max: number, fallback: number): number => {
+      const n = Number(val);
+      if (!Number.isFinite(n)) return fallback;
+      return Math.max(min, Math.min(max, n));
+    };
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
+      const response = await generateContentWithRetry(ai, {
+        model: 'gemini-4-hydrogen',
+        contents: [{ role: 'user', parts: [{ text: promptText }] }],
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              archetype: { type: Type.STRING },
+              themeTitle: { type: Type.STRING },
+              designRationale: { type: Type.STRING },
+              treeShape: { type: Type.STRING },
+              curveTension: { type: Type.NUMBER },
+              trunkCurve: { type: Type.NUMBER },
+              rootSpread: { type: Type.NUMBER },
+              balanceLeftIds: { type: Type.ARRAY, items: { type: Type.STRING } },
+              balanceRightIds: { type: Type.ARRAY, items: { type: Type.STRING } },
+              cardShape: { type: Type.STRING },
+              leafVariant: { type: Type.STRING },
+              spouseMode: { type: Type.STRING },
+              connectorStyle: { type: Type.STRING },
+              canvasBgColor: { type: Type.STRING },
+              barkOuterColor: { type: Type.STRING },
+              barkInnerColor: { type: Type.STRING },
+              genColors: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    bg: { type: Type.STRING },
+                    border: { type: Type.STRING },
+                    line: { type: Type.STRING },
+                  },
+                  required: ['bg', 'border', 'line'],
+                },
+              },
+            },
+            required: [
+              'archetype',
+              'themeTitle',
+              'designRationale',
+              'treeShape',
+              'curveTension',
+              'trunkCurve',
+              'rootSpread',
+              'cardShape',
+              'leafVariant',
+              'spouseMode',
+              'connectorStyle',
+              'canvasBgColor',
+              'barkOuterColor',
+              'barkInnerColor',
+              'genColors',
+            ],
+          },
+        },
+      });
+
+      const rawText = response.text || '';
+      if (!rawText.trim()) {
+        res.status(502).json({ error: 'AI tidak mengembalikan blueprint desain. Silakan coba lagi.' });
+        return;
+      }
+
+      const parsed = parseGeminiJsonObject<Record<string, unknown>>(rawText);
+      const validArchetypes = new Set(['tree_organic', 'lotus_mandala', 'molecule_cluster']);
+      const chosenArchetype =
+        archetypeHint !== 'auto'
+          ? archetypeHint
+          : validArchetypes.has(String(parsed.archetype))
+          ? String(parsed.archetype)
+          : 'tree_organic';
+
+      const validTreeShapes = new Set(['banyan_arch', 'pine_tiered', 'royal_canopy']);
+      const treeShape = validTreeShapes.has(String(parsed.treeShape))
+        ? String(parsed.treeShape)
+        : 'banyan_arch';
+
+      const validCardShapes = new Set(['leaf', 'petal', 'hex', 'rect']);
+      const defaultCardShape =
+        chosenArchetype === 'lotus_mandala'
+          ? 'petal'
+          : chosenArchetype === 'molecule_cluster'
+          ? 'hex'
+          : 'leaf';
+      const cardShape = validCardShapes.has(String(parsed.cardShape))
+        ? String(parsed.cardShape)
+        : defaultCardShape;
+
+      const validLeafVariants = new Set(['pointed', 'banyan', 'sakura']);
+      const leafVariant = validLeafVariants.has(String(parsed.leafVariant))
+        ? String(parsed.leafVariant)
+        : chosenArchetype === 'lotus_mandala'
+        ? 'sakura'
+        : 'banyan';
+
+      const defaultStops = [
+        { bg: '#3f1d0b', border: '#d97706', line: '#92400e' },
+        { bg: '#6b3410', border: '#f59e0b', line: '#b45309' },
+        { bg: '#166534', border: '#4ade80', line: '#22c55e' },
+        { bg: '#15803d', border: '#86efac', line: '#4ade80' },
+        { bg: '#65a30d', border: '#bef264', line: '#84cc16' },
+        { bg: '#dcfce7', border: '#16a34a', line: '#86efac' },
+      ];
+      const rawGenColors = Array.isArray(parsed.genColors) ? parsed.genColors : [];
+      const genColors = Array.from({ length: 6 }, (_, idx) => {
+        const raw = (rawGenColors[idx] || {}) as Record<string, unknown>;
+        const fb = defaultStops[idx];
+        return {
+          bg: safeHex(raw.bg, fb.bg),
+          border: safeHex(raw.border, fb.border),
+          line: safeHex(raw.line, fb.line),
+        };
+      });
+
+      const blueprint = {
+        blueprintId: `bp_${crypto.randomBytes(5).toString('hex')}`,
+        archetype: chosenArchetype,
+        themeTitle:
+          typeof parsed.themeTitle === 'string' && parsed.themeTitle.trim()
+            ? parsed.themeTitle.trim().slice(0, 64)
+            : 'Racikan Organik AI',
+        designRationale:
+          typeof parsed.designRationale === 'string' && parsed.designRationale.trim()
+            ? parsed.designRationale.trim().slice(0, 180)
+            : 'Komposisi cabang, lengkungan, dan palet diselaraskan otomatis dengan struktur tabel.',
+        treeShape,
+        curveTension: clampNum(parsed.curveTension, 0.25, 0.95, 0.62),
+        trunkCurve: clampNum(parsed.trunkCurve, -0.35, 0.35, 0.08),
+        rootSpread: clampNum(parsed.rootSpread, 0.8, 1.4, 1.12),
+        balanceLeftIds: Array.isArray(parsed.balanceLeftIds)
+          ? parsed.balanceLeftIds.filter((x): x is string => typeof x === 'string').slice(0, 60)
+          : [],
+        balanceRightIds: Array.isArray(parsed.balanceRightIds)
+          ? parsed.balanceRightIds.filter((x): x is string => typeof x === 'string').slice(0, 60)
+          : [],
+        cardShape,
+        leafVariant,
+        spouseMode: parsed.spouseMode === 'vertical_pair' ? 'vertical_pair' : 'compact_beside',
+        connectorStyle: parsed.connectorStyle === 'straight' ? 'straight' : 'curved',
+        canvasBgColor: safeHex(parsed.canvasBgColor, '#071a12'),
+        barkOuterColor: safeHex(parsed.barkOuterColor, '#4e220a'),
+        barkInnerColor: safeHex(parsed.barkInnerColor, '#b45309'),
+        genColors,
+      };
+
+      if (signature) {
+        if (volatileNasabBlueprints.size >= 100) {
+          const oldestKey = volatileNasabBlueprints.keys().next().value;
+          if (oldestKey) volatileNasabBlueprints.delete(oldestKey);
+        }
+        volatileNasabBlueprints.set(signature, {
+          blueprint,
+          expiresAt: Date.now() + NASAB_BLUEPRINT_TTL_MS,
+        });
+      }
+
+      res.json({ ok: true, serverCached: false, blueprint });
+    } catch (err) {
+      console.error('[WargaQu NasabQu AI Design] Gemini error:', err);
+      const friendly = formatFriendlyGeminiError(
+        err,
+        'Gagal meracik blueprint desain AI. Coba beberapa saat lagi.'
+      );
+      res.status(friendly.status).json({ error: friendly.message });
+    }
+  });
+
   // Stateless Gemini AI Assistant for WargaQu Smart Care (Customer Care & Troubleshooting)
   const SMARTCARE_OWNER_EMAILS = new Set(['usahaqu2026@gmail.com', 'usahaqu26@gmail.com']);
   const SMARTCARE_TICKET_TTL_MS = 7 * 24 * 60 * 60 * 1000;

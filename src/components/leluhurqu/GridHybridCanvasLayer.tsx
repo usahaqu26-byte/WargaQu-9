@@ -499,17 +499,19 @@ export const GridHybridSnapshotCanvas: React.FC<
                 ? 'medium'
                 : 'light';
             const leafFillCol =
-              resolvedLeafTone === 'dark'
+              effectiveBg ||
+              (resolvedLeafTone === 'dark'
                 ? '#14532d'
                 : resolvedLeafTone === 'medium'
                 ? '#16a34a'
-                : '#84cc16';
+                : '#84cc16');
             const leafStrokeDefault =
-              resolvedLeafTone === 'dark'
+              effectiveBorder ||
+              (resolvedLeafTone === 'dark'
                 ? '#4ade80'
                 : resolvedLeafTone === 'medium'
                 ? '#86efac'
-                : '#d9f99d';
+                : '#d9f99d');
             const leafVeinStroke =
               resolvedLeafTone === 'dark'
                 ? '#86efac'
@@ -523,24 +525,26 @@ export const GridHybridSnapshotCanvas: React.FC<
             ctx.shadowColor = 'rgba(0,0,0,0.32)';
             ctx.shadowBlur = 7;
             ctx.shadowOffsetY = 3;
-            // Bentuk daun runcing organik simetris (puncak atas, pangkal tangkai bawah)
+            // Bentuk daun botani organik simetris (puncak lancip halus, pangkal membulat bertangkai)
             ctx.beginPath();
-            ctx.moveTo(0, -leafH * 0.54);
+            ctx.moveTo(0, -leafH * 0.56);
             ctx.bezierCurveTo(
-              leafW * 0.52,
-              -leafH * 0.24,
-              leafW * 0.52,
-              leafH * 0.28,
-              0,
-              leafH * 0.52
+              leafW * 0.44,
+              -leafH * 0.3,
+              leafW * 0.56,
+              leafH * 0.14,
+              leafW * 0.24,
+              leafH * 0.44
             );
+            ctx.quadraticCurveTo(leafW * 0.1, leafH * 0.52, 0, leafH * 0.52);
+            ctx.quadraticCurveTo(-leafW * 0.1, leafH * 0.52, -leafW * 0.24, leafH * 0.44);
             ctx.bezierCurveTo(
-              -leafW * 0.52,
-              leafH * 0.28,
-              -leafW * 0.52,
-              -leafH * 0.24,
+              -leafW * 0.56,
+              leafH * 0.14,
+              -leafW * 0.44,
+              -leafH * 0.3,
               0,
-              -leafH * 0.54
+              -leafH * 0.56
             );
             ctx.closePath();
             ctx.fillStyle = leafFillCol;
@@ -552,10 +556,11 @@ export const GridHybridSnapshotCanvas: React.FC<
               : leafStrokeDefault;
             ctx.stroke();
 
-            // Tulang daun tengah
+            // Tangkai & tulang daun tengah melengkung halus
             ctx.beginPath();
-            ctx.moveTo(0, leafH * 0.5);
-            ctx.lineTo(0, -leafH * 0.44);
+            ctx.moveTo(-leafW * 0.02, leafH * 0.6);
+            ctx.quadraticCurveTo(0, leafH * 0.55, 0, leafH * 0.52);
+            ctx.quadraticCurveTo(leafW * 0.02, 0, 0, -leafH * 0.45);
             ctx.strokeStyle = leafVeinStroke;
             ctx.lineWidth = 1.4;
             ctx.stroke();
@@ -775,23 +780,52 @@ export const GridHybridSnapshotCanvas: React.FC<
               ctx.strokeStyle = petalStrokeCol;
               ctx.stroke();
             } else {
+              // Kelopak belakang lembut (efek kelopak ganda)
+              ctx.save();
+              ctx.globalAlpha = 0.42;
               ctx.beginPath();
-              ctx.moveTo(0, -petalH * 0.54);
+              ctx.moveTo(0, -petalH * 0.58);
               ctx.bezierCurveTo(
-                petalW * 0.52,
-                -petalH * 0.22,
                 petalW * 0.56,
-                petalH * 0.34,
-                0,
-                petalH * 0.52
+                -petalH * 0.26,
+                petalW * 0.6,
+                petalH * 0.28,
+                petalW * 0.22,
+                petalH * 0.48
               );
+              ctx.quadraticCurveTo(0, petalH * 0.56, -petalW * 0.22, petalH * 0.48);
               ctx.bezierCurveTo(
+                -petalW * 0.6,
+                petalH * 0.28,
                 -petalW * 0.56,
-                petalH * 0.34,
-                -petalW * 0.52,
-                -petalH * 0.22,
+                -petalH * 0.26,
                 0,
-                -petalH * 0.54
+                -petalH * 0.58
+              );
+              ctx.closePath();
+              ctx.fillStyle = petalFillCol;
+              ctx.fill();
+              ctx.restore();
+
+              // Kelopak utama teratai mekar
+              ctx.beginPath();
+              ctx.moveTo(0, -petalH * 0.55);
+              ctx.bezierCurveTo(
+                petalW * 0.48,
+                -petalH * 0.24,
+                petalW * 0.54,
+                petalH * 0.26,
+                petalW * 0.24,
+                petalH * 0.47
+              );
+              ctx.quadraticCurveTo(0, petalH * 0.54, -petalW * 0.24, petalH * 0.47);
+              ctx.bezierCurveTo(
+                -petalW * 0.54,
+                petalH * 0.26,
+                -petalW * 0.48,
+                -petalH * 0.24,
+                0,
+                -petalH * 0.55
               );
               ctx.closePath();
               ctx.fillStyle = petalFillCol;
@@ -802,6 +836,16 @@ export const GridHybridSnapshotCanvas: React.FC<
               ctx.strokeStyle = petalStrokeCol;
               ctx.stroke();
               ctx.setLineDash([]);
+
+              // Urat kelopak halus
+              ctx.beginPath();
+              ctx.moveTo(0, petalH * 0.48);
+              ctx.lineTo(0, -petalH * 0.44);
+              ctx.strokeStyle = petalStrokeCol;
+              ctx.globalAlpha = 0.45;
+              ctx.lineWidth = 1.2;
+              ctx.stroke();
+              ctx.globalAlpha = 1;
             }
             ctx.restore();
 

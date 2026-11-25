@@ -232,28 +232,31 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
       ? 'medium'
       : 'light';
   const leafFillPrimary =
-    resolvedLeafTone === 'dark'
+    effectiveBg ||
+    (resolvedLeafTone === 'dark'
       ? '#15803d'
       : resolvedLeafTone === 'medium'
       ? '#22c55e'
-      : '#84cc16';
+      : '#84cc16');
   const leafFillShade =
-    resolvedLeafTone === 'dark'
+    effectiveBg ||
+    (resolvedLeafTone === 'dark'
       ? '#14532d'
       : resolvedLeafTone === 'medium'
       ? '#15803d'
-      : '#65a30d';
+      : '#65a30d');
   const leafStrokeCol = isUnlocked
     ? '#34d399'
     : isSelected
     ? '#f59e0b'
     : isConnectSource
     ? '#38bdf8'
-    : resolvedLeafTone === 'dark'
-    ? '#4ade80'
-    : resolvedLeafTone === 'medium'
-    ? '#86efac'
-    : '#d9f99d';
+    : effectiveBorder ||
+      (resolvedLeafTone === 'dark'
+        ? '#4ade80'
+        : resolvedLeafTone === 'medium'
+        ? '#86efac'
+        : '#d9f99d');
   const leafVeinCol =
     resolvedLeafTone === 'dark'
       ? '#86efac'
@@ -286,7 +289,8 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
       ? '#f472b6'
       : '#fbcfe8');
   const petalFillShade =
-    petalGen === 0
+    effectiveBg ||
+    (petalGen === 0
       ? '#451a03'
       : petalGen === 1
       ? '#831843'
@@ -294,7 +298,7 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
       ? '#be185d'
       : petalGen === 3
       ? '#ec4899'
-      : '#f9a8d4';
+      : '#f9a8d4');
   const petalStrokeCol = isUnlocked
     ? '#34d399'
     : isSelected
@@ -401,39 +405,40 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
           style={{
             transform: `rotate(${leafAngleDeg}deg)`,
           }}
-          className={`pointer-events-none absolute -inset-[16%] z-0 flex items-center justify-center ${
+          className={`pointer-events-none absolute -inset-[17%] z-0 flex items-center justify-center ${
             node.wafat ? 'opacity-85' : ''
           }`}
         >
           <svg
-            viewBox="0 0 120 150"
+            viewBox="0 0 120 158"
             preserveAspectRatio="none"
             className="w-full h-full drop-shadow-md overflow-visible"
           >
-            {/* Belahan kiri daun */}
+            {/* Belahan kiri daun botani (ujung melancip halus, pangkal membulat) */}
             <path
-              d="M 60 6 C 12 42 10 104 60 144 Z"
+              d="M 60 4 C 24 28, 7 76, 20 116 C 28 136, 46 144, 60 144 Z"
               fill={leafFillPrimary}
             />
-            {/* Belahan kanan daun (sedikit lebih gelap untuk kedalaman) */}
+            {/* Belahan kanan daun (kedalaman cahaya alami) */}
             <path
-              d="M 60 6 C 108 42 110 104 60 144 Z"
+              d="M 60 4 C 96 28, 113 76, 100 116 C 92 136, 74 144, 60 144 Z"
               fill={leafFillShade}
+              opacity={effectiveBg ? 0.88 : 1}
             />
-            {/* Garis tepi luar daun */}
+            {/* Tangkai & garis tepi luar daun organik */}
             <path
-              d="M 60 6 C 108 42 110 104 60 144 C 10 104 12 42 60 6 Z"
+              d="M 60 4 C 96 28, 113 76, 100 116 C 92 136, 74 144, 60 144 C 46 144, 28 136, 20 116 C 7 76, 24 28, 60 4 Z"
               fill="none"
               stroke={leafStrokeCol}
-              strokeWidth={isSelected || isUnlocked ? 4.2 : 2.2}
+              strokeWidth={isSelected || isUnlocked ? 4.2 : 2.1}
               strokeDasharray={node.wafat ? '6 4' : undefined}
             />
-            {/* Tulang daun tengah & urat samping halus */}
+            {/* Tangkai pangkal + tulang daun melengkung & urat menyirip */}
             <path
-              d="M 60 148 L 60 22 M 60 106 L 34 84 M 60 88 L 86 68 M 60 68 L 36 50 M 60 50 L 82 36"
+              d="M 57 156 Q 60 149 60 144 Q 62 84 60 18 M 60 118 Q 42 104 30 92 M 60 98 Q 79 84 91 72 M 60 76 Q 40 62 31 49 M 60 54 Q 77 42 86 32"
               fill="none"
               stroke={leafVeinCol}
-              strokeWidth={1.8}
+              strokeWidth={1.7}
               strokeLinecap="round"
               opacity={0.72}
             />
@@ -476,7 +481,7 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
         </div>
       )}
 
-      {/* Bingkai Teratai Mekar: G1 Putik Emas Mahkota / G2+ Kelopak Teratai Mekar Memancar (Foto & Badge tetap 0°) */}
+      {/* Bingkai Teratai Mekar: G1 Putik Emas Mahkota / G2+ Kelopak Teratai Berlapis (Foto & Badge tetap 0°) */}
       {usePetalFrame && (
         <div
           aria-hidden="true"
@@ -488,7 +493,7 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
                 }
           }
           className={`pointer-events-none absolute ${
-            petalIsStamen ? '-inset-[14%]' : '-inset-[17%]'
+            petalIsStamen ? '-inset-[14%]' : '-inset-[18%]'
           } z-0 flex items-center justify-center ${
             node.wafat ? 'opacity-85' : ''
           }`}
@@ -521,36 +526,43 @@ const GridCardItemInner: React.FC<GridCardItemProps> = ({
             </svg>
           ) : (
             <svg
-              viewBox="0 0 120 156"
+              viewBox="0 0 120 160"
               preserveAspectRatio="none"
               className="w-full h-full drop-shadow-md overflow-visible"
             >
-              {/* Belahan kiri kelopak teratai (pangkal melengkung lebar, ujung atas runcing mekar) */}
+              {/* Lapisan kelopak belakang tipis (efek kelopak ganda teratai mekar) */}
               <path
-                d="M 60 5 C 14 44, 6 102, 34 140 C 44 150, 54 152, 60 151 Z"
+                d="M 60 2 C 26 30, 8 78, 22 126 C 32 146, 48 153, 60 153 C 72 153, 88 146, 98 126 C 112 78, 94 30, 60 2 Z"
+                fill={petalFillShade}
+                opacity={0.48}
+              />
+              {/* Belahan kiri kelopak teratai utama (ramping runcing di puncak, mekar di tengah) */}
+              <path
+                d="M 60 6 C 20 40, 10 92, 28 134 C 38 148, 52 152, 60 151 Z"
                 fill={petalFillPrimary}
               />
               {/* Belahan kanan kelopak untuk dimensi cahaya */}
               <path
-                d="M 60 5 C 106 44, 114 102, 86 140 C 76 150, 66 152, 60 151 Z"
+                d="M 60 6 C 100 40, 110 92, 92 134 C 82 148, 68 152, 60 151 Z"
                 fill={petalFillShade}
+                opacity={effectiveBg ? 0.9 : 1}
               />
               {/* Garis tepi luar kelopak teratai */}
               <path
-                d="M 60 5 C 106 44, 114 102, 86 140 C 76 150, 66 152, 60 151 C 54 152, 44 150, 34 140 C 6 102, 14 44, 60 5 Z"
+                d="M 60 6 C 100 40, 110 92, 92 134 C 82 148, 68 152, 60 151 C 52 152, 38 148, 28 134 C 10 92, 20 40, 60 6 Z"
                 fill="none"
                 stroke={petalStrokeCol}
-                strokeWidth={isSelected || isUnlocked ? 4.2 : 2.2}
+                strokeWidth={isSelected || isUnlocked ? 4.2 : 2.1}
                 strokeDasharray={node.wafat ? '6 4' : undefined}
               />
-              {/* Guratan urat kelopak teratai halus */}
+              {/* Guratan urat kelopak teratai halus melengkung */}
               <path
-                d="M 60 148 L 60 18 M 60 128 Q 34 94 42 46 M 60 128 Q 86 94 78 46"
+                d="M 60 149 L 60 18 M 60 132 Q 35 94 42 42 M 60 132 Q 85 94 78 42"
                 fill="none"
                 stroke={petalRibCol}
-                strokeWidth={1.5}
+                strokeWidth={1.4}
                 strokeLinecap="round"
-                opacity={0.58}
+                opacity={0.56}
               />
             </svg>
           )}
