@@ -198,21 +198,41 @@ jobs:
           if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
             echo "Menghapus rilis tag duplikat ${TAG_NAME} agar published_at dan --latest diperbarui segar..."
             gh release delete "${TAG_NAME}" --yes --cleanup-tag || true
-            sleep 2
+            sleep 3
           fi
 
-          for attempt in 1 2 3; do
-            if gh release create "${TAG_NAME}" \
-              "output-apk/WargaQu-${TAG_NAME}.apk" \
-              "output-apk/WargaQu-latest.apk" \
-              "output-apk/wargaqu-version.json" \
-              --target "${{ github.sha }}" \
-              --title "WargaQu ${TAG_NAME} (Build #${BUILD_CODE})" \
-              --notes "${NOTES}" \
-              --latest; then
-              exit 0
+          DELAYS=(10 20 30 45 0)
+          for attempt in 1 2 3 4 5; do
+            if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+              if gh release upload "${TAG_NAME}" \
+                "output-apk/WargaQu-${TAG_NAME}.apk" \
+                "output-apk/WargaQu-latest.apk" \
+                "output-apk/wargaqu-version.json" \
+                --clobber && \
+                gh release edit "${TAG_NAME}" \
+                --title "WargaQu ${TAG_NAME} (Build #${BUILD_CODE})" \
+                --notes "${NOTES}" \
+                --latest; then
+                exit 0
+              fi
+            else
+              if gh release create "${TAG_NAME}" \
+                "output-apk/WargaQu-${TAG_NAME}.apk" \
+                "output-apk/WargaQu-latest.apk" \
+                "output-apk/wargaqu-version.json" \
+                --target "${{ github.sha }}" \
+                --title "WargaQu ${TAG_NAME} (Build #${BUILD_CODE})" \
+                --notes "${NOTES}" \
+                --latest; then
+                exit 0
+              fi
             fi
-            echo "Percobaan rilis ke-${attempt} gagal, mencoba ulang dalam 5 detik..."
-            sleep 5
+
+            WAIT_SEC="${DELAYS[$((attempt - 1))]}"
+            if [ "${WAIT_SEC}" -gt 0 ]; then
+              echo "Percobaan rilis ke-${attempt} gagal (server GitHub API bermasalah), mencoba ulang dalam ${WAIT_SEC} detik..."
+              sleep "${WAIT_SEC}"
+            fi
           done
+          echo "⚠️ GitHub Releases API sedang gangguan (500/502). File APK sudah tersimpan di Artifacts pada run ini; silakan Re-run failed jobs setelah status GitHub pulih."
           exit 1
