@@ -87,6 +87,7 @@ import {
 import { LeluhurBookModal } from './LeluhurBookModal';
 import { TrahQrCodeCard, TrahQrScannerModal } from './TrahInviteQrModal';
 import { NuclearFamilyHubModal } from './NuclearFamilyHubModal';
+import { PhotoCropGuideModal, CropGuideShape } from './PhotoCropGuideModal';
 import { MonetizationService } from '../../services/monetizationService';
 import { ModularFeeSheet } from '../monetization/ModularFeeSheet';
 import {
@@ -1111,8 +1112,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   const [cityInput, setCityInput] = useState<string>('');
   const [isDeceasedInput, setIsDeceasedInput] = useState<boolean>(false);
   const [photoUrlInput, setPhotoUrlInput] = useState<string>('');
-  const [isCompressingPhoto, setIsCompressingPhoto] = useState<boolean>(false);
   const [photoCompressionInfo, setPhotoCompressionInfo] = useState<{ orig: number; comp: number } | null>(null);
+  const [photoCropTarget, setPhotoCropTarget] = useState<{
+    file: File;
+    kind: 'primary' | { spouseIndex: number; spouseName?: string };
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [genderInput, setGenderInput] = useState<'L' | 'P'>('L');
   const [notesInput, setNotesInput] = useState<string>('');
@@ -2761,8 +2765,9 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     setIsFormModalOpen(true);
   };
 
-  const handlePhotoUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUploadFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    if (fileInputRef.current) fileInputRef.current.value = '';
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
@@ -2770,19 +2775,23 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       return;
     }
 
-    try {
-      setIsCompressingPhoto(true);
-      const res = await compressImageFile(file, 400, 0.82);
-      setPhotoUrlInput(res.dataUrl);
-      setPhotoCompressionInfo({ orig: res.originalSizeKb, comp: res.compressedSizeKb });
-      showNotification(`Foto berhasil dikompres otomatis: ${res.originalSizeKb} KB ➔ ${res.compressedSizeKb} KB ⚡`);
-    } catch (err: any) {
-      console.error(err);
-      showNotification('Gagal memproses foto: ' + (err.message || 'Error'));
-    } finally {
-      setIsCompressingPhoto(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+    setPhotoCropTarget({ file, kind: 'primary' });
+  };
+
+  const handleSpousePhotoUploadFile = (sIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      showNotification('Pilih file gambar (JPG, PNG, WebP)!');
+      return;
     }
+
+    setPhotoCropTarget({
+      file,
+      kind: { spouseIndex: sIdx, spouseName: formSpouses[sIdx]?.name },
+    });
   };
 
   const handleRemovePhoto = () => {
@@ -3215,6 +3224,8 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       birthYear?: string;
       deathYear?: string;
       city?: string;
+      spouseIndex?: number;
+      spousePhotoUrl?: string;
     }
   ) => {
     const existing = activeTrah.members.find((m) => m.id === memberId);
@@ -3223,6 +3234,20 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
     if (!editPerm.ok) {
       showNotification(editPerm.reason || 'Profil ini terkunci.');
       return;
+    }
+
+    let nextSpouses = existing.spouses;
+    if (
+      patch.spouseIndex !== undefined &&
+      patch.spousePhotoUrl !== undefined &&
+      existing.spouses &&
+      existing.spouses[patch.spouseIndex]
+    ) {
+      nextSpouses = existing.spouses.map((sp, idx) =>
+        idx === patch.spouseIndex
+          ? { ...sp, photoUrl: patch.spousePhotoUrl || undefined }
+          : sp
+      );
     }
 
     const syncedMemberObj: FamilyMember = {
@@ -3234,6 +3259,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       ...(patch.birthYear !== undefined ? { birthYear: patch.birthYear || undefined } : {}),
       ...(patch.deathYear !== undefined ? { deathYear: patch.deathYear || undefined } : {}),
       ...(patch.city !== undefined ? { city: patch.city || undefined } : {}),
+      ...(nextSpouses !== existing.spouses ? { spouses: nextSpouses } : {}),
     };
 
     if (!canManageTrahAdmin(activeTrah, accountScope.email, accountScope.isOwner)) {
@@ -3294,7 +3320,11 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
     const cleanSpouses = formSpouses
       .filter((sp) => sp.name.trim().length > 0)
-      .map((sp, idx) => ({ ...sp, orderIndex: idx + 1 }));
+      .map((sp, idx) => ({
+        ...sp,
+        orderIndex: idx + 1,
+        photoUrl: sp.photoUrl?.trim() || undefined,
+      }));
 
     if (formMode === 'add_root') {
       const newMember: FamilyMember = {
@@ -7029,13 +7059,6 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                     )}
                   </div>
 
-                  {isCompressingPhoto && (
-                    <div className="text-[10px] font-bold text-emerald-800 flex items-center gap-1 animate-pulse">
-                      <RefreshCw className="w-3 h-3 animate-spin" />
-                      <span>Mengompres foto otomatis...</span>
-                    </div>
-                  )}
-
                   {photoCompressionInfo && (
                     <div className="text-[10px] text-emerald-800 font-mono bg-emerald-100/70 px-2 py-0.5 rounded-lg w-fit">
                       Terkoreksi: {photoCompressionInfo.orig} KB ➔ {photoCompressionInfo.comp} KB (Hemat 
@@ -7085,7 +7108,7 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
               </div>
 
               {formSpouses.map((sp, sIdx) => (
-                <div key={sp.id} className="p-2.5 bg-white rounded-xl border border-stone-200 shadow-2xs space-y-1.5">
+                <div key={sp.id} className="p-2.5 bg-white rounded-xl border border-stone-200 shadow-2xs space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-black uppercase text-stone-600">Pasangan ke-{sIdx + 1}</span>
                     <button
@@ -7114,6 +7137,58 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                       <option value="cerai_hidup">💔 Cerai Hidup</option>
                       <option value="cerai_mati">🕊️ Cerai Mati / Wafat</option>
                     </select>
+                  </div>
+
+                  {/* Entry Foto Pasangan + Panduan Tata Letak */}
+                  <div className="flex items-center gap-2.5 pt-1 border-t border-stone-100">
+                    <div className="relative shrink-0">
+                      {sp.photoUrl ? (
+                        <img
+                          src={sp.photoUrl}
+                          alt={sp.name || `Pasangan ${sIdx + 1}`}
+                          className={`w-10 h-10 object-cover border border-emerald-500 shadow-2xs ${getShapeClass(
+                            photoShape
+                          )}`}
+                        />
+                      ) : (
+                        <div
+                          className={`w-10 h-10 bg-stone-100 text-stone-400 border border-dashed border-stone-300 flex items-center justify-center ${getShapeClass(
+                            photoShape
+                          )}`}
+                        >
+                          <Camera className="w-4 h-4 text-stone-400" />
+                        </div>
+                      )}
+                      {sp.photoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateFormSpouse(sIdx, 'photoUrl', '')}
+                          className="absolute -top-1 -right-1 bg-rose-600 hover:bg-rose-700 text-white p-0.5 rounded-full shadow-2xs"
+                          title="Hapus Foto Pasangan"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex-1 flex flex-wrap items-center gap-1.5">
+                      <input
+                        id={`spouse-photo-upload-${sp.id}`}
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => handleSpousePhotoUploadFile(sIdx, e)}
+                        className="hidden"
+                      />
+                      <label
+                        htmlFor={`spouse-photo-upload-${sp.id}`}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold text-[10px] rounded-lg cursor-pointer transition"
+                      >
+                        <Upload className="w-3 h-3" />
+                        <span>{sp.photoUrl ? 'Ganti Foto Pasangan' : 'Unggah Foto Pasangan'}</span>
+                      </label>
+                      {sp.photoUrl && (
+                        <span className="text-[9.5px] font-bold text-emerald-700">✓ Foto terpasang</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -7242,12 +7317,21 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                     {selectedMember.spouses.map((sp) => {
                       const badge = getSpouseStatusBadge(sp.status);
                       return (
-                        <div key={sp.id} className="flex items-center justify-between bg-white px-2 py-1 rounded-lg border border-stone-200 text-[11px]">
-                          <span className="font-bold text-stone-800">
-                            {sp.orderIndex > 1 ? `Istri ke-${sp.orderIndex}: ` : ''}
-                            {sp.name}
-                          </span>
-                          <span className={`px-1 rounded text-[8px] font-bold border ${badge.className}`}>{badge.label}</span>
+                        <div key={sp.id} className="flex items-center justify-between bg-white px-2 py-1 rounded-lg border border-stone-200 text-[11px] gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {sp.photoUrl && (
+                              <img
+                                src={sp.photoUrl}
+                                alt={sp.name}
+                                className="w-5 h-5 rounded-full object-cover border border-emerald-400 shrink-0"
+                              />
+                            )}
+                            <span className="font-bold text-stone-800 truncate">
+                              {sp.orderIndex > 1 ? `Istri ke-${sp.orderIndex}: ` : ''}
+                              {sp.name}
+                            </span>
+                          </div>
+                          <span className={`px-1 rounded text-[8px] font-bold border shrink-0 ${badge.className}`}>{badge.label}</span>
                         </div>
                       );
                     })}
@@ -8329,6 +8413,47 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
           if (cb) cb();
         }}
         showNotification={showNotification}
+      />
+
+      <PhotoCropGuideModal
+        isOpen={Boolean(photoCropTarget)}
+        file={photoCropTarget?.file || null}
+        title={
+          photoCropTarget && photoCropTarget.kind !== 'primary'
+            ? `Atur Foto Pasangan${
+                photoCropTarget.kind.spouseName
+                  ? ` — ${photoCropTarget.kind.spouseName}`
+                  : ` ke-${photoCropTarget.kind.spouseIndex + 1}`
+              }`
+            : `Atur Foto Silsilah${nameInput.trim() ? ` — ${nameInput.trim()}` : ''}`
+        }
+        defaultGuideShape={
+          photoShape === 'circle'
+            ? 'circle'
+            : photoShape === 'hexagon'
+            ? 'hex'
+            : ('rect_3x4' as CropGuideShape)
+        }
+        onCancel={() => setPhotoCropTarget(null)}
+        onConfirm={(croppedDataUrl, sizeInfo) => {
+          if (photoCropTarget?.kind === 'primary') {
+            setPhotoUrlInput(croppedDataUrl);
+            setPhotoCompressionInfo(sizeInfo);
+            showNotification(
+              `Foto berhasil diatur & dikompres: ${sizeInfo.orig} KB ➔ ${sizeInfo.comp} KB ⚡`
+            );
+          } else if (photoCropTarget && typeof photoCropTarget.kind === 'object') {
+            handleUpdateFormSpouse(
+              photoCropTarget.kind.spouseIndex,
+              'photoUrl',
+              croppedDataUrl
+            );
+            showNotification(
+              `Foto pasangan tersimpan (${sizeInfo.orig} KB ➔ ${sizeInfo.comp} KB) ⚡`
+            );
+          }
+          setPhotoCropTarget(null);
+        }}
       />
     </div>
   );

@@ -10,6 +10,7 @@ import type {
   CanvasTheme,
   CanvasBackground,
   ConnectorLineStyle,
+  LineRoutingTopology,
   MergedCardMember,
 } from './InteractiveGridCanvasView';
 
@@ -75,6 +76,11 @@ export interface SmartLayoutPreset {
   recommendedPhotoSize: PhotoFrameSize;
   recommendedLineStyle?: ConnectorLineStyle;
   recommendedLineThicknessMode?: 'uniform' | 'tree_taper';
+  recommendedRoutingTopology?: LineRoutingTopology;
+  recommendedShowArrows?: boolean;
+  recommendedShowEndpointDots?: boolean;
+  recommendedShowLineDots?: boolean;
+  recommendedShowGenGuides?: boolean;
   recommendedGuideMode?: GuideOverlayMode;
   recommendedGenGradient?: string;
 }
@@ -1090,6 +1096,12 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedCardMode: 'photo_name',
     recommendedPhotoSize: '2x3',
     recommendedLineStyle: 'none',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'direct',
+    recommendedShowArrows: false,
+    recommendedShowEndpointDots: false,
+    recommendedShowLineDots: false,
+    recommendedShowGenGuides: true,
     recommendedGuideMode: 'modular_center',
     recommendedGenGradient: 'royal_emerald',
   },
@@ -1107,6 +1119,12 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedCardMode: 'photo_name',
     recommendedPhotoSize: '2x3',
     recommendedLineStyle: 'none',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'direct',
+    recommendedShowArrows: false,
+    recommendedShowEndpointDots: false,
+    recommendedShowLineDots: false,
+    recommendedShowGenGuides: true,
     recommendedGuideMode: 'modular_center',
     recommendedGenGradient: 'ocean_blue',
   },
@@ -1124,6 +1142,12 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedCardMode: 'full',
     recommendedPhotoSize: '2x3',
     recommendedLineStyle: 'pcb45',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'sibling_chain_all',
+    recommendedShowArrows: true,
+    recommendedShowEndpointDots: true,
+    recommendedShowLineDots: true,
+    recommendedShowGenGuides: true,
     recommendedGuideMode: 'grid_9_rows',
     recommendedGenGradient: 'royal_emerald',
   },
@@ -1141,6 +1165,12 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedCardMode: 'full',
     recommendedPhotoSize: '2x3',
     recommendedLineStyle: 'pcb45',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'sibling_chain_all',
+    recommendedShowArrows: true,
+    recommendedShowEndpointDots: true,
+    recommendedShowLineDots: true,
+    recommendedShowGenGuides: true,
     recommendedGuideMode: 'grid_9_rows',
     recommendedGenGradient: 'amber_earth',
   },
@@ -1158,6 +1188,12 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedCardMode: 'full',
     recommendedPhotoSize: 'bulat',
     recommendedLineStyle: 'straight',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'sibling_chain_all',
+    recommendedShowArrows: true,
+    recommendedShowEndpointDots: true,
+    recommendedShowLineDots: true,
+    recommendedShowGenGuides: true,
     recommendedGuideMode: 'orbit_rings',
     recommendedGenGradient: 'ocean_blue',
   },
@@ -1175,6 +1211,12 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedCardMode: 'full',
     recommendedPhotoSize: 'bulat',
     recommendedLineStyle: 'curved',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'sibling_chain_all',
+    recommendedShowArrows: true,
+    recommendedShowEndpointDots: true,
+    recommendedShowLineDots: true,
+    recommendedShowGenGuides: true,
     recommendedGuideMode: 'orbit_rings',
     recommendedGenGradient: 'violet_dusk',
   },
@@ -1192,6 +1234,12 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedCardMode: 'photo_name_unified',
     recommendedPhotoSize: 'bulat',
     recommendedLineStyle: 'none',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'direct',
+    recommendedShowArrows: false,
+    recommendedShowEndpointDots: false,
+    recommendedShowLineDots: false,
+    recommendedShowGenGuides: false,
     recommendedGuideMode: 'gen_bands',
     recommendedGenGradient: 'none',
   },
@@ -1209,6 +1257,12 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedCardMode: 'photo_name_unified',
     recommendedPhotoSize: 'bulat',
     recommendedLineStyle: 'none',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'direct',
+    recommendedShowArrows: false,
+    recommendedShowEndpointDots: false,
+    recommendedShowLineDots: false,
+    recommendedShowGenGuides: false,
     recommendedGuideMode: 'orbit_rings',
     recommendedGenGradient: 'none',
   },
@@ -1226,6 +1280,12 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedCardMode: 'photo_name_unified',
     recommendedPhotoSize: 'bulat',
     recommendedLineStyle: 'curved',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'direct',
+    recommendedShowArrows: false,
+    recommendedShowEndpointDots: false,
+    recommendedShowLineDots: false,
+    recommendedShowGenGuides: false,
     recommendedGuideMode: 'gen_bands',
     recommendedGenGradient: 'lotus_blossom',
   },
@@ -1243,7 +1303,14 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedCardMode: 'full',
     recommendedPhotoSize: '3x4',
     recommendedLineStyle: 'pcb45',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'sibling_chain_all',
+    recommendedShowArrows: true,
+    recommendedShowEndpointDots: true,
+    recommendedShowLineDots: true,
+    recommendedShowGenGuides: true,
     recommendedGuideMode: 'gen_bands',
+    recommendedGenGradient: 'none',
   },
   {
     id: 'subtree_vertical',
@@ -1259,7 +1326,14 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedCardMode: 'full',
     recommendedPhotoSize: '3x4',
     recommendedLineStyle: 'pcb45',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'sibling_chain_all',
+    recommendedShowArrows: true,
+    recommendedShowEndpointDots: true,
+    recommendedShowLineDots: true,
+    recommendedShowGenGuides: true,
     recommendedGuideMode: 'gen_bands',
+    recommendedGenGradient: 'none',
   },
   {
     id: 'pohon_hayat_besar',
@@ -1274,8 +1348,13 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedOrientation: 'landscape',
     recommendedCardMode: 'photo_name',
     recommendedPhotoSize: '2x3',
-    recommendedLineStyle: 'straight',
+    recommendedLineStyle: 'curved',
     recommendedLineThicknessMode: 'tree_taper',
+    recommendedRoutingTopology: 'sibling_chain_all',
+    recommendedShowArrows: true,
+    recommendedShowEndpointDots: false,
+    recommendedShowLineDots: false,
+    recommendedShowGenGuides: false,
     recommendedGuideMode: 'gen_bands',
     recommendedGenGradient: 'wood_leaf',
   },
@@ -1293,7 +1372,14 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedCardMode: 'full',
     recommendedPhotoSize: '2x3',
     recommendedLineStyle: 'pcb45',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'sibling_chain_all',
+    recommendedShowArrows: true,
+    recommendedShowEndpointDots: true,
+    recommendedShowLineDots: true,
+    recommendedShowGenGuides: true,
     recommendedGuideMode: 'gen_bands',
+    recommendedGenGradient: 'none',
   },
   {
     id: 'family_cluster',
@@ -1309,7 +1395,14 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedCardMode: 'name_only',
     recommendedPhotoSize: '2x3',
     recommendedLineStyle: 'pcb45',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'sibling_chain_all',
+    recommendedShowArrows: true,
+    recommendedShowEndpointDots: true,
+    recommendedShowLineDots: true,
+    recommendedShowGenGuides: true,
     recommendedGuideMode: 'gen_bands',
+    recommendedGenGradient: 'none',
   },
   {
     id: 'heritage_showcase',
@@ -1325,7 +1418,14 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedCardMode: 'full',
     recommendedPhotoSize: '3x4',
     recommendedLineStyle: 'pcb45',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'sibling_chain_all',
+    recommendedShowArrows: true,
+    recommendedShowEndpointDots: true,
+    recommendedShowLineDots: true,
+    recommendedShowGenGuides: true,
     recommendedGuideMode: 'gen_bands',
+    recommendedGenGradient: 'none',
   },
 ];
 
@@ -1616,7 +1716,7 @@ export function generateSmartLayoutFromTable(
           })`,
           x: Math.round(unitStartX + (sIdx + 1) * (cardW + coupleGap)),
           y: Math.round(topY),
-          photo: '',
+          photo: sp.photoUrl || '',
           wafat: sp.status === 'cerai_mati',
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
           genLevel: m.generationLevel ?? block.depth,
@@ -1865,7 +1965,7 @@ export function generateSmartLayoutFromTable(
           })`,
           x: spX,
           y: clampedY,
-          photo: '',
+          photo: sp.photoUrl || '',
           wafat: sp.status === 'cerai_mati',
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
           genLevel: m.generationLevel ?? gen,
@@ -2495,7 +2595,7 @@ export function generateSmartLayoutFromTable(
           })`,
           x: Math.round(leftX),
           y: Math.round(unitStartY + (sIdx + 1) * (cardH + spouseGapY)),
-          photo: '',
+          photo: sp.photoUrl || '',
           wafat: sp.status === 'cerai_mati',
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
           genLevel: m.generationLevel ?? depth,
@@ -2629,7 +2729,7 @@ export function generateSmartLayoutFromTable(
             originalNodeId: spId,
             name: sp.name,
             sub: sp.status === 'cerai_mati' ? 'Pasangan (Wafat)' : 'Pasangan',
-            photo: '',
+            photo: sp.photoUrl || '',
             wafat: sp.status === 'cerai_mati',
             gender: cm.gender === 'L' ? 'P' : cm.gender === 'P' ? 'L' : undefined,
             genLevel: cur.depth,
@@ -2795,7 +2895,7 @@ export function generateSmartLayoutFromTable(
           sub: sp.status === 'cerai_mati' ? 'Pasangan (Wafat)' : 'Pasangan',
           x: Math.round(startX + (sIdx + 1) * unitDim.w), // 0mm menempel rapat!
           y: Math.round(topY),
-          photo: '',
+          photo: sp.photoUrl || '',
           wafat: sp.status === 'cerai_mati',
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
           genLevel: m.generationLevel ?? depth,
@@ -3284,7 +3384,7 @@ export function generateSmartLayoutFromTable(
           })`,
           x: Math.round(primaryNode.x + (sIdx + 1) * (cardW + coupleGap)),
           y: primaryNode.y,
-          photo: '',
+          photo: sp.photoUrl || '',
           wafat: sp.status === 'cerai_mati',
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
           genLevel: tm.depth,
@@ -3338,7 +3438,7 @@ export function generateSmartLayoutFromTable(
             originalNodeId: spId,
             name: sp.name,
             sub: `Pasangan`,
-            photo: '',
+            photo: sp.photoUrl || '',
             wafat: sp.status === 'cerai_mati',
             gender: cm.gender === 'L' ? 'P' : cm.gender === 'P' ? 'L' : undefined,
             genLevel: cur.depth,
@@ -3693,7 +3793,7 @@ export function generateSmartLayoutFromTable(
             originalNodeId: spId,
             name: sp.name,
             sub: 'Pasangan',
-            photo: '',
+            photo: sp.photoUrl || '',
             wafat: sp.status === 'cerai_mati',
             gender: cm.gender === 'L' ? 'P' : cm.gender === 'P' ? 'L' : undefined,
             genLevel: cur.depth,
@@ -3817,7 +3917,7 @@ export function generateSmartLayoutFromTable(
             sub: `Pasangan`,
             x: Math.round(primaryNode.x + dirSign * spOffset),
             y: primaryNode.y,
-            photo: '',
+            photo: sp.photoUrl || '',
             wafat: sp.status === 'cerai_mati',
             gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
             genLevel: om.depth,
@@ -4178,7 +4278,7 @@ export function generateSmartLayoutFromTable(
           })`,
           x: Math.max(18, Math.min(boardWidth - 18 - spDim.w, spX)),
           y: Math.max(64, Math.min(boardHeight - 20 - spDim.h, spY)),
-          photo: '',
+          photo: sp.photoUrl || '',
           wafat: sp.status === 'cerai_mati',
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
           genLevel: m.generationLevel ?? depth,
@@ -4635,19 +4735,13 @@ export function generateSmartLayoutFromTable(
       '#eab308',
     ];
 
-    const tintLightHex = (hexColor: string, whiteRatio = 0.85): string => {
-      const clean = hexColor.replace('#', '');
-      if (clean.length !== 6) return '#f8fafc';
-      const r = parseInt(clean.slice(0, 2), 16);
-      const g = parseInt(clean.slice(2, 4), 16);
-      const b = parseInt(clean.slice(4, 6), 16);
-      const nr = Math.round(r * (1 - whiteRatio) + 255 * whiteRatio);
-      const ng = Math.round(g * (1 - whiteRatio) + 255 * whiteRatio);
-      const nb = Math.round(b * (1 - whiteRatio) + 255 * whiteRatio);
-      return `#${nr.toString(16).padStart(2, '0')}${ng
-        .toString(16)
-        .padStart(2, '0')}${nb.toString(16).padStart(2, '0')}`;
-    };
+    const HIVE_GEN_GRADIENT: Array<{ bg: string; border: string }> = [
+      { bg: '#fef3c7', border: '#d97706' }, // G1: Emas Hangat
+      { bg: '#d1fae5', border: '#059669' }, // G2: Zamrud
+      { bg: '#ccfbf1', border: '#0d9488' }, // G3: Toska
+      { bg: '#e0f2fe', border: '#0284c7' }, // G4: Biru Langit
+      { bg: '#f0f9ff', border: '#38bdf8' }, // G5+: Biru Lembut
+    ];
 
     interface HiveMeta {
       member: FamilyMember;
@@ -4868,19 +4962,12 @@ export function generateSmartLayoutFromTable(
           ? 'g3'
           : 'g4plus';
 
-      const activeBorder =
-        hm.depth <= 0
-          ? '#f59e0b'
-          : hm.depth === 1
-          ? hm.lineageG2Color || '#0ea5e9'
-          : hm.depth === 2
-          ? hm.lineageG3Color || hm.lineageG2Color || '#10b981'
-          : hm.lineageG4Color ||
-            hm.lineageG3Color ||
-            hm.lineageG2Color ||
-            '#38bdf8';
-      const activeBg =
-        hm.depth <= 0 ? '#fef3c7' : tintLightHex(activeBorder, 0.84);
+      const genPalette =
+        HIVE_GEN_GRADIENT[
+          Math.max(0, Math.min(HIVE_GEN_GRADIENT.length - 1, hm.depth))
+        ];
+      const activeBorder = genPalette.border;
+      const activeBg = genPalette.bg;
 
       const primaryId = `n_${m.id}`;
       placedHiveNodes.push({
@@ -4972,7 +5059,7 @@ export function generateSmartLayoutFromTable(
             })`,
             x: Math.round(spCenter.cx - hexW / 2),
             y: Math.round(spCenter.cy - hexH / 2),
-            photo: '',
+            photo: sp.photoUrl || '',
             wafat: sp.status === 'cerai_mati',
             gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
             genLevel: m.generationLevel ?? hm.depth,
@@ -5936,10 +6023,18 @@ export function applyIncrementalBranchUpdate(params: {
       const spIdx = n.id.startsWith('n_') ? spRawNum - 1 : spRawNum;
       const sp = m.spouses?.[spIdx];
       if (!sp) return;
+      if (
+        n.name !== sp.name ||
+        n.photo !== (sp.photoUrl || '') ||
+        n.wafat !== (sp.status === 'cerai_mati')
+      ) {
+        updatedCount++;
+      }
       survivingIds.add(n.id);
       nextNodes.push({
         ...n,
         name: sp.name,
+        photo: sp.photoUrl || '',
         wafat: sp.status === 'cerai_mati',
         gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : n.gender,
         genLevel: m.generationLevel ?? n.genLevel,
@@ -6063,7 +6158,7 @@ export function applyIncrementalBranchUpdate(params: {
         sub: `Pasangan (${sp.status === 'cerai_mati' ? 'Wafat' : sp.status === 'cerai_hidup' ? 'Cerai' : 'Menikah'})`,
         x: spot.x,
         y: spot.y,
-        photo: '',
+        photo: sp.photoUrl || '',
         wafat: sp.status === 'cerai_mati',
         gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
         genLevel: m.generationLevel ?? primary.genLevel,

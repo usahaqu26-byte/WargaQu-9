@@ -78,6 +78,7 @@ import {
   DEVICE_PAIRING_SYNC_EVENT,
   PairingSyncEventDetail,
 } from '../../services/devicePairingService';
+import { PhotoCropGuideModal, CropGuideShape } from './PhotoCropGuideModal';
 import { ModularFeeSheet } from '../monetization/ModularFeeSheet';
 import { GridCardItem } from './GridCardItem';
 import {
@@ -289,6 +290,8 @@ export interface InteractiveGridCanvasViewProps {
       birthYear?: string;
       deathYear?: string;
       city?: string;
+      spouseIndex?: number;
+      spousePhotoUrl?: string;
     }
   ) => void;
   showNotification: (msg: string) => void;
@@ -730,7 +733,7 @@ function buildCanvasFromTrah(
               ? 'Cerai'
               : 'Menikah'
           })`,
-          photo: '',
+          photo: sp.photoUrl || '',
           wafat: sp.status === 'cerai_mati',
           gender: (m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined) as 'L' | 'P' | undefined,
         })),
@@ -1847,7 +1850,7 @@ function reconcileCanvasWithMembers(
             sub: 'Pasangan',
             x: spSpot.x,
             y: spSpot.y,
-            photo: '',
+            photo: sp.photoUrl || '',
             wafat: sp.status === 'cerai_mati',
             gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
             genLevel: m.generationLevel,
@@ -1909,6 +1912,7 @@ export const InteractiveGridCanvasView: React.FC<
   const [photoFrameSize, setPhotoFrameSize] =
     useState<PhotoFrameSize>('3x4');
   const [photoShape, setPhotoShape] = useState<GridPhotoShape>(defaultPhotoShape);
+  const [pendingCropFile, setPendingCropFile] = useState<File | null>(null);
   const [cardScale, setCardScale] = useState<number>(1);
   const [cardGapMm, setCardGapMm] = useState<number>(3.5);
   const [modularG12Position, setModularG12Position] = useState<'top' | 'center'>('center');
@@ -4109,49 +4113,10 @@ export const InteractiveGridCanvasView: React.FC<
         setPaperSize(nextPaper);
       }
 
-      if (presetId === 'pohon_hayat_besar') {
-        setLineStyle('curved');
-        setLineThicknessMode('tree_taper');
-        setLineRoutingTopology('sibling_chain_all');
-        setCardFrameMode('auto');
-        setGenGradientPalette('wood_leaf');
-        setLinesOnTop(false);
-        setShowLineArrows(true);
-      } else if (presetId === 'teratai_mekar') {
-        setLineStyle('curved');
-        setLineThicknessMode('uniform');
-        setLineRoutingTopology('direct');
-        setCardFrameMode('auto');
-        setGenGradientPalette('lotus_blossom');
-        setLinesOnTop(false);
-        setShowLineArrows(false);
-        setShowEndpointDots(false);
-        nextCardMode = 'photo_name_unified';
-        nextPhotoSize = 'bulat';
-        setCardDisplayMode(nextCardMode);
-        setPhotoFrameSize(nextPhotoSize);
-      } else if (
-        presetId === 'sarang_lebah_turun' ||
-        presetId === 'sarang_lebah_pusat' ||
-        presetId === 'molekul_organik'
-      ) {
-        setLineStyle('none');
-        setLineThicknessMode('uniform');
-        setLineRoutingTopology('direct');
-        setCardFrameMode('auto');
-        setGenGradientPalette('none');
-        setLinesOnTop(false);
-        setShowLineArrows(false);
-        setShowEndpointDots(false);
-        nextCardMode = 'photo_name_unified';
-        nextPhotoSize = 'bulat';
-        setCardDisplayMode(nextCardMode);
-        setPhotoFrameSize(nextPhotoSize);
-      } else {
-        setLineThicknessMode(preset.recommendedLineThicknessMode || 'uniform');
-      }
+      const shouldApplyPresetProfile =
+        applyRecommendedStyle && !preserveCardAppearance;
 
-      if (applyRecommendedStyle && !preserveCardAppearance) {
+      if (shouldApplyPresetProfile) {
         if (!keepCurrentPaper) {
           nextOrient = preset.recommendedOrientation;
           setPaperOrientation(nextOrient);
@@ -4162,14 +4127,39 @@ export const InteractiveGridCanvasView: React.FC<
         setPhotoFrameSize(nextPhotoSize);
         setTheme(preset.recommendedTheme);
         setBgStyle(preset.recommendedBg);
+        setCardFrameMode('auto');
+        setLinesOnTop(false);
+        setLineStyle(preset.recommendedLineStyle || 'pcb45');
+        setLineThicknessMode(preset.recommendedLineThicknessMode || 'uniform');
+        setLineRoutingTopology(
+          preset.recommendedRoutingTopology || 'sibling_chain_all'
+        );
+        setShowLineArrows(preset.recommendedShowArrows ?? true);
+        setShowEndpointDots(preset.recommendedShowEndpointDots ?? true);
+        setShowLineDots(preset.recommendedShowLineDots ?? true);
+        setGenGradientPalette(
+          (preset.recommendedGenGradient || 'none') as GenGradientPaletteId
+        );
+      } else {
+        // Saat mode preserveCardAppearance (mis. ganti posisi G1-G2 / fokus cabang):
+        // tetap pulihkan karakter garis milik preset jika diperlukan tanpa merusak tampilan kartu pengguna
+        setCardFrameMode('auto');
+        setLineThicknessMode(preset.recommendedLineThicknessMode || 'uniform');
         if (preset.recommendedLineStyle) {
           setLineStyle(preset.recommendedLineStyle);
         }
-        if (preset.recommendedGenGradient) {
-          setGenGradientPalette(preset.recommendedGenGradient as GenGradientPaletteId);
+        if (preset.recommendedRoutingTopology) {
+          setLineRoutingTopology(preset.recommendedRoutingTopology);
         }
-      } else if (preset.recommendedLineStyle && !preserveCardAppearance) {
-        setLineStyle(preset.recommendedLineStyle);
+        if (preset.recommendedShowArrows !== undefined) {
+          setShowLineArrows(preset.recommendedShowArrows);
+        }
+        if (preset.recommendedShowEndpointDots !== undefined) {
+          setShowEndpointDots(preset.recommendedShowEndpointDots);
+        }
+        if (preset.recommendedShowLineDots !== undefined) {
+          setShowLineDots(preset.recommendedShowLineDots);
+        }
       }
 
       const targetPaperObj = GRID_PAPER_MAP[nextPaper];
@@ -4233,12 +4223,8 @@ export const InteractiveGridCanvasView: React.FC<
       const nextGuideMode: GuideOverlayMode =
         preset.recommendedGuideMode || 'gen_bands';
       setGuideOverlayMode(nextGuideMode);
-      if (
-        presetId === 'sarang_lebah_turun' ||
-        presetId === 'sarang_lebah_pusat' ||
-        presetId === 'teratai_mekar'
-      ) {
-        setShowGenGuides(false);
+      if (preset.recommendedShowGenGuides !== undefined) {
+        setShowGenGuides(preset.recommendedShowGenGuides);
       } else if (
         presetId === 'hierarchy_grid_fill' ||
         nextGuideMode === 'grid_9_rows' ||
@@ -6065,6 +6051,7 @@ export const InteractiveGridCanvasView: React.FC<
     }
     const selSet = new Set(selectedIds);
     const syncedMemberIds: string[] = [];
+    const syncedSpouseTargets: Array<{ memberId: string; spouseIndex: number }> = [];
     const linkedSpouseUpdates = new Map<string, 'L' | 'P'>();
     if (patch.gender) {
       edges.forEach((e) => {
@@ -6079,7 +6066,18 @@ export const InteractiveGridCanvasView: React.FC<
 
     const nextNodes = nodes.map((n) => {
       if (selSet.has(n.id)) {
-        if (n.memberId) syncedMemberIds.push(n.memberId);
+        if (n.memberId) {
+          syncedMemberIds.push(n.memberId);
+        } else {
+          const spMatch = n.id.match(/^(?:n|node)_(.+)_sp_(\d+)$/);
+          if (spMatch) {
+            const rawIdx = Number(spMatch[2]);
+            const spouseIndex = n.id.startsWith('n_') ? rawIdx - 1 : rawIdx;
+            if (spouseIndex >= 0) {
+              syncedSpouseTargets.push({ memberId: spMatch[1], spouseIndex });
+            }
+          }
+        }
         return { ...n, ...patch };
       }
       if (!n.memberId && linkedSpouseUpdates.has(n.id)) {
@@ -6110,6 +6108,15 @@ export const InteractiveGridCanvasView: React.FC<
       if (patch.photo !== undefined) memberPatch.photoUrl = patch.photo;
       syncedMemberIds.forEach((mId) => onSyncMember(mId, memberPatch));
     }
+
+    if (onSyncMember && syncedSpouseTargets.length > 0 && patch.photo !== undefined) {
+      syncedSpouseTargets.forEach((spTarget) =>
+        onSyncMember(spTarget.memberId, {
+          spouseIndex: spTarget.spouseIndex,
+          spousePhotoUrl: patch.photo,
+        })
+      );
+    }
   };
 
   const handleToggleMergedMemberGender = (mergedNodeId: string, mmIndex: number) => {
@@ -6135,42 +6142,13 @@ export const InteractiveGridCanvasView: React.FC<
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file || !primarySelectedNode) return;
-
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const maxSize = 400;
-        let w = img.width;
-        let h = img.height;
-        if (w > h) {
-          if (w > maxSize) {
-            h = Math.round((h * maxSize) / w);
-            w = maxSize;
-          }
-        } else {
-          if (h > maxSize) {
-            w = Math.round((w * maxSize) / h);
-            h = maxSize;
-          }
-        }
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
-          ctx.drawImage(img, 0, 0, w, h);
-          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
-          updateSelectedField({ photo: compressedDataUrl });
-          showNotification('Foto dikompres ringan (400px) & siap di-upscale HD saat unduh/cetak!');
-        }
-      };
-      img.src = evt.target?.result as string;
-    };
-    reader.readAsDataURL(file);
+    if (!file.type.startsWith('image/')) {
+      showNotification('Pilih file gambar (JPG, PNG, WebP)!');
+      return;
+    }
+    setPendingCropFile(file);
   };
 
   const removeConnectionsOfSelected = () => {
@@ -6755,10 +6733,6 @@ export const InteractiveGridCanvasView: React.FC<
         string,
         { color: string; g2Id?: string; cells: Set<string> }
       >();
-      const g4Map = new Map<
-        string,
-        { color: string; g3Id?: string; cells: Set<string> }
-      >();
 
       hexLatticeNodes.forEach((n) => {
         const c = n.hexCol!;
@@ -6819,16 +6793,6 @@ export const InteractiveGridCanvasView: React.FC<
             });
           }
           g3Map.get(n.lineageG3Id)!.cells.add(ck);
-        }
-        if (tier === 'g4plus' && n.lineageG4Id && n.lineageG4Color) {
-          if (!g4Map.has(n.lineageG4Id)) {
-            g4Map.set(n.lineageG4Id, {
-              color: n.lineageG4Color,
-              g3Id: n.lineageG3Id,
-              cells: new Set(),
-            });
-          }
-          g4Map.get(n.lineageG4Id)!.cells.add(ck);
         }
       });
 
@@ -7039,19 +7003,7 @@ export const InteractiveGridCanvasView: React.FC<
         });
       });
 
-      // 3. Sekat warna berbeda untuk tiap kelompok G4+G5 di dalam G3!
-      g4Map.forEach((entry, id) => {
-        const res = buildPerimeterFromCells(entry.cells);
-        if (!res.d) return;
-        out.push({
-          id: `hull-g4-${id}`,
-          d: res.d,
-          fill: 'none',
-          stroke: hexWithAlpha(entry.color, isDarkCanvas ? 0.92 : 0.9),
-          strokeWidth: 2.3,
-          level: 4,
-        });
-      });
+      // (Celah antar card G4 & G5 di dalam G3 dibiarkan kosong polos tanpa garis sekat)
 
       // 4. Bingkai emas G1 dan pembatas G2 jangkar
       const g1Perim = buildPerimeterFromCells(g1Cells);
@@ -12448,7 +12400,7 @@ export const InteractiveGridCanvasView: React.FC<
                             undefined,
                             undefined,
                             undefined,
-                            true
+                            false
                           )
                         }
                         title={opt.preset.title}
@@ -13094,6 +13046,33 @@ export const InteractiveGridCanvasView: React.FC<
           </div>
         </div>
       )}
+
+      <PhotoCropGuideModal
+        isOpen={Boolean(pendingCropFile)}
+        file={pendingCropFile}
+        title={
+          primarySelectedNode
+            ? `Atur Foto — ${primarySelectedNode.name}`
+            : 'Atur Tata Letak Foto'
+        }
+        defaultGuideShape={
+          primarySelectedNode?.cardShape === 'hex'
+            ? 'hex'
+            : primarySelectedNode?.cardShape === 'petal' || photoShape === 'bulat'
+            ? 'circle'
+            : photoShape === 'segi6'
+            ? 'hex'
+            : ('rect_3x4' as CropGuideShape)
+        }
+        onCancel={() => setPendingCropFile(null)}
+        onConfirm={(croppedDataUrl, sizeInfo) => {
+          updateSelectedField({ photo: croppedDataUrl });
+          setPendingCropFile(null);
+          showNotification(
+            `Foto terpasang & terkompres rapi (${sizeInfo.orig} KB ➔ ${sizeInfo.comp} KB) ⚡`
+          );
+        }}
+      />
     </div>
   );
 };

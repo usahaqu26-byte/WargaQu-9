@@ -5,6 +5,7 @@ export interface SpouseInfo {
   status: 'menikah' | 'cerai_hidup' | 'cerai_mati';
   marriageYear?: string;
   divorceYear?: string;
+  photoUrl?: string;
   notes?: string;
 }
 
@@ -548,6 +549,7 @@ function buildSpouseInfosFromHub(spouses: NuclearSpouseItem[]): SpouseInfo[] {
       name: sp.name.trim(),
       orderIndex: idx + 1,
       status: sp.status || 'menikah',
+      photoUrl: sp.photoUrl || undefined,
       notes: sp.city ? `Domisili: ${sp.city}` : undefined,
     }));
 }
@@ -817,7 +819,7 @@ export function applyMemberEditToHub(
               city: hub.spouses[i]?.city,
               birthYear: hub.spouses[i]?.birthYear,
               callName: hub.spouses[i]?.callName,
-              photoUrl: hub.spouses[i]?.photoUrl,
+              photoUrl: sp.photoUrl || hub.spouses[i]?.photoUrl,
               isDeceased: sp.status === 'cerai_mati',
             }))
           : hub.spouses,
