@@ -4124,6 +4124,10 @@ export const InteractiveGridCanvasView: React.FC<
     ) => {
       const preset = SMART_LAYOUT_PRESETS.find((p) => p.id === presetId);
       if (!preset) return;
+      if (preset.isLocked) {
+        showNotification(`Tata letak "${preset.title}" sedang dikunci.`);
+        return;
+      }
       pushUndoSnapshot(`Smart: ${preset.title}`);
 
       const sourceMembers = overrideMembers ?? windowedMembers;
@@ -4323,7 +4327,7 @@ export const InteractiveGridCanvasView: React.FC<
 
       const targetPresetId: SmartPresetId =
         bp.archetype === 'tree_organic'
-          ? 'pohon_hayat_besar'
+          ? 'subtree_vertical'
           : bp.archetype === 'lotus_mandala'
           ? 'teratai_mekar'
           : bp.archetype === 'honeycomb_tier'
@@ -4341,27 +4345,26 @@ export const InteractiveGridCanvasView: React.FC<
           : cardDisplayMode === 'name_only'
           ? 'photo_name'
           : cardDisplayMode;
+      const isTreeTarget = targetPresetId === 'subtree_vertical';
       const nextPhotoSize: PhotoFrameSize =
-        targetPresetId === 'pohon_hayat_besar' ? photoFrameSize : 'bulat';
+        isTreeTarget ? photoFrameSize : 'bulat';
 
       setCardFrameMode('auto');
       setLineStyle(isHoneycombTarget ? 'none' : bp.connectorStyle);
-      setLineThicknessMode(targetPresetId === 'pohon_hayat_besar' ? 'tree_taper' : 'uniform');
+      setLineThicknessMode('uniform');
       setLineRoutingTopology(
         targetPresetId === 'teratai_mekar' || isHoneycombTarget
           ? 'direct'
           : 'sibling_chain_all'
       );
-      setShowLineArrows(targetPresetId === 'pohon_hayat_besar');
+      setShowLineArrows(isTreeTarget);
       setShowEndpointDots(!isHoneycombTarget);
       setLinesOnTop(false);
       setBgStyle('');
       setChildLineColor(bp.genColors?.[0]?.line || '');
       setCoupleLineColor('#f59e0b');
       setSiblingLineColor(bp.genColors?.[2]?.line || '');
-      if (targetPresetId === 'pohon_hayat_besar') {
-        setGenGradientPalette('wood_leaf');
-      } else if (targetPresetId === 'teratai_mekar') {
+      if (targetPresetId === 'teratai_mekar') {
         setGenGradientPalette('lotus_blossom');
       } else {
         setGenGradientPalette('none');
@@ -6779,12 +6782,27 @@ export const InteractiveGridCanvasView: React.FC<
       >();
       const cellToG4Meta = new Map<
         string,
-        { g4Id: string; color: string }
+        {
+          g4Id: string;
+          color: string;
+          cx: number;
+          cy: number;
+          verts: Array<{ x: number; y: number }>;
+        }
       >();
       const g4Groups = new Map<
         string,
         { color: string; cells: Set<string> }
       >();
+
+      const HEX_NORM_VERTS: ReadonlyArray<[number, number]> = [
+        [60 / 120, 2 / 138],
+        [117 / 120, 35.5 / 138],
+        [117 / 120, 102.5 / 138],
+        [60 / 120, 136 / 138],
+        [3 / 120, 102.5 / 138],
+        [3 / 120, 35.5 / 138],
+      ];
 
       hexLatticeNodes.forEach((n) => {
         const c = n.hexCol!;
@@ -6846,14 +6864,42 @@ export const InteractiveGridCanvasView: React.FC<
           }
           g3Map.get(n.lineageG3Id)!.cells.add(ck);
         }
+
+        // Kelompok keluarga inti: pasangan G1/G2/G3 serta blok keluarga inti G4+pasangan+G5
+        let nuclearFamId: string | null = null;
+        let nuclearColor = '#0ea5e9';
         if (tier === 'g4plus' && n.lineageG4Id) {
-          const seamColor =
+          nuclearFamId = `g4:${n.lineageG4Id}`;
+          nuclearColor =
             n.lineageG4Color || n.lineageG3Color || n.lineageG2Color || '#0ea5e9';
-          cellToG4Meta.set(ck, { g4Id: n.lineageG4Id, color: seamColor });
-          if (!g4Groups.has(n.lineageG4Id)) {
-            g4Groups.set(n.lineageG4Id, { color: seamColor, cells: new Set() });
+        } else if (tier === 'g3' && n.lineageG3Id) {
+          nuclearFamId = `g3:${n.lineageG3Id}`;
+          nuclearColor = n.lineageG3Color || n.lineageG2Color || '#0ea5e9';
+        } else if (tier === 'g2' && n.lineageG2Id) {
+          nuclearFamId = `g2:${n.lineageG2Id}`;
+          nuclearColor = n.lineageG2Color || '#10b981';
+        } else if (tier === 'g1') {
+          nuclearFamId = 'g1:core';
+          nuclearColor = '#f59e0b';
+        }
+
+        if (nuclearFamId) {
+          const nSz = getNodeSize(n, cardDisplayMode, photoFrameSize, cardScale);
+          const verts = HEX_NORM_VERTS.map(([nx, ny]) => ({
+            x: Math.round((n.x + nx * nSz.w) * 10) / 10,
+            y: Math.round((n.y + ny * nSz.h) * 10) / 10,
+          }));
+          cellToG4Meta.set(ck, {
+            g4Id: nuclearFamId,
+            color: nuclearColor,
+            cx: n.x + nSz.w / 2,
+            cy: n.y + nSz.h / 2,
+            verts,
+          });
+          if (!g4Groups.has(nuclearFamId)) {
+            g4Groups.set(nuclearFamId, { color: nuclearColor, cells: new Set() });
           }
-          g4Groups.get(n.lineageG4Id)!.cells.add(ck);
+          g4Groups.get(nuclearFamId)!.cells.add(ck);
         }
       });
 
@@ -7064,45 +7110,107 @@ export const InteractiveGridCanvasView: React.FC<
         });
       });
 
-      // 3. Celah internal di DALAM satu keluarga inti G4–G5 (lineageG4Id yang sama) dihubungkan halus;
-      //    celah keluar menuju keluarga inti G4 lain atau ruang kosong tetap dibiarkan polos!
-      const g4SeamSegmentsByFamily = new Map<
+      // 3. Isi celah tebal menempel ke kartu di DALAM satu keluarga inti (sama g4Id):
+      //    mengisi persegi panjang miring tepat di antara tepi dua kartu + segitiga simpul Y 3-arah,
+      //    sedangkan celah antar keluarga inti berbeda tetap kosong polos!
+      const g4FlushChannelByFamily = new Map<
         string,
         { color: string; parts: string[] }
       >();
+      const vVertexMembers = new Map<
+        string,
+        Array<{ famId: string; color: string; ptIn: { x: number; y: number } }>
+      >();
+      const tuckPx = 2.4;
+
       cellToG4Meta.forEach((meta, ck) => {
         const coord = cellToCoord.get(ck);
         if (!coord) return;
         const [c, r] = coord;
         const cv = getCellVerts(c, r);
+
+        for (let vi = 0; vi < 6; vi++) {
+          const vk = vKey(cv[vi][0], cv[vi][1]);
+          const pt = meta.verts[vi];
+          const dxC = meta.cx - pt.x;
+          const dyC = meta.cy - pt.y;
+          const lenC = Math.hypot(dxC, dyC) || 1;
+          const ptIn = {
+            x: Math.round((pt.x + (dxC / lenC) * tuckPx) * 10) / 10,
+            y: Math.round((pt.y + (dyC / lenC) * tuckPx) * 10) / 10,
+          };
+          if (!vVertexMembers.has(vk)) vVertexMembers.set(vk, []);
+          vVertexMembers.get(vk)!.push({ famId: meta.g4Id, color: meta.color, ptIn });
+        }
+
         for (let k = 0; k < 6; k++) {
           const [nc, nr] = getNeighborCell(c, r, k);
           const nck = cellKey(nc, nr);
           if (ck >= nck) continue;
           const nbrMeta = cellToG4Meta.get(nck);
           if (!nbrMeta || nbrMeta.g4Id !== meta.g4Id) continue;
-          const p1 = vToPx(cv[k][0], cv[k][1]);
-          const p2 = vToPx(cv[(k + 1) % 6][0], cv[(k + 1) % 6][1]);
-          if (!g4SeamSegmentsByFamily.has(meta.g4Id)) {
-            g4SeamSegmentsByFamily.set(meta.g4Id, {
+
+          const a0 = meta.verts[k];
+          const a1 = meta.verts[(k + 1) % 6];
+          const b1 = nbrMeta.verts[(k + 3) % 6];
+          const b0 = nbrMeta.verts[(k + 4) % 6];
+
+          const edx = a1.x - a0.x;
+          const edy = a1.y - a0.y;
+          const elen = Math.hypot(edx, edy) || 1;
+          const nx = edy / elen;
+          const ny = -edx / elen;
+
+          const pA0x = Math.round((a0.x - nx * tuckPx) * 10) / 10;
+          const pA0y = Math.round((a0.y - ny * tuckPx) * 10) / 10;
+          const pA1x = Math.round((a1.x - nx * tuckPx) * 10) / 10;
+          const pA1y = Math.round((a1.y - ny * tuckPx) * 10) / 10;
+          const pB1x = Math.round((b1.x + nx * tuckPx) * 10) / 10;
+          const pB1y = Math.round((b1.y + ny * tuckPx) * 10) / 10;
+          const pB0x = Math.round((b0.x + nx * tuckPx) * 10) / 10;
+          const pB0y = Math.round((b0.y + ny * tuckPx) * 10) / 10;
+
+          if (!g4FlushChannelByFamily.has(meta.g4Id)) {
+            g4FlushChannelByFamily.set(meta.g4Id, {
               color: meta.color,
               parts: [],
             });
           }
-          g4SeamSegmentsByFamily
+          g4FlushChannelByFamily
             .get(meta.g4Id)!
-            .parts.push(`M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`);
+            .parts.push(
+              `M ${pA0x} ${pA0y} L ${pA1x} ${pA1y} L ${pB1x} ${pB1y} L ${pB0x} ${pB0y} Z`
+            );
         }
       });
 
-      g4SeamSegmentsByFamily.forEach((entry, g4Id) => {
+      // Isi simpul segitiga Y 3-arah jika 3 sel dalam satu keluarga inti bertemu di 1 simpul
+      vVertexMembers.forEach((items) => {
+        if (items.length !== 3) return;
+        const famId = items[0].famId;
+        if (!items.every((it) => it.famId === famId)) return;
+        if (!g4FlushChannelByFamily.has(famId)) {
+          g4FlushChannelByFamily.set(famId, {
+            color: items[0].color,
+            parts: [],
+          });
+        }
+        g4FlushChannelByFamily
+          .get(famId)!
+          .parts.push(
+            `M ${items[0].ptIn.x} ${items[0].ptIn.y} L ${items[1].ptIn.x} ${items[1].ptIn.y} L ${items[2].ptIn.x} ${items[2].ptIn.y} Z`
+          );
+      });
+
+      g4FlushChannelByFamily.forEach((entry, famId) => {
         if (entry.parts.length === 0) return;
+        const fillCol = hexWithAlpha(entry.color, isDarkCanvas ? 0.88 : 0.9);
         out.push({
-          id: `hull-g4-intraseam-${g4Id}`,
+          id: `hull-g4-intraseam-${famId}`,
           d: entry.parts.join(' '),
-          fill: 'none',
-          stroke: hexWithAlpha(entry.color, isDarkCanvas ? 0.56 : 0.48),
-          strokeWidth: 2.0,
+          fill: fillCol,
+          stroke: fillCol,
+          strokeWidth: 0.9,
           level: 4,
         });
       });
@@ -7110,6 +7218,7 @@ export const InteractiveGridCanvasView: React.FC<
       // Jika keluarga inti G4–G5 punya >1 komponen terpisah (mis. ada 1 celah kosong di dalamnya),
       // hubungkan hanya antar komponen milik keluarga inti yang sama tanpa menyentuh keluarga lain
       g4Groups.forEach((grp, g4Id) => {
+        if (!g4Id.startsWith('g4:')) return;
         if (grp.cells.size < 2) return;
         const unvisited = new Set(grp.cells);
         const components: Array<Set<string>> = [];
@@ -7145,8 +7254,8 @@ export const InteractiveGridCanvasView: React.FC<
                 id: `hull-g4-intrabridge-${g4Id}-${i}`,
                 d: intraBridge,
                 fill: 'none',
-                stroke: hexWithAlpha(grp.color, isDarkCanvas ? 0.52 : 0.45),
-                strokeWidth: 1.8,
+                stroke: hexWithAlpha(grp.color, isDarkCanvas ? 0.82 : 0.84),
+                strokeWidth: Math.max(8, Math.round(hexGap * 0.72)),
                 level: 4,
               });
             }
@@ -9901,9 +10010,14 @@ export const InteractiveGridCanvasView: React.FC<
                         <button
                           key={preset.id}
                           type="button"
+                          disabled={Boolean(preset.isLocked)}
                           onClick={() => handleApplySmartPreset(preset.id)}
                           className={`w-full text-left p-2 rounded-xl border transition flex items-center gap-2.5 group ${
-                            isTop
+                            preset.isLocked
+                              ? isDark
+                                ? 'bg-slate-900/40 border-slate-800 opacity-55 cursor-not-allowed'
+                                : 'bg-stone-100 border-stone-200 opacity-60 cursor-not-allowed'
+                              : isTop
                               ? isDark
                                 ? 'bg-emerald-950/45 border-emerald-500/70 hover:border-amber-400'
                                 : 'bg-emerald-50 border-emerald-400 hover:border-amber-500'
@@ -9914,7 +10028,9 @@ export const InteractiveGridCanvasView: React.FC<
                         >
                           <div
                             className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
-                              preset.category === 'orbit'
+                              preset.isLocked
+                                ? 'bg-stone-700/30 border-stone-600/40 text-stone-400'
+                                : preset.category === 'orbit'
                                 ? 'bg-sky-500/15 border-sky-400/40 text-sky-400'
                                 : preset.category === 'kotak9'
                                 ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-400'
@@ -9923,7 +10039,11 @@ export const InteractiveGridCanvasView: React.FC<
                                 : 'bg-amber-500/15 border-amber-400/40 text-amber-400'
                             }`}
                           >
-                            <PresetIcon className="w-4 h-4" />
+                            {preset.isLocked ? (
+                              <Lock className="w-4 h-4" />
+                            ) : (
+                              <PresetIcon className="w-4 h-4" />
+                            )}
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center justify-between gap-1">
@@ -9932,7 +10052,9 @@ export const InteractiveGridCanvasView: React.FC<
                               </span>
                               <span
                                 className={`text-[8.5px] px-1.5 py-0.5 rounded font-black shrink-0 ${
-                                  isTop
+                                  preset.isLocked
+                                    ? 'bg-stone-700/80 text-stone-300'
+                                    : isTop
                                     ? 'bg-amber-400 text-slate-950'
                                     : preset.category === 'orbit'
                                     ? 'bg-sky-500/20 text-sky-300'
@@ -9943,7 +10065,7 @@ export const InteractiveGridCanvasView: React.FC<
                                     : 'bg-slate-700/60 text-slate-300'
                                 }`}
                               >
-                                {isTop ? '★' : preset.badge}
+                                {preset.isLocked ? '🔒 Terkunci' : isTop ? '★' : preset.badge}
                               </span>
                             </div>
                             <div className="text-[9.5px] opacity-75 truncate mt-0.5">
@@ -12675,10 +12797,12 @@ export const InteractiveGridCanvasView: React.FC<
                         : opt.preset.id === 'hierarchy_grid_fill'
                         ? '▤'
                         : '⑂';
+                    const isLockedPreset = Boolean(opt.preset.isLocked);
                     return (
                       <button
                         key={opt.preset.id}
                         type="button"
+                        disabled={isLockedPreset}
                         onClick={() =>
                           handleApplySmartPreset(
                             opt.preset.id,
@@ -12689,9 +12813,15 @@ export const InteractiveGridCanvasView: React.FC<
                             false
                           )
                         }
-                        title={opt.preset.title}
+                        title={
+                          isLockedPreset
+                            ? `${opt.preset.title} (Sedang Dikunci)`
+                            : opt.preset.title
+                        }
                         className={`min-w-[116px] max-w-[144px] shrink-0 text-left px-2 py-1.5 rounded-xl border transition ${
-                          isActive
+                          isLockedPreset
+                            ? 'bg-stone-900/60 border-stone-800 text-stone-400 opacity-55 cursor-not-allowed'
+                            : isActive
                             ? 'bg-emerald-500/20 border-emerald-400 text-white shadow-xs'
                             : opt.isTopPick
                             ? 'bg-stone-800/95 border-amber-400/50 text-stone-100 hover:border-amber-300'
@@ -12699,15 +12829,27 @@ export const InteractiveGridCanvasView: React.FC<
                         }`}
                       >
                         <div className="text-[10.5px] font-extrabold truncate flex items-center gap-1">
-                          <span>{presetSymbol}</span>
+                          <span>{isLockedPreset ? '🔒' : presetSymbol}</span>
                           <span className="truncate">{opt.preset.badge}</span>
                         </div>
                         <div className="text-[9px] font-mono tabular-nums text-stone-300 mt-0.5 truncate">
-                          <span className={isClean ? 'text-emerald-300 font-bold' : 'text-amber-300 font-bold'}>
-                            {isClean ? '0✓' : `${opt.quality.overlapCount}!`}
-                          </span>
-                          {' · '}
-                          <span>{Math.round(opt.optimalScale * 100)}%</span>
+                          {isLockedPreset ? (
+                            <span className="text-stone-400 font-bold">Terkunci</span>
+                          ) : (
+                            <>
+                              <span
+                                className={
+                                  isClean
+                                    ? 'text-emerald-300 font-bold'
+                                    : 'text-amber-300 font-bold'
+                                }
+                              >
+                                {isClean ? '0✓' : `${opt.quality.overlapCount}!`}
+                              </span>
+                              {' · '}
+                              <span>{Math.round(opt.optimalScale * 100)}%</span>
+                            </>
+                          )}
                         </div>
                       </button>
                     );
@@ -13267,7 +13409,12 @@ export const InteractiveGridCanvasView: React.FC<
                     type="button"
                     onClick={() => {
                       setAiBlueprint(null);
-                      const pId = activePresetId || 'pohon_hayat_besar';
+                      const pId =
+                        activePresetId &&
+                        activePresetId !== 'pohon_hayat_besar' &&
+                        activePresetId !== 'tetris_silsilah'
+                          ? activePresetId
+                          : 'subtree_vertical';
                       const rebuilt = rebuildSmartLayoutPreservingVisuals(
                         windowedMembers,
                         pId,

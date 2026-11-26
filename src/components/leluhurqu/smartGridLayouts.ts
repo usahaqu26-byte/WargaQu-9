@@ -69,6 +69,7 @@ export interface SmartLayoutPreset {
   subtitle: string;
   badge: string;
   category: 'kotak9' | 'orbit' | 'modular' | 'klasik';
+  isLocked?: boolean;
   description: string;
   recommendedTheme: CanvasTheme;
   recommendedBg: CanvasBackground;
@@ -1080,7 +1081,9 @@ export function buildSmartGalleryOptions(
       const balanceScore =
         quality.coveragePct >= 18 && quality.coveragePct <= 72 ? 80 : 30;
       const presetBonus = pid === summary.topPresetId ? 65 : 0;
-      const score = cleanBonus - overlapPenalty + scaleScore + balanceScore + presetBonus;
+      const lockedPenalty = preset.isLocked ? -100000 : 0;
+      const score =
+        cleanBonus - overlapPenalty + scaleScore + balanceScore + presetBonus + lockedPenalty;
 
       return {
         preset,
@@ -1094,8 +1097,9 @@ export function buildSmartGalleryOptions(
     .filter((x): x is SmartGalleryOption => Boolean(x));
 
   evaluated.sort((a, b) => b.score - a.score);
-  if (evaluated.length > 0) {
-    evaluated[0].isTopPick = true;
+  const firstUnlocked = evaluated.find((item) => !item.preset.isLocked);
+  if (firstUnlocked) {
+    firstUnlocked.isTopPick = true;
   }
   return evaluated;
 }
@@ -1153,6 +1157,7 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     subtitle: 'G1–G2 1 Warna Gradasi • G3–G5 Warna Sama per Cabang • Blok Keluarga 1–4+ Kartu',
     badge: 'Tetris',
     category: 'modular',
+    isLocked: true,
     description:
       'Setiap keluarga inti (orang tua, pasangan, dan anak) membentuk blok Tetris rapat tersendiri (1 kartu tunggal hingga 4+ kartu berdempetan). G1–G2 memakai satu gradasi hangat, sedangkan tiap cabang G3–G5 memakai satu warna khas yang berbeda antar cabang G3.',
     recommendedTheme: 'dark',
@@ -1383,6 +1388,7 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     subtitle: 'G1–G2 Kakak Bawah➔Bungsu Atas • Dahan G3 Ganjil Kiri/Genap Kanan • Ranting G4–G5 Menyirip',
     badge: 'Pohon Petai',
     category: 'klasik',
+    isLocked: true,
     description:
       'Pohon besar berbatang & berakar kokoh seperti pohon petai: G2 tersusun dari kakak (bawah) ke bungsu (atas), dahan G3 bercabang ganjil ke kiri & genap ke kanan (kakak dekat G2, bungsu di ujung), serta ranting kecil G4–G5 bersirip ganjil bawah & genap atas.',
     recommendedTheme: 'dark',
