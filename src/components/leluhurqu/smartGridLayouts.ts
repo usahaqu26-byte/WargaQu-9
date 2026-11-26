@@ -23,6 +23,7 @@ export type SmartPresetId =
   | 'sarang_lebah_turun'
   | 'sarang_lebah_pusat'
   | 'molekul_organik'
+  | 'tetris_silsilah'
   | 'modular_g3_I'
   | 'modular_g3_L'
   | 'hierarchy_grid_fill'
@@ -849,7 +850,21 @@ export function computeOptimalCardScale(
   const effPreset: SmartPresetId =
     presetId || (totalCards > 16 ? 'hierarchy_grid_fill' : 'subtree_vertical');
   const minAllowedScale =
-    totalCards >= 85 ? 0.35 : totalCards >= 45 ? 0.42 : totalCards >= 24 ? 0.48 : 0.55;
+    effPreset === 'tetris_silsilah'
+      ? totalCards >= 95
+        ? 0.32
+        : totalCards >= 60
+        ? 0.36
+        : totalCards >= 32
+        ? 0.42
+        : 0.5
+      : totalCards >= 85
+      ? 0.35
+      : totalCards >= 45
+      ? 0.42
+      : totalCards >= 24
+      ? 0.48
+      : 0.55;
   const maxAllowedScale = totalCards <= 10 ? 1.35 : totalCards <= 24 ? 1.15 : 0.95;
 
   const scaleCandidates: number[] = [];
@@ -984,6 +999,7 @@ export function buildSmartGalleryOptions(
     ? [
         'sarang_lebah_turun',
         'sarang_lebah_pusat',
+        'tetris_silsilah',
         'teratai_mekar',
         'modular_g3_I',
         'modular_g3_L',
@@ -996,6 +1012,7 @@ export function buildSmartGalleryOptions(
     : [
         'sarang_lebah_turun',
         'sarang_lebah_pusat',
+        'tetris_silsilah',
         'teratai_mekar',
         'subtree_vertical',
         'kotak_9_baris',
@@ -1015,8 +1032,10 @@ export function buildSmartGalleryOptions(
         pid === 'sarang_lebah_pusat' ||
         pid === 'teratai_mekar'
           ? 'photo_name_unified'
+          : pid === 'tetris_silsilah'
+          ? 'photo_name'
           : displayMode;
-      const effPhoto = photoSize;
+      const effPhoto = pid === 'tetris_silsilah' ? 'kotak' : photoSize;
       const optScale = computeOptimalCardScale(
         members,
         boardWidth,
@@ -1127,6 +1146,29 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
     recommendedShowGenGuides: true,
     recommendedGuideMode: 'modular_center',
     recommendedGenGradient: 'ocean_blue',
+  },
+  {
+    id: 'tetris_silsilah',
+    title: 'Tetris Silsilah (Blok Keluarga Inti · Tanpa Garis)',
+    subtitle: 'G1–G2 1 Warna Gradasi • G3–G5 Warna Sama per Cabang • Blok Keluarga 1–4+ Kartu',
+    badge: 'Tetris',
+    category: 'modular',
+    description:
+      'Setiap keluarga inti (orang tua, pasangan, dan anak) membentuk blok Tetris rapat tersendiri (1 kartu tunggal hingga 4+ kartu berdempetan). G1–G2 memakai satu gradasi hangat, sedangkan tiap cabang G3–G5 memakai satu warna khas yang berbeda antar cabang G3.',
+    recommendedTheme: 'dark',
+    recommendedBg: '',
+    recommendedOrientation: 'landscape',
+    recommendedCardMode: 'photo_name',
+    recommendedPhotoSize: 'kotak',
+    recommendedLineStyle: 'none',
+    recommendedLineThicknessMode: 'uniform',
+    recommendedRoutingTopology: 'direct',
+    recommendedShowArrows: false,
+    recommendedShowEndpointDots: false,
+    recommendedShowLineDots: false,
+    recommendedShowGenGuides: false,
+    recommendedGuideMode: 'gen_bands',
+    recommendedGenGradient: 'none',
   },
   {
     id: 'kotak_9_baris',
@@ -1337,12 +1379,12 @@ export const SMART_LAYOUT_PRESETS: SmartLayoutPreset[] = [
   },
   {
     id: 'pohon_hayat_besar',
-    title: 'Pohon Cemara Bertingkat · Terkunci',
-    subtitle: 'Dikunci sementara sesuai arahan · Batang 75% ➔ Dahan Zigzag ➔ Daun',
-    badge: 'Pohon Besar',
+    title: 'Pohon Besar Petai (Kokoh · Daun Menyirip)',
+    subtitle: 'G1–G2 Kakak Bawah➔Bungsu Atas • Dahan G3 Ganjil Kiri/Genap Kanan • Ranting G4–G5 Menyirip',
+    badge: 'Pohon Petai',
     category: 'klasik',
     description:
-      'Mode Pohon Hayat Besar dikunci sementara menjaga tata letak yang ada: batang tengah 75% tinggi kertas, dahan naik untuk G3, ranting untuk G4, dan daun G5 dekat G4.',
+      'Pohon besar berbatang & berakar kokoh seperti pohon petai: G2 tersusun dari kakak (bawah) ke bungsu (atas), dahan G3 bercabang ganjil ke kiri & genap ke kanan (kakak dekat G2, bungsu di ujung), serta ranting kecil G4–G5 bersirip ganjil bawah & genap atas.',
     recommendedTheme: 'dark',
     recommendedBg: '',
     recommendedOrientation: 'landscape',
@@ -1840,18 +1882,19 @@ export function generateSmartLayoutFromTable(
   }
 
   // -------------------------------------------------------------------------
-  // MODE POHON BESAR DIPISAH TEGAS:
-  // Batang 75% tinggi (100->50px) + Dahan Zigzag Naik 3-4 lapis (70->40px)
-  // + Ranting (45->20px) + G3-G5 Daun Mirror (G3 tua -> G4 sedang -> G5 muda)
+  // MODE POHON BESAR PETAI (KOKOH · DAUN MENYIRIP INDIGOFERA)
+  // - G1 di pangkal batang & akar kokoh; G2 di batang: Kakak (bawah) ➔ Bungsu (atas)
+  // - Dahan G3 dari setiap G2: Ganjil (1,3,5) Kiri & Genap (2,4,6) Kanan; Kakak dekat G2 ➔ Bungsu ke ujung dahan
+  // - Ranting kecil G4 & daun G5+ menyirip (petai/indigofera): G4 Ganjil sisi BAWAH dahan & Genap sisi ATAS dahan
   // -------------------------------------------------------------------------
   if (presetId === 'pohon_hayat_besar') {
     const trunkX = Math.round(boardWidth / 2);
-    const minLeftBound = 24;
-    const maxRightBound = Math.max(minLeftBound + 40, boardWidth - 24 - cardW);
-    const minTopBound = 66;
-    const rootFootMargin = Math.max(46, Math.min(72, Math.round(boardHeight * 0.062)));
+    const minLeftBound = 22;
+    const maxRightBound = Math.max(minLeftBound + 40, boardWidth - 22 - cardW);
+    const minTopBound = 64;
+    const rootFootMargin = Math.max(50, Math.min(76, Math.round(boardHeight * 0.068)));
     const trunkBaseY = boardHeight - rootFootMargin;
-    const trunkHeight = Math.max(240, Math.round(boardHeight * 0.75));
+    const trunkHeight = Math.max(250, Math.round(boardHeight * 0.77));
     const trunkTopY = Math.max(minTopBound + 18, trunkBaseY - trunkHeight);
 
     const placedMemberIds = new Set<string>();
@@ -1901,11 +1944,10 @@ export function generateSmartLayoutFromTable(
       );
       const clampedY = Math.max(
         minTopBound,
-        Math.min(boardHeight - 24 - cardH, Math.round(y))
+        Math.min(boardHeight - 22 - cardH, Math.round(y))
       );
       const primaryId = `n_${m.id}`;
-
-    const bpStop0 = getBpStop(gen);
+      const bpStop0 = getBpStop(gen);
       nodes.push({
         id: primaryId,
         name: m.name,
@@ -1917,7 +1959,13 @@ export function generateSmartLayoutFromTable(
         gender: m.gender,
         memberId: m.id,
         genLevel: m.generationLevel ?? gen,
-        cardShape: optsNode?.cardShape ?? (gen >= 2 ? (aiBlueprint?.cardShape && aiBlueprint.cardShape !== 'hex' ? aiBlueprint.cardShape : 'leaf') : 'rect'),
+        cardShape:
+          optsNode?.cardShape ??
+          (gen >= 2
+            ? aiBlueprint?.cardShape && aiBlueprint.cardShape !== 'hex'
+              ? aiBlueprint.cardShape
+              : 'leaf'
+            : 'rect'),
         leafAngleDeg: optsNode?.leafAngleDeg,
         leafTone: optsNode?.leafTone,
         customBgColor: bpStop0?.bg,
@@ -1969,10 +2017,16 @@ export function generateSmartLayoutFromTable(
           wafat: sp.status === 'cerai_mati',
           gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
           genLevel: m.generationLevel ?? gen,
-          cardShape: optsNode?.cardShape ?? (gen >= 2 ? (aiBlueprint?.cardShape && aiBlueprint.cardShape !== 'hex' ? aiBlueprint.cardShape : 'leaf') : 'rect'),
+          cardShape:
+            optsNode?.cardShape ??
+            (gen >= 2
+              ? aiBlueprint?.cardShape && aiBlueprint.cardShape !== 'hex'
+                ? aiBlueprint.cardShape
+                : 'leaf'
+              : 'rect'),
           leafAngleDeg:
             optsNode?.leafAngleDeg !== undefined
-              ? optsNode.leafAngleDeg + (spDir > 0 ? 12 : -12)
+              ? optsNode.leafAngleDeg + (spDir > 0 ? 10 : -10)
               : undefined,
           leafTone: optsNode?.leafTone,
           customBgColor: bpStop0?.bg,
@@ -1984,19 +2038,28 @@ export function generateSmartLayoutFromTable(
       return primaryId;
     };
 
-    // 1. G1 di pangkal bawah Batang (dengan sedikit offset S-curve alami bila di-blueprint)
+    // 1. G1 di pangkal bawah batang & akar kokoh
     const primaryRoots = roots.length > 0 ? roots : members.slice(0, 1);
-    const g1Y = Math.max(minTopBound + 140, trunkBaseY - cardH - 12);
+    const g1Y = Math.max(minTopBound + 150, trunkBaseY - cardH - 12);
     const rootSpreadStep = Math.max(cardW * 2.2, Math.round(boardWidth * 0.24));
-    const trunkSwayFactor = aiBlueprint?.trunkCurve ?? 0.08;
-    const trunkTopOffsetX = Math.round(boardWidth * 0.055 * trunkSwayFactor);
-    const trunkTopX = Math.max(minLeftBound + cardW, Math.min(maxRightBound, trunkX + trunkTopOffsetX));
+    const trunkSwayFactor = aiBlueprint?.trunkCurve ?? 0.05;
+    const trunkTopOffsetX = Math.round(boardWidth * 0.04 * trunkSwayFactor);
+    const trunkTopX = Math.max(
+      minLeftBound + cardW,
+      Math.min(maxRightBound, trunkX + trunkTopOffsetX)
+    );
+    const trunkSpineAtY = (targetY: number) => {
+      const f = Math.max(0, Math.min(1, (trunkBaseY - targetY) / Math.max(1, trunkHeight)));
+      return Math.round(
+        trunkX +
+          Math.sin(f * Math.PI) * (-trunkTopOffsetX * 0.65) +
+          f * trunkTopOffsetX
+      );
+    };
 
     primaryRoots.forEach((rootM, rIdx) => {
       const offsetMul =
-        rIdx === 0
-          ? 0
-          : (rIdx % 2 === 1 ? -1 : 1) * Math.ceil(rIdx / 2);
+        rIdx === 0 ? 0 : (rIdx % 2 === 1 ? -1 : 1) * Math.ceil(rIdx / 2);
       const rx = trunkX - cardW / 2 + offsetMul * rootSpreadStep;
       addMemberUnit(rootM, rx, g1Y, rootM.generationLevel ?? 0, null, {
         spouseDir: offsetMul < 0 ? -1 : 1,
@@ -2009,12 +2072,14 @@ export function generateSmartLayoutFromTable(
       });
     });
 
-    // 2. G2 menempel sepanjang Batang Utama yang melengkung lembut
+    // 2. G2 menempel sepanjang Batang Kokoh: KAKAK di BAWAH (idx 0) ➔ BUNGSU di ATAS (idx akhir)
     interface TrunkEntry {
       member: FamilyMember;
       nodeId: string;
       x: number;
       y: number;
+      cy: number;
+      wingClearanceX: number;
     }
     const g2Entries: TrunkEntry[] = [];
     const g2All: Array<{ member: FamilyMember; parentNodeId: string }> = [];
@@ -2027,32 +2092,26 @@ export function generateSmartLayoutFromTable(
       });
     });
 
-    const g2BottomY = g1Y - cardH - Math.max(14, Math.round(cardH * 0.22));
+    const g2BottomY = g1Y - cardH - Math.max(18, Math.round(cardH * 0.28));
     const g2TopLimitY = Math.max(
-      minTopBound + 34,
-      trunkTopY + Math.round(trunkHeight * 0.14)
+      minTopBound + Math.round(cardH * 1.15),
+      trunkTopY + Math.round(trunkHeight * 0.1)
     );
-    const g2SpanH = Math.max(cardH + 10, g2BottomY - g2TopLimitY);
+    const g2SpanH = Math.max(cardH + 14, g2BottomY - g2TopLimitY);
     const g2Count = g2All.length;
     const g2StepY =
       g2Count <= 1
         ? 0
-        : Math.max(
-            cardH + 10,
-            Math.min(g2SpanH / Math.max(1, g2Count - 1), cardH + 38)
-          );
+        : Math.max(cardH + 14, g2SpanH / Math.max(1, g2Count - 1));
 
     g2All.forEach(({ member: g2M, parentNodeId }, idx) => {
-      const revIdx = g2Count - 1 - idx;
+      // Kakak (idx=0) di bawah (g2BottomY), Bungsu (idx=g2Count-1) di atas (g2TopLimitY)
       const yPos =
         g2Count <= 1
           ? Math.round((g2BottomY + g2TopLimitY) / 2)
-          : Math.round(g2BottomY - revIdx * g2StepY);
-      const safeY = Math.max(minTopBound + 24, Math.min(g2BottomY, yPos));
-      const spineFrac = Math.max(0, Math.min(1, (trunkBaseY - safeY) / Math.max(1, trunkHeight)));
-      const swayX = Math.round(
-        trunkX + Math.sin(spineFrac * Math.PI) * (-trunkTopOffsetX * 0.7) + spineFrac * trunkTopOffsetX
-      );
+          : Math.round(g2BottomY - idx * g2StepY);
+      const safeY = Math.max(g2TopLimitY, Math.min(g2BottomY, yPos));
+      const swayX = trunkSpineAtY(safeY);
       const spDir: 1 | -1 = idx % 2 === 0 ? 1 : -1;
       const g2Id = addMemberUnit(
         g2M,
@@ -2067,254 +2126,276 @@ export function generateSmartLayoutFromTable(
         }
       );
       const pos = nodePosByMember.get(g2M.id);
+      const spCount = g2M.spouses?.length || 0;
+      const wingClear = Math.max(
+        cardW * 0.72 + 26,
+        cardW * (0.65 + spCount) + 22
+      );
       if (pos) {
         g2Entries.push({
           member: g2M,
           nodeId: g2Id,
           x: pos.x,
           y: pos.y,
+          cy: pos.y + cardH / 2,
+          wingClearanceX: wingClear,
         });
       }
     });
 
-    // 3. Dahan Organik Melengkung (mendukung preferensi keseimbangan AI & bentuk siluet banyan/cemara/kanopi)
-    interface PlacedBough {
-      member: FamilyMember;
-      nodeId: string;
+    // 3. Dahan Kokoh Pohon Petai dari setiap G2:
+    // - Anak G3 GANJIL (ke-1, 3, 5 = g3Idx % 2 === 0) ke KIRI (wing = -1)
+    // - Anak G3 GENAP (ke-2, 4, 6 = g3Idx % 2 === 1) ke KANAN (wing = +1)
+    // - Urutan sepanjang dahan: KAKAK paling dekat dengan G2, BUNGSU makin ke ujung dahan
+    interface PlacedPetaiBough {
+      g3: FamilyMember;
+      g3NodeId: string;
       wing: -1 | 1;
       originX: number;
       originY: number;
-      tipX: number;
-      tipY: number;
+      boughEndX: number;
+      boughEndY: number;
+      segStartFrac: number;
+      segEndFrac: number;
+      g3CenterX: number;
+      g3CenterY: number;
       tierFrac: number;
     }
-    const leftG3Queue: Array<{ child: FamilyMember; parent: TrunkEntry }> = [];
-    const rightG3Queue: Array<{ child: FamilyMember; parent: TrunkEntry }> = [];
-    let leftWt = 0;
-    let rightWt = 0;
-    const aiLeftSet = new Set(aiBlueprint?.balanceLeftIds || []);
-    const aiRightSet = new Set(aiBlueprint?.balanceRightIds || []);
 
-    g2Entries.forEach((g2e) => {
+    const placedPetaiBoughs: PlacedPetaiBough[] = [];
+    const maxSideReach = Math.max(
+      170,
+      boardWidth * 0.5 - Math.max(cardW * 0.8, 34)
+    );
+    const canopyBottomY = Math.min(g1Y - cardH * 0.52, g2BottomY + cardH * 0.45);
+    const canopyTopY = Math.max(minTopBound + Math.round(cardH * 0.9), trunkTopY - 8);
+    const canopySpanY = Math.max(120, canopyBottomY - canopyTopY);
+
+    g2Entries.forEach((g2e, g2OrderIdx) => {
       const g3Kids = (childrenMap.get(g2e.member.id) || []).filter(
         (k) => !placedMemberIds.has(k.id)
       );
-      g3Kids.forEach((g3k) => {
-        const w = countSubtreeSize(g3k);
-        const forceLeft = aiLeftSet.has(g3k.id);
-        const forceRight = aiRightSet.has(g3k.id);
-        if (forceLeft || (!forceRight && leftWt <= rightWt)) {
-          leftG3Queue.push({ child: g3k, parent: g2e });
-          leftWt += w;
-        } else {
-          rightG3Queue.push({ child: g3k, parent: g2e });
-          rightWt += w;
-        }
+      if (g3Kids.length === 0) return;
+
+      const leftG3s: FamilyMember[] = [];
+      const rightG3s: FamilyMember[] = [];
+      g3Kids.forEach((k, kIdx) => {
+        if (kIdx % 2 === 0) leftG3s.push(k); // ke-1, ke-3, ke-5 (Ganjil) -> Kiri
+        else rightG3s.push(k); // ke-2, ke-4, ke-6 (Genap) -> Kanan
       });
+
+      const baseTierFrac =
+        g2Entries.length <= 1 ? 0.35 : g2OrderIdx / (g2Entries.length - 1);
+      const originY = Math.max(
+        trunkTopY + 26,
+        Math.min(trunkBaseY - 46, Math.round(g2e.cy))
+      );
+      const originX = trunkSpineAtY(originY);
+
+      const processG2Wing = (wingG3s: FamilyMember[], wing: -1 | 1) => {
+        if (wingG3s.length === 0) return;
+
+        // Dahan petai membentang lebar & naik anggun seimbang tanpa menabrak dahan G2 di atas/bawah
+        const wingVertSpread = Math.min(
+          Math.round(canopySpanY / Math.max(1.8, g2Entries.length * 1.1)),
+          Math.max(36, Math.round(cardH * 0.85))
+        );
+        const startDist = Math.max(
+          g2e.wingClearanceX + cardW * 0.45,
+          Math.round(maxSideReach * 0.24)
+        );
+        const totalSubWeight = wingG3s.reduce(
+          (acc, g3) => acc + countSubtreeSize(g3),
+          0
+        );
+        const targetOuterReach = Math.min(
+          maxSideReach,
+          Math.max(
+            startDist + cardW * (1.2 + wingG3s.length * 1.15),
+            Math.round(maxSideReach * (wingG3s.length >= 2 || totalSubWeight >= 8 ? 0.94 : 0.72))
+          )
+        );
+
+        const riseOffset =
+          Math.round(wingVertSpread * (0.55 + baseTierFrac * 0.35)) +
+          (wing === -1 ? 4 : -4);
+        const boughEndX = Math.max(
+          minLeftBound + cardW * 0.55,
+          Math.min(
+            boardWidth - 22 - cardW * 0.55,
+            Math.round(originX + wing * targetOuterReach)
+          )
+        );
+        const boughEndY = Math.max(
+          canopyTopY,
+          Math.min(canopyBottomY, Math.round(originY - riseOffset))
+        );
+
+        const boughDx = boughEndX - originX;
+        const boughDy = boughEndY - originY;
+        const boughAngleDeg = (Math.atan2(boughDy, boughDx) * 180) / Math.PI;
+        const nWing = wingG3s.length;
+
+        wingG3s.forEach((g3, wIdx) => {
+          // Kakak (wIdx=0) terdekat dari G2 di batang, Bungsu (wIdx=nWing-1) di ujung dahan!
+          const minFrac = Math.min(
+            0.46,
+            Math.max(0.24, startDist / Math.max(80, Math.abs(boughDx)))
+          );
+          const maxFrac = 0.86;
+          const frac =
+            nWing === 1
+              ? Math.min(0.62, Math.max(minFrac + 0.08, 0.48))
+              : minFrac + (wIdx / (nWing - 1)) * (maxFrac - minFrac);
+
+          const g3Cx = originX + boughDx * frac;
+          const g3Cy =
+            originY +
+            boughDy * frac -
+            Math.round(Math.sin(frac * Math.PI) * 8);
+
+          const segEndFrac =
+            nWing === 1
+              ? 1.0
+              : Math.min(1.0, frac + (maxFrac - minFrac) / Math.max(1, nWing - 1) * 0.82);
+
+          const g3LeafAngle =
+            wing * Math.max(24, Math.min(68, Math.round(Math.abs(boughAngleDeg) + 34)));
+
+          const g3Id = addMemberUnit(
+            g3,
+            g3Cx - cardW / 2,
+            g3Cy - cardH / 2,
+            g3.generationLevel ?? 2,
+            g2e.nodeId,
+            {
+              spouseDir: wing,
+              cardShape:
+                aiBlueprint?.cardShape && aiBlueprint.cardShape !== 'hex'
+                  ? aiBlueprint.cardShape
+                  : 'leaf',
+              leafAngleDeg: g3LeafAngle,
+              leafTone: 'dark',
+              lockUnit: true,
+              treeOriginX: originX,
+              treeOriginY: originY,
+              treeTipX: boughEndX,
+              treeTipY: boughEndY,
+              treeWing: wing,
+            }
+          );
+
+          const placedPos = nodePosByMember.get(g3.id);
+          placedPetaiBoughs.push({
+            g3,
+            g3NodeId: g3Id,
+            wing,
+            originX,
+            originY,
+            boughEndX,
+            boughEndY,
+            segStartFrac: frac,
+            segEndFrac,
+            g3CenterX: (placedPos?.x ?? g3Cx - cardW / 2) + cardW / 2,
+            g3CenterY: (placedPos?.y ?? g3Cy - cardH / 2) + cardH / 2,
+            tierFrac: baseTierFrac,
+          });
+        });
+      };
+
+      processG2Wing(leftG3s, -1);
+      processG2Wing(rightG3s, 1);
     });
 
-    const treeShape = aiBlueprint?.treeShape ?? 'banyan_arch';
-    const maxSideReach = Math.max(150, boardWidth * 0.5 - Math.max(cardW * 1.15, 92));
-    const boughMaxLen =
-      treeShape === 'pine_tiered'
-        ? Math.min(boardWidth * 0.38, maxSideReach)
-        : Math.min(boardWidth * 0.43, maxSideReach * 1.04);
-    const boughMinLen =
-      treeShape === 'banyan_arch'
-        ? Math.min(boardWidth * 0.27, boughMaxLen * 0.68)
-        : Math.min(boardWidth * 0.21, boughMaxLen * 0.52);
-
-    const boughBandBottomY = Math.min(
-      g1Y - cardH * 0.55,
-      trunkTopY + Math.round(trunkHeight * 0.84)
-    );
-    const boughBandTopY = Math.max(
-      minTopBound + Math.round(cardH * 1.05),
-      trunkTopY + Math.round(trunkHeight * 0.08)
-    );
-    const boughBandSpan = Math.max(80, boughBandBottomY - boughBandTopY);
-
-    const placedBoughs: PlacedBough[] = [];
-
-    const buildWingBoughs = (
-      queue: Array<{ child: FamilyMember; parent: TrunkEntry }>,
-      wing: -1 | 1
-    ) => {
-      const n = queue.length;
-      if (n === 0) return;
-      queue.forEach((item, idx) => {
-        const tierFrac = n === 1 ? 0.38 : idx / (n - 1);
-        const zigzagShift =
-          (wing === 1 ? -1 : 1) *
-          Math.round(boughBandSpan / Math.max(6, n * 3.0));
-        const originY = Math.max(
-          boughBandTopY,
-          Math.min(
-            boughBandBottomY,
-            Math.round(
-              boughBandBottomY - tierFrac * boughBandSpan + zigzagShift
-            )
-          )
-        );
-        const spineFrac = Math.max(0, Math.min(1, (trunkBaseY - originY) / Math.max(1, trunkHeight)));
-        const originX = Math.round(
-          trunkX + Math.sin(spineFrac * Math.PI) * (-trunkTopOffsetX * 0.7) + spineFrac * trunkTopOffsetX
-        );
-
-        const boughLen = Math.round(
-          boughMaxLen - tierFrac * (boughMaxLen - boughMinLen)
-        );
-        // Banyan arch lifts gracefully upward toward upper canopy; pine rises cleanly
-        const riseDeg =
-          treeShape === 'banyan_arch'
-            ? 16 + tierFrac * 20
-            : treeShape === 'royal_canopy'
-            ? 14 + tierFrac * 16
-            : 12 + tierFrac * 11;
-        const riseAngleRad = (riseDeg * Math.PI) / 180;
-        const tipX = Math.max(
-          minLeftBound + cardW * 0.48,
-          Math.min(
-            boardWidth - 24 - cardW * 0.48,
-            Math.round(originX + wing * Math.cos(riseAngleRad) * boughLen)
-          )
-        );
-        const tipY = Math.max(
-          minTopBound + 18,
-          Math.round(originY - Math.sin(riseAngleRad) * boughLen)
-        );
-
-        const midX = originX + (tipX - originX) * 0.56;
-        const midY = originY + (tipY - originY) * 0.52 - Math.round(12 * (1 - tierFrac * 0.4));
-
-        const g3LeafAngle = wing * (46 + Math.round(tierFrac * 14));
-
-        const g3Id = addMemberUnit(
-          item.child,
-          midX - cardW / 2,
-          midY - cardH / 2,
-          item.child.generationLevel ?? 2,
-          item.parent.nodeId,
-          {
-            spouseDir: wing,
-            cardShape: aiBlueprint?.cardShape && aiBlueprint.cardShape !== 'hex' ? aiBlueprint.cardShape : 'leaf',
-            leafAngleDeg: g3LeafAngle,
-            leafTone: 'dark',
-            lockUnit: true,
-            treeOriginX: originX,
-            treeOriginY: originY,
-            treeTipX: tipX,
-            treeTipY: tipY,
-            treeWing: wing,
-          }
-        );
-
-        placedBoughs.push({
-          member: item.child,
-          nodeId: g3Id,
-          wing,
-          originX,
-          originY,
-          tipX,
-          tipY,
-          tierFrac,
-        });
-      });
-    };
-
-    buildWingBoughs(leftG3Queue, -1);
-    buildWingBoughs(rightG3Queue, 1);
-
-    // 4. Ranting Lurus/Tajam (45px->20px, panjang ~10cm->5cm disesuaikan kertas) sesuai jumlah G4
-    // Kartu G4 menempel di TENGAH Ranting (Hijau Sedang) + G5 daun acak mendekati G4 (Hijau Paling Muda)
-    const placedG4List: Array<{
-      member: FamilyMember;
-      nodeId: string;
-      cx: number;
-      cy: number;
+    // 4. Ranting Kecil G4 (Ganjil di BAWAH dahan · Genap di ATAS dahan)
+    //    & Daun Majemuk Menyirip G5+ (Petai / Indigofera) berjajar rapi di sepanjang ranting G4
+    interface PlacedG4Twig {
+      g4: FamilyMember;
+      g4NodeId: string;
       wing: -1 | 1;
-      mirrorSide: -1 | 1;
+      twOriginX: number;
+      twOriginY: number;
+      twTipX: number;
+      twTipY: number;
+      g4Cx: number;
+      g4Cy: number;
       twigAngleRad: number;
-    }> = [];
+      verticalSide: -1 | 1;
+    }
+    const placedG4Twigs: PlacedG4Twig[] = [];
 
-    const maxTwigPx = Math.min(
-      Math.round(10 * MM_TO_PX * 10 * 0.48), // proporsional ~180px max di A3
-      Math.round(boardWidth * 0.145)
-    );
-    const minTwigPx = Math.min(
-      Math.round(5 * MM_TO_PX * 10 * 0.45),
-      Math.round(maxTwigPx * 0.58)
+    const maxTwigLen = Math.max(
+      cardH * 1.15,
+      Math.min(Math.round(boardHeight * 0.145), Math.round(cardH * 1.65))
     );
 
-    placedBoughs.forEach((bough) => {
-      const g4Kids = (childrenMap.get(bough.member.id) || []).filter(
+    placedPetaiBoughs.forEach((bough) => {
+      const g4Kids = (childrenMap.get(bough.g3.id) || []).filter(
         (k) => !placedMemberIds.has(k.id)
       );
       if (g4Kids.length === 0) return;
 
-      const bdx = bough.tipX - bough.originX;
-      const bdy = bough.tipY - bough.originY;
-      const boughBaseAngle = Math.atan2(bdy, bdx);
-
-      const baseTwigLen = Math.round(
-        maxTwigPx - bough.tierFrac * (maxTwigPx - minTwigPx)
-      );
+      const bdx = bough.boughEndX - bough.originX;
+      const bdy = bough.boughEndY - bough.originY;
 
       g4Kids.forEach((g4k, g4Idx) => {
-        // Bercabang sepanjang dahan dari pangkal-luar ke ujung dahan (0.58 .. 0.94),
-        // berselang-seling mirror sisi ATAS (-1) dan sisi BAWAH (+1) dahan!
-        const fracAlongBough =
+        // Pangkal ranting kecil menyusur keluar dari G3 menuju ujung segmen dahan
+        const spanFrac = Math.max(0.14, bough.segEndFrac - bough.segStartFrac);
+        const fAlong =
           g4Kids.length === 1
-            ? 0.8
-            : 0.58 + (g4Idx / Math.max(1, g4Kids.length - 1)) * 0.36;
-        const twOriginX = Math.round(bough.originX + bdx * fracAlongBough);
-        const twOriginY = Math.round(bough.originY + bdy * fracAlongBough);
+            ? Math.min(0.95, bough.segStartFrac + spanFrac * 0.42)
+            : Math.min(
+                0.96,
+                bough.segStartFrac +
+                  0.04 +
+                  (g4Idx / Math.max(1, g4Kids.length - 1)) * (spanFrac * 0.84)
+              );
 
-        // Mirror sisi atas vs sisi bawah dahan (simetris antara sayap kiri & kanan!)
-        const mirrorSide: -1 | 1 = g4Idx % 2 === 0 ? -1 : 1; // -1 = atas dahan, +1 = bawah/samping dahan
-        const branchOffsetAngle =
-          bough.wing === 1
-            ? mirrorSide * (0.72 + (g4Idx % 3) * 0.12)
-            : -mirrorSide * (0.72 + (g4Idx % 3) * 0.12);
-        const twigAngleRad = boughBaseAngle + branchOffsetAngle;
+        const twOriginX = Math.round(bough.originX + bdx * fAlong);
+        const twOriginY = Math.round(bough.originY + bdy * fAlong);
+
+        // G4 Ganjil (ke-1, 3, 5 -> g4Idx % 2 === 0) di BAWAH dahan (+1)
+        // G4 Genap  (ke-2, 4, 6 -> g4Idx % 2 === 1) di ATAS dahan (-1)
+        const verticalSide: -1 | 1 = g4Idx % 2 === 0 ? 1 : -1;
+        const outwardSlope = bough.wing * 0.42;
+        const twigAngleRad = Math.atan2(verticalSide * 0.9, outwardSlope);
+
+        const g5Count = (childrenMap.get(g4k.id) || []).length;
         const twigLen = Math.round(
-          baseTwigLen * (g4Idx % 2 === 0 ? 1.0 : 0.86)
+          maxTwigLen * (g5Count > 0 ? 1.12 : 0.88)
         );
 
         const twTipX = Math.max(
-          minLeftBound + cardW * 0.35,
+          minLeftBound + cardW * 0.4,
           Math.min(
-            boardWidth - 24 - cardW * 0.35,
+            boardWidth - 22 - cardW * 0.4,
             Math.round(twOriginX + Math.cos(twigAngleRad) * twigLen)
           )
         );
         const twTipY = Math.max(
-          minTopBound + 16,
+          minTopBound + 20,
           Math.min(
-            boardHeight - 30 - cardH * 0.35,
+            boardHeight - 28 - cardH * 0.4,
             Math.round(twOriginY + Math.sin(twigAngleRad) * twigLen)
           )
         );
 
-        // Kartu G4 menempel di TENGAH Ranting
-        const twMidX = (twOriginX + twTipX) / 2;
-        const twMidY = (twOriginY + twTipY) / 2;
-
-        // Daun G4 MIRROR: sisi atas ranting condong naik-keluar (±38°), sisi bawah ranting condong miring-keluar (±116°)
-        const g4LeafAngle =
-          bough.wing * (mirrorSide === -1 ? 38 : 116);
+        const g4PosFrac = g5Count > 0 ? 0.46 : 0.62;
+        const g4Cx = twOriginX + (twTipX - twOriginX) * g4PosFrac;
+        const g4Cy = twOriginY + (twTipY - twOriginY) * g4PosFrac;
+        const g4LeafAngle = bough.wing * (verticalSide === 1 ? 114 : 38);
 
         const g4Id = addMemberUnit(
           g4k,
-          twMidX - cardW / 2,
-          twMidY - cardH / 2,
+          g4Cx - cardW / 2,
+          g4Cy - cardH / 2,
           g4k.generationLevel ?? 3,
-          bough.nodeId,
+          bough.g3NodeId,
           {
             spouseDir: bough.wing,
             cardShape: 'leaf',
             leafAngleDeg: g4LeafAngle,
-            leafTone: 'medium', // G4: Hijau sedang
+            leafTone: 'medium',
             treeOriginX: twOriginX,
             treeOriginY: twOriginY,
             treeTipX: twTipX,
@@ -2324,26 +2405,31 @@ export function generateSmartLayoutFromTable(
         );
 
         const g4Pos = nodePosByMember.get(g4k.id);
-        placedG4List.push({
-          member: g4k,
-          nodeId: g4Id,
-          cx: (g4Pos?.x ?? twMidX - cardW / 2) + cardW / 2,
-          cy: (g4Pos?.y ?? twMidY - cardH / 2) + cardH / 2,
+        placedG4Twigs.push({
+          g4: g4k,
+          g4NodeId: g4Id,
           wing: bough.wing,
-          mirrorSide,
+          twOriginX,
+          twOriginY,
+          twTipX,
+          twTipY,
+          g4Cx: (g4Pos?.x ?? g4Cx - cardW / 2) + cardW / 2,
+          g4Cy: (g4Pos?.y ?? g4Cy - cardH / 2) + cardH / 2,
           twigAngleRad,
+          verticalSide,
         });
       });
     });
 
-    // 5. Daun G5+ acak organik mendekati G4 (posisi mirror kiri/kanan + Hijau paling muda)
-    const placeG5Cluster = (
+    // 5. Daun Majemuk Menyirip G5+ (Petai / Indigofera) berpasang kiri/kanan sepanjang ranting kecil G4
+    const placePetaiLeaflets = (
       parentM: FamilyMember,
       parentNodeId: string,
-      parentCx: number,
-      parentCy: number,
+      anchorCx: number,
+      anchorCy: number,
+      axisAngleRad: number,
       wing: -1 | 1,
-      baseAngleRad: number,
+      verticalSide: -1 | 1,
       depth: number
     ) => {
       const kids = (childrenMap.get(parentM.id) || []).filter(
@@ -2351,26 +2437,24 @@ export function generateSmartLayoutFromTable(
       );
       if (kids.length === 0) return;
 
-      const clusterDist = Math.max(
-        cardW * 0.92,
-        Math.min(cardH * 1.12, Math.round(boardWidth * 0.085))
-      );
+      const cosA = Math.cos(axisAngleRad);
+      const sinA = Math.sin(axisAngleRad);
+      const perpX = -sinA;
+      const perpY = cosA;
+      const rachisStep = Math.max(cardH * 0.72, Math.round(boardHeight * 0.048));
+      const pinnaLateral = Math.max(cardW * 0.62, Math.round(boardWidth * 0.042));
 
       kids.forEach((kid, idx) => {
-        // Sudut acak deterministik tapi tetap MIRROR antara kiri vs kanan
-        const fanOffsets = [0, -0.78, 0.78, -1.45, 1.45, 2.15, -2.15];
-        const mirroredOffset =
-          wing * fanOffsets[idx % fanOffsets.length];
-        const a = baseAngleRad + mirroredOffset;
-        const r = clusterDist * (0.88 + (idx % 3) * 0.22);
+        // Berpasang menyirip sepanjang tangkai anak ranting: ganjil (idx genap 0,2,4) vs genap (idx ganjil 1,3,5)
+        const pairRank = Math.floor(idx / 2);
+        const side: -1 | 1 = idx % 2 === 0 ? -1 : 1;
+        const alongDist = (0.75 + pairRank * 0.85) * rachisStep;
+        const latDist = side * pinnaLateral;
 
-        const kx = parentCx + Math.cos(a) * r;
-        const ky = parentCy + Math.sin(a) * r;
+        const kx = anchorCx + cosA * alongDist + perpX * latDist;
+        const ky = anchorCy + sinA * alongDist + perpY * latDist;
 
-        // Arah daun G5 segala arah (kanan, kiri, atas, bawah) tetap mirror kiri vs kanan
-        const mirrorLeafAngles = [24, 72, -32, 128, 160, -82, 48];
-        const leafDeg =
-          wing * mirrorLeafAngles[idx % mirrorLeafAngles.length];
+        const leafDeg = wing * (verticalSide === 1 ? 105 + side * 22 : 34 + side * 20);
 
         const kidId = addMemberUnit(
           kid,
@@ -2382,32 +2466,38 @@ export function generateSmartLayoutFromTable(
             spouseDir: wing,
             cardShape: 'leaf',
             leafAngleDeg: leafDeg,
-            leafTone: 'light', // G5: Hijau paling muda
+            leafTone: 'light',
+            treeOriginX: Math.round(anchorCx),
+            treeOriginY: Math.round(anchorCy),
+            treeTipX: Math.round(kx),
+            treeTipY: Math.round(ky),
             treeWing: wing,
           }
         );
 
         const kPos = nodePosByMember.get(kid.id);
-        placeG5Cluster(
+        placePetaiLeaflets(
           kid,
           kidId,
           (kPos?.x ?? kx - cardW / 2) + cardW / 2,
           (kPos?.y ?? ky - cardH / 2) + cardH / 2,
+          axisAngleRad,
           wing,
-          a,
+          verticalSide,
           depth + 1
         );
       });
     };
 
-    placedG4List.forEach((g4) => {
-      placeG5Cluster(
-        g4.member,
-        g4.nodeId,
-        g4.cx,
-        g4.cy,
-        g4.wing,
-        g4.twigAngleRad,
+    placedG4Twigs.forEach((g4t) => {
+      placePetaiLeaflets(
+        g4t.g4,
+        g4t.g4NodeId,
+        g4t.g4Cx,
+        g4t.g4Cy,
+        g4t.twigAngleRad,
+        g4t.wing,
+        g4t.verticalSide,
         4
       );
     });
@@ -2427,16 +2517,16 @@ export function generateSmartLayoutFromTable(
       addMemberUnit(m, fx, fy, gen, pPos?.id || null, {
         spouseDir: wing,
         cardShape: gen >= 2 ? 'leaf' : 'rect',
-        leafAngleDeg: gen >= 2 ? wing * (35 + (idx % 4) * 28) : undefined,
+        leafAngleDeg: gen >= 2 ? wing * (36 + (idx % 4) * 24) : undefined,
         leafTone: gen <= 2 ? 'dark' : gen === 3 ? 'medium' : 'light',
         treeWing: wing,
       });
     });
 
-    // Solver anti-tumpuk ringan: kunci G1, G2, & G3 agar batang & dahan tetap kaku,
-    // hanya geser G4/G5 seperlunya supaya foto & badge tidak pernah bertabrakan!
-    const treePadX = Math.max(10, Math.round(cardW * 0.12));
-    const treePadY = Math.max(10, Math.round(cardH * 0.12));
+    // Solver anti-tumpuk ringan: kunci G1, G2, & G3 agar batang & dahan petai tetap tegas,
+    // geser G4/G5 seperlunya agar bebas tumpukan
+    const treePadX = Math.max(8, Math.round(cardW * 0.1));
+    const treePadY = Math.max(8, Math.round(cardH * 0.1));
     const cleanTreeNodes = resolveCollisionsNearParents4Dir(
       nodes,
       edges,
@@ -4699,6 +4789,482 @@ export function generateSmartLayoutFromTable(
   }
 
   // -------------------------------------------------------------------------
+  // MODE BARU: TETRIS SILSILAH (BLOK POLIOMINO KELUARGA INTI 1–4+ KARTU)
+  // - G1–G2 memakai 1 warna gradasi hangat (G1 amber tua ➔ G2 amber cerah)
+  // - G3–G5 memakai warna seragam per cabang G3 (berbeda dengan cabang G3 lain)
+  // - Tiap keluarga inti (orang tua + pasangan + anak daun langsung) membentuk blok Tetris
+  //   rapat tersendiri (1 tunggal, 2×1, L, T, O 2×2, atau 4–8+ poliomino) dengan celah antar blok jelas
+  // -------------------------------------------------------------------------
+  if (presetId === 'tetris_silsilah') {
+    const TETRIS_G1_COLOR = { bg: '#fde68a', border: '#b45309' };
+    const TETRIS_G2_COLOR = { bg: '#fef3c7', border: '#d97706' };
+    const TETRIS_G3_PALETTES: Array<{ bg: string; border: string; accent: string }> = [
+      { bg: '#e0f2fe', border: '#0284c7', accent: '#0ea5e9' },
+      { bg: '#d1fae5', border: '#059669', accent: '#10b981' },
+      { bg: '#ede9fe', border: '#7c3aed', accent: '#8b5cf6' },
+      { bg: '#ffe4e6', border: '#e11d48', accent: '#f43f5e' },
+      { bg: '#ccfbf1', border: '#0d9488', accent: '#14b8a6' },
+      { bg: '#ffedd5', border: '#ea580c', accent: '#f97316' },
+      { bg: '#e0e7ff', border: '#4f46e5', accent: '#6366f1' },
+      { bg: '#ecfccb', border: '#65a30d', accent: '#84cc16' },
+      { bg: '#fae8ff', border: '#c026d3', accent: '#d946ef' },
+      { bg: '#dbeafe', border: '#2563eb', accent: '#3b82f6' },
+    ];
+
+    const unitDim = getBaseCardSizeForScale(displayMode, photoSize, cardScale);
+    const uw = Math.max(54, unitDim.w);
+    const uh = Math.max(30, unitDim.h);
+    const innerCellGap = 2; // rapat di dalam satu blok keluarga inti
+    const cellStepX = uw + innerCellGap;
+    const cellStepY = uh + innerCellGap;
+    const blockGap = Math.max(10, Math.round(compactSiblingGap * 1.1));
+    const marginX = 22;
+    const marginTop = 64;
+    const usableW = Math.max(320, boardWidth - marginX * 2);
+
+    interface TetrisCellItem {
+      id: string;
+      name: string;
+      sub: string;
+      photo: string;
+      wafat: boolean;
+      gender?: 'L' | 'P';
+      memberId?: string;
+      genLevel: number;
+      parentNodeId?: string | null;
+      coupleOfNodeId?: string;
+      relCol: number;
+      relRow: number;
+      bg: string;
+      border: string;
+    }
+
+    interface TetrisFamilyBlock {
+      blockId: string;
+      g3BranchId?: string;
+      g3AccentColor?: string;
+      g2BranchId?: string;
+      isHubBlock: boolean;
+      cells: TetrisCellItem[];
+      cols: number;
+      rows: number;
+      w: number;
+      h: number;
+      x: number;
+      y: number;
+    }
+
+    const tetrisSeen = new Set<string>();
+    const g12Blocks: TetrisFamilyBlock[] = [];
+    const g3BranchGroups = new Map<
+      string,
+      { branchId: string; palIdx: number; blocks: TetrisFamilyBlock[] }
+    >();
+    let g3PaletteCounter = 0;
+
+    // Pilih bentuk poliomino Tetris sesuai jumlah kartu (1, 2, 3, 4, atau >4)
+    const getPolyominoCoords = (
+      total: number,
+      spouseCount: number,
+      variantSeed: number
+    ): Array<[number, number]> => {
+      if (total <= 1) return [[0, 0]];
+      if (total === 2) return [[0, 0], [1, 0]];
+      if (total === 3) {
+        if (spouseCount >= 2) return [[0, 0], [1, 0], [2, 0]];
+        return variantSeed % 2 === 0
+          ? [[0, 0], [1, 0], [0, 1]] // L-triomino
+          : [[0, 0], [1, 0], [1, 1]]; // J-triomino
+      }
+      if (total === 4 && spouseCount <= 1) {
+        const shapes4: Array<Array<[number, number]>> = [
+          [[0, 0], [1, 0], [0, 1], [1, 1]], // O 2×2
+          [[0, 0], [1, 0], [2, 0], [1, 1]], // T
+          [[0, 0], [1, 0], [0, 1], [0, 2]], // L
+          [[0, 0], [1, 0], [1, 1], [2, 1]], // Z
+        ];
+        return shapes4[variantSeed % shapes4.length];
+      }
+      // 4+ (atau pasangan + banyak anak): baris atas untuk orang tua + pasangan, anak tersusun tangga/grid rapat di bawah
+      const coords: Array<[number, number]> = [];
+      const parentSlots = Math.min(3, 1 + spouseCount);
+      for (let i = 0; i < 1 + spouseCount; i++) {
+        coords.push([i % parentSlots, Math.floor(i / parentSlots)]);
+      }
+      const remaining = total - (1 + spouseCount);
+      const kidCols = total >= 7 ? 3 : Math.max(2, Math.min(3, parentSlots + 1));
+      const startRow = Math.max(1, Math.ceil((1 + spouseCount) / parentSlots));
+      const stagger = variantSeed % 2 === 1 && remaining >= 2 ? 1 : 0;
+      for (let i = 0; i < remaining; i++) {
+        const r = startRow + Math.floor(i / kidCols);
+        const c = (i % kidCols) + (r === startRow && kidCols === 2 ? stagger * 0 : 0);
+        coords.push([c, r]);
+      }
+      return coords;
+    };
+
+    const buildNuclearBlock = (
+      head: FamilyMember,
+      depth: number,
+      parentNodeId: string | null,
+      g3BranchId?: string,
+      g3PalIdx = 0,
+      g2BranchId?: string,
+      variantSeed = 0
+    ): { block: TetrisFamilyBlock; branchEligibleKids: FamilyMember[] } => {
+      tetrisSeen.add(head.id);
+      const rawKids = (childrenMap.get(head.id) || []).filter(
+        (k) => !tetrisSeen.has(k.id)
+      );
+
+      // Anak yang belum berkeluarga & tidak punya keturunan masuk langsung dalam blok keluarga inti ini
+      // Khusus G1 (depth 0): G2 berdiri sebagai blok cabang sendiri agar gradasi G1 -> G2 terlihat jelas
+      const absorbedLeafKids: FamilyMember[] = [];
+      const branchKids: FamilyMember[] = [];
+      rawKids.forEach((k) => {
+        const kHasSpouse = (k.spouses?.length || 0) > 0;
+        const kHasKids = (childrenMap.get(k.id)?.length || 0) > 0;
+        if (depth >= 1 && !kHasSpouse && !kHasKids) {
+          tetrisSeen.add(k.id);
+          absorbedLeafKids.push(k);
+        } else {
+          branchKids.push(k);
+        }
+      });
+
+      const spouses = head.spouses || [];
+      const totalCardsInBlock = 1 + spouses.length + absorbedLeafKids.length;
+      const coords = getPolyominoCoords(
+        totalCardsInBlock,
+        spouses.length,
+        variantSeed
+      );
+
+      const g3Pal = TETRIS_G3_PALETTES[g3PalIdx % TETRIS_G3_PALETTES.length];
+      const getUnitColors = (gen: number) => {
+        if (gen <= 0) return TETRIS_G1_COLOR;
+        if (gen === 1) return TETRIS_G2_COLOR;
+        return { bg: g3Pal.bg, border: g3Pal.border };
+      };
+
+      const items: TetrisCellItem[] = [];
+      let cursor = 0;
+      const headCols = getUnitColors(head.generationLevel ?? depth);
+      const headNodeId = `n_${head.id}`;
+      items.push({
+        id: headNodeId,
+        name: head.name,
+        sub: formatMemberLifeSubtitle(head),
+        photo: head.photoUrl || '',
+        wafat: head.isDeceased,
+        gender: head.gender,
+        memberId: head.id,
+        genLevel: head.generationLevel ?? depth,
+        parentNodeId,
+        relCol: coords[cursor]?.[0] ?? 0,
+        relRow: coords[cursor]?.[1] ?? 0,
+        bg: headCols.bg,
+        border: headCols.border,
+      });
+      cursor++;
+
+      spouses.forEach((sp, sIdx) => {
+        const cPos = coords[cursor] ?? [cursor, 0];
+        items.push({
+          id: `n_${head.id}_sp_${sIdx + 1}`,
+          name: sp.name,
+          sub: `Pasangan (${
+            sp.status === 'cerai_mati'
+              ? 'Wafat'
+              : sp.status === 'cerai_hidup'
+              ? 'Cerai'
+              : 'Menikah'
+          })`,
+          photo: sp.photoUrl || '',
+          wafat: sp.status === 'cerai_mati',
+          gender: head.gender === 'L' ? 'P' : head.gender === 'P' ? 'L' : undefined,
+          genLevel: head.generationLevel ?? depth,
+          coupleOfNodeId: headNodeId,
+          relCol: cPos[0],
+          relRow: cPos[1],
+          bg: headCols.bg,
+          border: headCols.border,
+        });
+        cursor++;
+      });
+
+      absorbedLeafKids.forEach((ck) => {
+        const cPos = coords[cursor] ?? [cursor % 3, Math.floor(cursor / 3) + 1];
+        const cCols = getUnitColors(ck.generationLevel ?? depth + 1);
+        items.push({
+          id: `n_${ck.id}`,
+          name: ck.name,
+          sub: formatMemberLifeSubtitle(ck),
+          photo: ck.photoUrl || '',
+          wafat: ck.isDeceased,
+          gender: ck.gender,
+          memberId: ck.id,
+          genLevel: ck.generationLevel ?? depth + 1,
+          parentNodeId: headNodeId,
+          relCol: cPos[0],
+          relRow: cPos[1],
+          bg: cCols.bg,
+          border: cCols.border,
+        });
+        cursor++;
+      });
+
+      const cols = Math.max(1, ...items.map((it) => it.relCol + 1));
+      const rows = Math.max(1, ...items.map((it) => it.relRow + 1));
+
+      return {
+        block: {
+          blockId: `tetris_fam_${head.id}`,
+          g3BranchId,
+          g3AccentColor: g3BranchId ? g3Pal.accent : undefined,
+          g2BranchId,
+          isHubBlock: depth <= 1,
+          cells: items,
+          cols,
+          rows,
+          w: cols * uw + (cols - 1) * innerCellGap,
+          h: rows * uh + (rows - 1) * innerCellGap,
+          x: 0,
+          y: 0,
+        },
+        branchEligibleKids: branchKids,
+      };
+    };
+
+    const walkTetrisTree = (
+      m: FamilyMember,
+      depth: number,
+      parentNodeId: string | null,
+      ctx: { g2Id?: string; g3Id?: string; g3PalIdx: number; seed: number }
+    ) => {
+      if (tetrisSeen.has(m.id)) return;
+      let nextG2Id = ctx.g2Id;
+      let nextG3Id = ctx.g3Id;
+      let nextPalIdx = ctx.g3PalIdx;
+
+      if (depth === 1) {
+        nextG2Id = m.id;
+      } else if (depth >= 2 && !nextG3Id) {
+        nextG3Id = m.id;
+        nextPalIdx = g3PaletteCounter++;
+      }
+
+      const built = buildNuclearBlock(
+        m,
+        depth,
+        parentNodeId,
+        nextG3Id,
+        nextPalIdx,
+        nextG2Id,
+        ctx.seed
+      );
+      if (depth <= 1) {
+        g12Blocks.push(built.block);
+      } else {
+        const bKey = nextG3Id || `root_g3_${m.id}`;
+        if (!g3BranchGroups.has(bKey)) {
+          g3BranchGroups.set(bKey, {
+            branchId: bKey,
+            palIdx: nextPalIdx,
+            blocks: [],
+          });
+        }
+        g3BranchGroups.get(bKey)!.blocks.push(built.block);
+      }
+
+      built.branchEligibleKids.forEach((kid, idx) => {
+        walkTetrisTree(kid, depth + 1, `n_${m.id}`, {
+          g2Id: nextG2Id,
+          g3Id: nextG3Id,
+          g3PalIdx: nextPalIdx,
+          seed: ctx.seed + idx + 1,
+        });
+      });
+    };
+
+    roots.forEach((r, idx) => {
+      walkTetrisTree(r, r.generationLevel ?? 0, null, {
+        g3PalIdx: idx,
+        seed: idx,
+      });
+    });
+    members.forEach((m, idx) => {
+      if (!tetrisSeen.has(m.id)) {
+        const d = m.generationLevel ?? 2;
+        walkTetrisTree(m, d, m.parentId ? `n_${m.parentId}` : null, {
+          g3PalIdx: idx,
+          seed: idx,
+        });
+      }
+    });
+
+    // Packing blok Tetris ke baris-baris rapi (skyline/shelf packing bebas tumpang tindih)
+    const packTetrisBlocksIntoArea = (
+      blocks: TetrisFamilyBlock[],
+      areaX: number,
+      areaY: number,
+      areaW: number,
+      centerRows = true
+    ): { totalH: number } => {
+      if (blocks.length === 0) return { totalH: 0 };
+      const rows: Array<{ items: TetrisFamilyBlock[]; w: number; h: number }> = [];
+      let curRow: TetrisFamilyBlock[] = [];
+      let curW = 0;
+      let curH = 0;
+
+      blocks.forEach((bx) => {
+        const nextW = curRow.length === 0 ? bx.w : curW + blockGap + bx.w;
+        if (curRow.length > 0 && nextW > areaW) {
+          rows.push({ items: curRow, w: curW, h: curH });
+          curRow = [bx];
+          curW = bx.w;
+          curH = bx.h;
+        } else {
+          curRow.push(bx);
+          curW = nextW;
+          curH = Math.max(curH, bx.h);
+        }
+      });
+      if (curRow.length > 0) rows.push({ items: curRow, w: curW, h: curH });
+
+      let yCursor = areaY;
+      rows.forEach((rw) => {
+        let xCursor = centerRows
+          ? areaX + Math.max(0, Math.round((areaW - rw.w) / 2))
+          : areaX;
+        rw.items.forEach((bx) => {
+          bx.x = Math.round(xCursor);
+          bx.y = Math.round(yCursor + Math.max(0, (rw.h - bx.h) / 2));
+          xCursor += bx.w + blockGap;
+        });
+        yCursor += rw.h + blockGap;
+      });
+      return { totalH: Math.max(0, yCursor - areaY - blockGap) };
+    };
+
+    // 1. Posisikan pita atas G1–G2 (1 gradasi hangat)
+    let curSectionY = marginTop;
+    if (g12Blocks.length > 0) {
+      const g12Res = packTetrisBlocksIntoArea(
+        g12Blocks,
+        marginX,
+        curSectionY,
+        usableW,
+        true
+      );
+      curSectionY += g12Res.totalH + Math.max(blockGap * 1.4, 16);
+    }
+
+    // 2. Susun kelompok tiap cabang G3 (masing-masing punya zona warna khas G3–G5)
+    const branchList = Array.from(g3BranchGroups.values());
+    const zoneGap = Math.max(blockGap + 6, 18);
+    // Hitung lebar ideal tiap zona cabang G3 agar bisa sejajar berdampingan bila cukup ruang
+    interface BranchZonePlan {
+      branchId: string;
+      blocks: TetrisFamilyBlock[];
+      zoneW: number;
+      zoneH: number;
+    }
+    const maxColsTarget =
+      branchList.length >= 4
+        ? 3
+        : branchList.length >= 2
+        ? branchList.length
+        : 1;
+    const defaultColW = Math.floor(
+      (usableW - Math.max(0, maxColsTarget - 1) * zoneGap) / maxColsTarget
+    );
+
+    const branchPlans: BranchZonePlan[] = branchList.map((bg) => {
+      const maxSingleBlockW = Math.max(...bg.blocks.map((b) => b.w));
+      const zoneW = Math.min(usableW, Math.max(defaultColW, maxSingleBlockW));
+      const sim = packTetrisBlocksIntoArea(bg.blocks, 0, 0, zoneW, true);
+      return {
+        branchId: bg.branchId,
+        blocks: bg.blocks,
+        zoneW,
+        zoneH: sim.totalH,
+      };
+    });
+
+    // Susun zona-zona cabang G3 dalam baris grid yang pas di kertas
+    const branchRows: Array<{ zones: BranchZonePlan[]; totalW: number; maxH: number }> = [];
+    let curZRow: BranchZonePlan[] = [];
+    let curZW = 0;
+    let curZH = 0;
+    branchPlans.forEach((zp) => {
+      const nextW = curZRow.length === 0 ? zp.zoneW : curZW + zoneGap + zp.zoneW;
+      if (curZRow.length > 0 && nextW > usableW) {
+        branchRows.push({ zones: curZRow, totalW: curZW, maxH: curZH });
+        curZRow = [zp];
+        curZW = zp.zoneW;
+        curZH = zp.zoneH;
+      } else {
+        curZRow.push(zp);
+        curZW = nextW;
+        curZH = Math.max(curZH, zp.zoneH);
+      }
+    });
+    if (curZRow.length > 0) {
+      branchRows.push({ zones: curZRow, totalW: curZW, maxH: curZH });
+    }
+
+    branchRows.forEach((br) => {
+      let zx = marginX + Math.max(0, Math.round((usableW - br.totalW) / 2));
+      br.zones.forEach((zp) => {
+        packTetrisBlocksIntoArea(zp.blocks, zx, curSectionY, zp.zoneW, true);
+        zx += zp.zoneW + zoneGap;
+      });
+      curSectionY += br.maxH + zoneGap;
+    });
+
+    const emitTetrisBlock = (bx: TetrisFamilyBlock) => {
+      bx.cells.forEach((cell) => {
+        nodes.push({
+          id: cell.id,
+          name: cell.name,
+          sub: cell.sub,
+          x: Math.round(bx.x + cell.relCol * cellStepX),
+          y: Math.round(bx.y + cell.relRow * cellStepY),
+          photo: cell.photo,
+          wafat: cell.wafat,
+          gender: cell.gender,
+          memberId: cell.memberId,
+          genLevel: cell.genLevel,
+          groupId: bx.blockId,
+          cardShape: 'rect',
+          lineageG2Id: bx.g2BranchId,
+          lineageG3Id: bx.g3BranchId,
+          lineageG3Color: bx.g3AccentColor,
+          lineageG4Id: bx.blockId,
+          lineageG4Color: cell.border,
+          hexCol: cell.relCol,
+          hexRow: cell.relRow,
+          hexGap: innerCellGap,
+          customBgColor: cell.bg,
+          customBorderColor: cell.border,
+        });
+        if (cell.parentNodeId) {
+          edges.push({ from: cell.parentNodeId, to: cell.id, type: 'child' });
+        }
+        if (cell.coupleOfNodeId) {
+          edges.push({ from: cell.coupleOfNodeId, to: cell.id, type: 'couple' });
+        }
+      });
+    };
+
+    g12Blocks.forEach(emitTetrisBlock);
+    branchList.forEach((bg) => bg.blocks.forEach(emitTetrisBlock));
+
+    return { nodes, edges };
+  }
+
+  // -------------------------------------------------------------------------
   // MODE BARU 5: SARANG LEBAH KISI SEJATI (DUAL MODE: BERTINGKAT & RATU PUSAT)
   // - Semua kartu heksagon terkunci pada kisi odd-r ukuran seragam
   // - G1 dan G2 dikelilingi sel kosong polos (spacer ring)
@@ -6328,6 +6894,7 @@ export function applyIncrementalBranchUpdate(params: {
         presetId === 'pohon_hayat_besar'
           ? pNode?.treeWing ?? (spot.x + dim.w / 2 >= boardCx ? 1 : -1)
           : undefined,
+      groupId: presetId === 'tetris_silsilah' ? `tetris_fam_${m.id}` : undefined,
       customBgColor: bpStop?.bg || pNode?.customBgColor,
       customBorderColor: bpStop?.border || pNode?.customBorderColor,
     };
@@ -6358,7 +6925,7 @@ export function applyIncrementalBranchUpdate(params: {
         sub: `Pasangan (${sp.status === 'cerai_mati' ? 'Wafat' : sp.status === 'cerai_hidup' ? 'Cerai' : 'Menikah'})`,
         x: spSpot.x,
         y: spSpot.y,
-        photo: '',
+        photo: sp.photoUrl || '',
         wafat: sp.status === 'cerai_mati',
         gender: m.gender === 'L' ? 'P' : m.gender === 'P' ? 'L' : undefined,
         genLevel: m.generationLevel ?? gen,
@@ -6366,8 +6933,15 @@ export function applyIncrementalBranchUpdate(params: {
         cardShape,
         leafAngleDeg: leafDeg,
         leafTone: newNode.leafTone,
-        customBgColor: bpStop?.bg,
-        customBorderColor: bpStop?.border,
+        groupId: newNode.groupId,
+        lineageG2Id: newNode.lineageG2Id,
+        lineageG2Color: newNode.lineageG2Color,
+        lineageG3Id: newNode.lineageG3Id,
+        lineageG3Color: newNode.lineageG3Color,
+        lineageG4Id: newNode.lineageG4Id,
+        lineageG4Color: newNode.lineageG4Color,
+        customBgColor: bpStop?.bg || newNode.customBgColor,
+        customBorderColor: bpStop?.border || newNode.customBorderColor,
       });
       existingIdSet.add(spId);
       occupied.push({ x: spSpot.x, y: spSpot.y, w: dim.w, h: dim.h });

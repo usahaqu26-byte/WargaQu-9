@@ -1115,9 +1115,19 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
   const [photoCompressionInfo, setPhotoCompressionInfo] = useState<{ orig: number; comp: number } | null>(null);
   const [photoCropTarget, setPhotoCropTarget] = useState<{
     file: File;
-    kind: 'primary' | { spouseIndex: number; spouseName?: string };
+    kind:
+      | 'primary'
+      | { spouseIndex: number; spouseName?: string }
+      | { directMemberId: string; memberName: string }
+      | { directSpouseMemberId: string; spouseIndex: number; spouseName: string };
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const quickDirectPhotoInputRef = useRef<HTMLInputElement>(null);
+  const pendingDirectPhotoMetaRef = useRef<
+    | { directMemberId: string; memberName: string }
+    | { directSpouseMemberId: string; spouseIndex: number; spouseName: string }
+    | null
+  >(null);
   const [genderInput, setGenderInput] = useState<'L' | 'P'>('L');
   const [notesInput, setNotesInput] = useState<string>('');
   const [orderIndexInput, setOrderIndexInput] = useState<number>(1);
@@ -2792,6 +2802,60 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
       file,
       kind: { spouseIndex: sIdx, spouseName: formSpouses[sIdx]?.name },
     });
+  };
+
+  const triggerDirectMemberPhotoUpload = (member: FamilyMember) => {
+    const editPerm = canEditTrahMember(
+      activeTrah,
+      member,
+      accountScope.email,
+      accountScope.isOwner
+    );
+    if (!editPerm.ok) {
+      showNotification(editPerm.reason || 'Profil ini terkunci.');
+      return;
+    }
+    pendingDirectPhotoMetaRef.current = {
+      directMemberId: member.id,
+      memberName: member.name,
+    };
+    quickDirectPhotoInputRef.current?.click();
+  };
+
+  const triggerDirectSpousePhotoUpload = (
+    member: FamilyMember,
+    spouseIndex: number,
+    spouseName: string
+  ) => {
+    const editPerm = canEditTrahMember(
+      activeTrah,
+      member,
+      accountScope.email,
+      accountScope.isOwner
+    );
+    if (!editPerm.ok) {
+      showNotification(editPerm.reason || 'Profil ini terkunci.');
+      return;
+    }
+    pendingDirectPhotoMetaRef.current = {
+      directSpouseMemberId: member.id,
+      spouseIndex,
+      spouseName,
+    };
+    quickDirectPhotoInputRef.current?.click();
+  };
+
+  const handleQuickDirectPhotoFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (quickDirectPhotoInputRef.current) quickDirectPhotoInputRef.current.value = '';
+    const meta = pendingDirectPhotoMetaRef.current;
+    pendingDirectPhotoMetaRef.current = null;
+    if (!file || !meta) return;
+    if (!file.type.startsWith('image/')) {
+      showNotification('Pilih file gambar (JPG, PNG, WebP)!');
+      return;
+    }
+    setPhotoCropTarget({ file, kind: meta });
   };
 
   const handleRemovePhoto = () => {
@@ -5282,6 +5346,30 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
+                                    triggerDirectMemberPhotoUpload(m);
+                                  }}
+                                  title="Klik untuk unggah / ganti foto anggota"
+                                  className="relative w-7 h-7 rounded-full overflow-hidden border border-stone-300 bg-emerald-50 hover:border-emerald-500 flex items-center justify-center shrink-0 transition group/ph"
+                                >
+                                  {m.photoUrl ? (
+                                    <img
+                                      src={m.photoUrl}
+                                      alt={m.name}
+                                      className="w-full h-full object-cover"
+                                    />
+                                  ) : (
+                                    <span className="text-[9px] font-black text-emerald-700">
+                                      {m.name.slice(0, 2).toUpperCase()}
+                                    </span>
+                                  )}
+                                  <span className="absolute inset-0 bg-black/40 opacity-0 group-hover/ph:opacity-100 flex items-center justify-center text-white transition">
+                                    <Camera className="w-3 h-3" />
+                                  </span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     handleQuickToggleMemberGender(m);
                                   }}
                                   title="Klik untuk ganti Pria (L) / Wanita (P)"
@@ -5378,13 +5466,37 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                             </td>
                             <td className="py-2.5 px-3">
                               {m.spouses && m.spouses.length > 0 ? (
-                                <div className="space-y-0.5">
-                                  {m.spouses.map((sp) => {
+                                <div className="space-y-1">
+                                  {m.spouses.map((sp, sIdx) => {
                                     const badge = getSpouseStatusBadge(sp.status);
                                     return (
-                                      <div key={sp.id} className="text-[11px] flex items-center justify-between gap-1">
-                                        <span>{sp.name}</span>
-                                        <span className={`px-1 rounded text-[8px] font-bold border ${badge.className}`}>{badge.label}</span>
+                                      <div key={sp.id} className="text-[11px] flex items-center justify-between gap-1.5">
+                                        <div className="flex items-center gap-1.5 min-w-0">
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              triggerDirectSpousePhotoUpload(m, sIdx, sp.name);
+                                            }}
+                                            title={`Unggah / Ganti foto ${sp.name}`}
+                                            className="relative w-6 h-6 rounded-full overflow-hidden border border-rose-300 bg-rose-50 hover:border-rose-500 flex items-center justify-center shrink-0 transition group/spph"
+                                          >
+                                            {sp.photoUrl ? (
+                                              <img
+                                                src={sp.photoUrl}
+                                                alt={sp.name}
+                                                className="w-full h-full object-cover"
+                                              />
+                                            ) : (
+                                              <Camera className="w-3 h-3 text-rose-500" />
+                                            )}
+                                            <span className="absolute inset-0 bg-black/40 opacity-0 group-hover/spph:opacity-100 flex items-center justify-center text-white transition">
+                                              <Camera className="w-2.5 h-2.5" />
+                                            </span>
+                                          </button>
+                                          <span className="truncate">{sp.name}</span>
+                                        </div>
+                                        <span className={`px-1 rounded text-[8px] font-bold border shrink-0 ${badge.className}`}>{badge.label}</span>
                                       </div>
                                     );
                                   })}
@@ -5398,24 +5510,49 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                                 <div className="space-y-1">
                                   <div className="flex flex-wrap gap-1">
                                     {children.map((c, cIdx) => (
-                                      <button
+                                      <div
                                         key={c.id}
-                                        type="button"
-                                        onClick={() => {
-                                          setSelectedMember(c);
-                                          setIsDetailModalOpen(true);
-                                        }}
-                                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border font-semibold text-[10px] transition ${
+                                        className={`inline-flex items-center gap-1 pl-1 pr-1.5 py-0.5 rounded-md border font-semibold text-[10px] transition ${
                                           c.gender === 'P'
                                             ? 'bg-rose-50 hover:bg-rose-100 border-rose-200 text-rose-900'
                                             : 'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-900'
                                         }`}
-                                        title={`Lihat detail ${c.name}`}
                                       >
-                                        <span className="font-mono opacity-60 text-[9px]">{cIdx + 1}.</span>
-                                        <span>{c.gender === 'P' ? '👩' : '👨'}</span>
-                                        <span>{c.name}</span>
-                                      </button>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            triggerDirectMemberPhotoUpload(c);
+                                          }}
+                                          title={`Unggah / Ganti foto ${c.name}`}
+                                          className="relative w-5 h-5 rounded-full overflow-hidden border border-white shadow-2xs bg-white/80 flex items-center justify-center shrink-0 group/chph"
+                                        >
+                                          {c.photoUrl ? (
+                                            <img
+                                              src={c.photoUrl}
+                                              alt={c.name}
+                                              className="w-full h-full object-cover"
+                                            />
+                                          ) : (
+                                            <Camera className="w-2.5 h-2.5 text-stone-500" />
+                                          )}
+                                          <span className="absolute inset-0 bg-black/40 opacity-0 group-hover/chph:opacity-100 flex items-center justify-center text-white transition">
+                                            <Camera className="w-2.5 h-2.5" />
+                                          </span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedMember(c);
+                                            setIsDetailModalOpen(true);
+                                          }}
+                                          className="inline-flex items-center gap-1 text-left"
+                                          title={`Lihat detail ${c.name}`}
+                                        >
+                                          <span className="font-mono opacity-60 text-[9px]">{cIdx + 1}.</span>
+                                          <span>{c.name}</span>
+                                        </button>
+                                      </div>
                                     ))}
                                   </div>
                                   <div className="text-[10px] text-stone-500">
@@ -7259,12 +7396,10 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
                   </div>
                 )}
                 <button
-                  onClick={() => {
-                    handleOpenEdit(selectedMember);
-                    setIsDetailModalOpen(false);
-                  }}
+                  type="button"
+                  onClick={() => triggerDirectMemberPhotoUpload(selectedMember)}
                   className="absolute bottom-0 right-0 p-1.5 rounded-full bg-emerald-700 text-white shadow hover:bg-emerald-800 active:scale-95 transition"
-                  title="Ganti Foto Anggota"
+                  title="Unggah / Ganti Foto Anggota"
                 >
                   <Camera className="w-3.5 h-3.5" />
                 </button>
@@ -7311,27 +7446,55 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
               </div>
 
               {selectedMember.spouses && selectedMember.spouses.length > 0 && (
-                <div className="border-b border-stone-200/60 pb-1">
-                  <span className="text-stone-500 block mb-1">💍 Pasangan / Istri:</span>
-                  <div className="space-y-1">
-                    {selectedMember.spouses.map((sp) => {
+                <div className="border-b border-stone-200/60 pb-1.5">
+                  <span className="text-stone-500 block mb-1">💍 Pasangan / Istri (klik foto untuk ganti):</span>
+                  <div className="space-y-1.5">
+                    {selectedMember.spouses.map((sp, sIdx) => {
                       const badge = getSpouseStatusBadge(sp.status);
                       return (
-                        <div key={sp.id} className="flex items-center justify-between bg-white px-2 py-1 rounded-lg border border-stone-200 text-[11px] gap-2">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            {sp.photoUrl && (
-                              <img
-                                src={sp.photoUrl}
-                                alt={sp.name}
-                                className="w-5 h-5 rounded-full object-cover border border-emerald-400 shrink-0"
-                              />
-                            )}
-                            <span className="font-bold text-stone-800 truncate">
-                              {sp.orderIndex > 1 ? `Istri ke-${sp.orderIndex}: ` : ''}
-                              {sp.name}
-                            </span>
+                        <div key={sp.id} className="flex items-center justify-between bg-white px-2 py-1.5 rounded-xl border border-stone-200 text-[11px] gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                triggerDirectSpousePhotoUpload(selectedMember, sIdx, sp.name)
+                              }
+                              title={`Unggah / Ganti foto ${sp.name}`}
+                              className="relative w-8 h-8 rounded-full overflow-hidden border border-rose-300 bg-rose-50 hover:border-rose-500 flex items-center justify-center shrink-0 transition group/detsp"
+                            >
+                              {sp.photoUrl ? (
+                                <img
+                                  src={sp.photoUrl}
+                                  alt={sp.name}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <Camera className="w-3.5 h-3.5 text-rose-500" />
+                              )}
+                              <span className="absolute inset-0 bg-black/40 opacity-0 group-hover/detsp:opacity-100 flex items-center justify-center text-white transition">
+                                <Camera className="w-3 h-3" />
+                              </span>
+                            </button>
+                            <div className="min-w-0">
+                              <div className="font-bold text-stone-800 truncate">
+                                {sp.orderIndex > 1 ? `Istri ke-${sp.orderIndex}: ` : ''}
+                                {sp.name}
+                              </div>
+                            </div>
                           </div>
-                          <span className={`px-1 rounded text-[8px] font-bold border shrink-0 ${badge.className}`}>{badge.label}</span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                triggerDirectSpousePhotoUpload(selectedMember, sIdx, sp.name)
+                              }
+                              className="px-2 py-0.5 rounded-md bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-800 text-[10px] font-bold inline-flex items-center gap-1 transition"
+                            >
+                              <Camera className="w-2.5 h-2.5" />
+                              <span>{sp.photoUrl ? 'Ganti' : 'Foto'}</span>
+                            </button>
+                            <span className={`px-1 rounded text-[8px] font-bold border shrink-0 ${badge.className}`}>{badge.label}</span>
+                          </div>
                         </div>
                       );
                     })}
@@ -7341,13 +7504,39 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
 
               {selectedMemberChildren.length > 0 && (
                 <div className="pt-0.5">
-                  <span className="text-stone-500 block mb-1">👶 Anak / Keturunan ({selectedMemberChildren.length}):</span>
+                  <span className="text-stone-500 block mb-1">👶 Anak / Keturunan ({selectedMemberChildren.length}) — klik foto untuk ganti:</span>
                   <div className="flex flex-wrap gap-1.5">
                     {selectedMemberChildren.map((c, cIdx) => (
-                      <div key={c.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white border border-stone-200 text-[11px] font-bold text-stone-800">
-                        <span>{cIdx + 1}.</span>
-                        <span>{c.gender === 'P' ? '👩' : '👨'}</span>
-                        <span>{c.name}</span>
+                      <div key={c.id} className="inline-flex items-center gap-1.5 pl-1 pr-2 py-1 rounded-xl bg-white border border-stone-200 text-[11px] font-bold text-stone-800">
+                        <button
+                          type="button"
+                          onClick={() => triggerDirectMemberPhotoUpload(c)}
+                          title={`Unggah / Ganti foto ${c.name}`}
+                          className="relative w-6 h-6 rounded-full overflow-hidden border border-sky-300 bg-sky-50 hover:border-sky-500 flex items-center justify-center shrink-0 transition group/detch"
+                        >
+                          {c.photoUrl ? (
+                            <img
+                              src={c.photoUrl}
+                              alt={c.name}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <Camera className="w-3 h-3 text-sky-600" />
+                          )}
+                          <span className="absolute inset-0 bg-black/40 opacity-0 group-hover/detch:opacity-100 flex items-center justify-center text-white transition">
+                            <Camera className="w-2.5 h-2.5" />
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedMember(c)}
+                          className="inline-flex items-center gap-1 hover:text-emerald-700 transition text-left"
+                          title={`Buka keluarga ${c.name}`}
+                        >
+                          <span className="text-stone-400 font-mono text-[10px]">{cIdx + 1}.</span>
+                          <span>{c.gender === 'P' ? '👩' : '👨'}</span>
+                          <span>{c.name}</span>
+                        </button>
                         {selectedMemberChildren.length > 1 && (
                           <span className="inline-flex items-center gap-0.5 ml-0.5">
                             <button
@@ -8415,17 +8604,31 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
         showNotification={showNotification}
       />
 
+      <input
+        ref={quickDirectPhotoInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleQuickDirectPhotoFile}
+        className="hidden"
+      />
+
       <PhotoCropGuideModal
         isOpen={Boolean(photoCropTarget)}
         file={photoCropTarget?.file || null}
         title={
-          photoCropTarget && photoCropTarget.kind !== 'primary'
+          photoCropTarget?.kind === 'primary'
+            ? `Atur Foto Silsilah${nameInput.trim() ? ` — ${nameInput.trim()}` : ''}`
+            : photoCropTarget && 'directMemberId' in photoCropTarget.kind
+            ? `Atur Foto Anggota — ${photoCropTarget.kind.memberName}`
+            : photoCropTarget && 'directSpouseMemberId' in photoCropTarget.kind
+            ? `Atur Foto Pasangan — ${photoCropTarget.kind.spouseName}`
+            : photoCropTarget && 'spouseIndex' in photoCropTarget.kind
             ? `Atur Foto Pasangan${
                 photoCropTarget.kind.spouseName
                   ? ` — ${photoCropTarget.kind.spouseName}`
                   : ` ke-${photoCropTarget.kind.spouseIndex + 1}`
               }`
-            : `Atur Foto Silsilah${nameInput.trim() ? ` — ${nameInput.trim()}` : ''}`
+            : 'Atur Foto Silsilah'
         }
         defaultGuideShape={
           photoShape === 'circle'
@@ -8442,7 +8645,22 @@ export const LeluhurQuView: React.FC<LeluhurQuViewProps> = ({
             showNotification(
               `Foto berhasil diatur & dikompres: ${sizeInfo.orig} KB ➔ ${sizeInfo.comp} KB ⚡`
             );
-          } else if (photoCropTarget && typeof photoCropTarget.kind === 'object') {
+          } else if (photoCropTarget && 'directMemberId' in photoCropTarget.kind) {
+            handleSyncMemberFromGrid(photoCropTarget.kind.directMemberId, {
+              photoUrl: croppedDataUrl,
+            });
+            showNotification(
+              `Foto ${photoCropTarget.kind.memberName} tersimpan (${sizeInfo.orig} KB ➔ ${sizeInfo.comp} KB) ⚡`
+            );
+          } else if (photoCropTarget && 'directSpouseMemberId' in photoCropTarget.kind) {
+            handleSyncMemberFromGrid(photoCropTarget.kind.directSpouseMemberId, {
+              spouseIndex: photoCropTarget.kind.spouseIndex,
+              spousePhotoUrl: croppedDataUrl,
+            });
+            showNotification(
+              `Foto pasangan (${photoCropTarget.kind.spouseName}) tersimpan (${sizeInfo.orig} KB ➔ ${sizeInfo.comp} KB) ⚡`
+            );
+          } else if (photoCropTarget && 'spouseIndex' in photoCropTarget.kind) {
             handleUpdateFormSpouse(
               photoCropTarget.kind.spouseIndex,
               'photoUrl',

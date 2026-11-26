@@ -24,6 +24,7 @@ import {
   NuclearSpouseItem,
   TrahCategory,
 } from '../../services/leluhurCoreSyncService';
+import { PhotoCropGuideModal } from './PhotoCropGuideModal';
 
 interface NuclearFamilyHubModalProps {
   isOpen: boolean;
@@ -83,8 +84,15 @@ export const NuclearFamilyHubModal: React.FC<NuclearFamilyHubModalProps> = ({
   const [activeTab, setActiveTab] = useState<'profile' | 'sync'>('profile');
   const [draft, setDraft] = useState<NuclearFamilyHubData>(hub);
   const [quickChildrenText, setQuickChildrenText] = useState('');
-  const [isUploadingSelfPhoto, setIsUploadingSelfPhoto] = useState(false);
   const selfPhotoInputRef = useRef<HTMLInputElement>(null);
+  const hubEntityPhotoInputRef = useRef<HTMLInputElement>(null);
+  const pendingHubPhotoKindRef = useRef<
+    'self' | { spouseIndex: number; label: string } | { childIndex: number; label: string } | null
+  >(null);
+  const [hubCropTarget, setHubCropTarget] = useState<{
+    file: File;
+    kind: 'self' | { spouseIndex: number; label: string } | { childIndex: number; label: string };
+  } | null>(null);
 
   // Per-Trah graft selection state
   const [parentSelections, setParentSelections] = useState<Record<string, string>>({});
@@ -134,27 +142,35 @@ export const NuclearFamilyHubModal: React.FC<NuclearFamilyHubModalProps> = ({
 
   const linkedTrahCount = trahList.filter((t) => getTrahCoreLinkStatus(t).linked).length;
 
-  const handleSelfPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSelfPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    if (selfPhotoInputRef.current) selfPhotoInputRef.current.value = '';
     if (!file) return;
     if (!file.type.startsWith('image/')) {
       showNotification('Pilih file gambar (JPG, PNG, WebP)!');
       return;
     }
-    try {
-      setIsUploadingSelfPhoto(true);
-      const res = await onCompressPhoto(file);
-      setDraft((prev) => ({
-        ...prev,
-        self: { ...prev.self, photoUrl: res.dataUrl },
-      }));
-      showNotification(`Foto profil Keluarga Inti tersimpan (${res.compressedSizeKb} KB).`);
-    } catch {
-      showNotification('Gagal memproses foto.');
-    } finally {
-      setIsUploadingSelfPhoto(false);
-      if (selfPhotoInputRef.current) selfPhotoInputRef.current.value = '';
+    setHubCropTarget({ file, kind: 'self' });
+  };
+
+  const triggerHubEntityPhotoUpload = (
+    kind: { spouseIndex: number; label: string } | { childIndex: number; label: string }
+  ) => {
+    pendingHubPhotoKindRef.current = kind;
+    hubEntityPhotoInputRef.current?.click();
+  };
+
+  const handleHubEntityPhotoFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (hubEntityPhotoInputRef.current) hubEntityPhotoInputRef.current.value = '';
+    const kind = pendingHubPhotoKindRef.current;
+    pendingHubPhotoKindRef.current = null;
+    if (!file || !kind) return;
+    if (!file.type.startsWith('image/')) {
+      showNotification('Pilih file gambar (JPG, PNG, WebP)!');
+      return;
     }
+    setHubCropTarget({ file, kind });
   };
 
   const handleAddSpouse = () => {
@@ -315,9 +331,15 @@ export const NuclearFamilyHubModal: React.FC<NuclearFamilyHubModalProps> = ({
                       onChange={handleSelfPhotoUpload}
                       className="hidden"
                     />
+                    <input
+                      ref={hubEntityPhotoInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleHubEntityPhotoFile}
+                      className="hidden"
+                    />
                     <button
                       type="button"
-                      disabled={isUploadingSelfPhoto}
                       onClick={() => selfPhotoInputRef.current?.click()}
                       className="absolute -bottom-1.5 -right-1.5 p-1.5 rounded-full bg-emerald-700 hover:bg-emerald-800 text-white shadow transition"
                       title="Unggah / Ganti Foto"
@@ -457,20 +479,65 @@ export const NuclearFamilyHubModal: React.FC<NuclearFamilyHubModalProps> = ({
                         key={sp.id}
                         className="p-2.5 rounded-xl bg-white border border-rose-200 grid grid-cols-1 sm:grid-cols-12 gap-2 items-center"
                       >
-                        <input
-                          type="text"
-                          value={sp.name}
-                          onChange={(e) =>
-                            setDraft((prev) => ({
-                              ...prev,
-                              spouses: prev.spouses.map((item, idx) =>
-                                idx === sIdx ? { ...item, name: e.target.value } : item
-                              ),
-                            }))
-                          }
-                          placeholder={`Nama Pasangan ke-${sIdx + 1}`}
-                          className="sm:col-span-5 px-2.5 py-1.5 text-xs bg-stone-50 border border-stone-200 rounded-lg font-bold outline-hidden focus:border-rose-500"
-                        />
+                        <div className="sm:col-span-5 flex items-center gap-2 min-w-0">
+                          <div className="relative shrink-0">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                triggerHubEntityPhotoUpload({
+                                  spouseIndex: sIdx,
+                                  label: sp.name.trim() || `Pasangan ke-${sIdx + 1}`,
+                                })
+                              }
+                              title="Unggah / Ganti Foto Pasangan"
+                              className="w-9 h-9 rounded-xl overflow-hidden border border-rose-300 bg-rose-50 hover:bg-rose-100 flex items-center justify-center transition relative group"
+                            >
+                              {sp.photoUrl ? (
+                                <img
+                                  src={sp.photoUrl}
+                                  alt={sp.name || `Pasangan ${sIdx + 1}`}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <Heart className="w-3.5 h-3.5 text-rose-400" />
+                              )}
+                              <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-rose-600 text-white flex items-center justify-center shadow">
+                                <Camera className="w-2.5 h-2.5" />
+                              </span>
+                            </button>
+                            {sp.photoUrl && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDraft((prev) => ({
+                                    ...prev,
+                                    spouses: prev.spouses.map((item, idx) =>
+                                      idx === sIdx ? { ...item, photoUrl: undefined } : item
+                                    ),
+                                  }))
+                                }
+                                title="Hapus foto pasangan"
+                                className="absolute -top-1 -left-1 w-4 h-4 rounded-full bg-stone-700 hover:bg-rose-700 text-white text-[9px] font-bold flex items-center justify-center shadow"
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
+                          <input
+                            type="text"
+                            value={sp.name}
+                            onChange={(e) =>
+                              setDraft((prev) => ({
+                                ...prev,
+                                spouses: prev.spouses.map((item, idx) =>
+                                  idx === sIdx ? { ...item, name: e.target.value } : item
+                                ),
+                              }))
+                            }
+                            placeholder={`Nama Pasangan ke-${sIdx + 1}`}
+                            className="flex-1 min-w-0 px-2.5 py-1.5 text-xs bg-stone-50 border border-stone-200 rounded-lg font-bold outline-hidden focus:border-rose-500"
+                          />
+                        </div>
                         <input
                           type="text"
                           value={sp.city || ''}
@@ -575,6 +642,51 @@ export const NuclearFamilyHubModal: React.FC<NuclearFamilyHubModalProps> = ({
                         <span className="text-[10px] font-mono font-black text-stone-400 w-5 text-center">
                           {idx + 1}.
                         </span>
+                        <div className="relative shrink-0">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              triggerHubEntityPhotoUpload({
+                                childIndex: idx,
+                                label: ch.name.trim() || `Anak ke-${idx + 1}`,
+                              })
+                            }
+                            title="Unggah / Ganti Foto Anak"
+                            className="w-8 h-8 rounded-lg overflow-hidden border border-sky-300 bg-sky-50 hover:bg-sky-100 flex items-center justify-center transition relative"
+                          >
+                            {ch.photoUrl ? (
+                              <img
+                                src={ch.photoUrl}
+                                alt={ch.name || `Anak ${idx + 1}`}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <span className="text-[10px] font-black text-sky-700">
+                                {(ch.name.trim() || `A${idx + 1}`).slice(0, 2).toUpperCase()}
+                              </span>
+                            )}
+                            <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-sky-700 text-white flex items-center justify-center shadow">
+                              <Camera className="w-2 h-2" />
+                            </span>
+                          </button>
+                          {ch.photoUrl && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDraft((prev) => ({
+                                  ...prev,
+                                  children: prev.children.map((item, cIdx) =>
+                                    cIdx === idx ? { ...item, photoUrl: undefined } : item
+                                  ),
+                                }))
+                              }
+                              title="Hapus foto anak"
+                              className="absolute -top-1 -left-1 w-3.5 h-3.5 rounded-full bg-stone-700 hover:bg-rose-700 text-white text-[8px] font-bold flex items-center justify-center shadow"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
                         <input
                           type="text"
                           value={ch.name}
@@ -587,7 +699,7 @@ export const NuclearFamilyHubModal: React.FC<NuclearFamilyHubModalProps> = ({
                             }))
                           }
                           placeholder={`Nama Anak ke-${idx + 1}`}
-                          className="flex-1 min-w-[130px] px-2 py-1 text-xs bg-stone-50 border border-stone-200 rounded-lg font-bold outline-hidden focus:border-sky-500"
+                          className="flex-1 min-w-[120px] px-2 py-1 text-xs bg-stone-50 border border-stone-200 rounded-lg font-bold outline-hidden focus:border-sky-500"
                         />
                         <button
                           type="button"
@@ -840,6 +952,55 @@ export const NuclearFamilyHubModal: React.FC<NuclearFamilyHubModalProps> = ({
           </div>
         </div>
       </div>
+
+      <PhotoCropGuideModal
+        isOpen={Boolean(hubCropTarget)}
+        file={hubCropTarget?.file || null}
+        title={
+          hubCropTarget?.kind === 'self'
+            ? `Atur Foto Diri${draft.self.name.trim() ? ` — ${draft.self.name.trim()}` : ''}`
+            : hubCropTarget && 'spouseIndex' in hubCropTarget.kind
+            ? `Atur Foto Pasangan — ${hubCropTarget.kind.label}`
+            : hubCropTarget && 'childIndex' in hubCropTarget.kind
+            ? `Atur Foto Anak — ${hubCropTarget.kind.label}`
+            : 'Atur Tata Letak & Potong Foto'
+        }
+        onCancel={() => setHubCropTarget(null)}
+        onConfirm={(croppedDataUrl, sizeInfo) => {
+          if (hubCropTarget?.kind === 'self') {
+            setDraft((prev) => ({
+              ...prev,
+              self: { ...prev.self, photoUrl: croppedDataUrl },
+            }));
+            showNotification(
+              `Foto profil Keluarga Inti tersimpan (${sizeInfo.orig} KB ➔ ${sizeInfo.comp} KB) ⚡`
+            );
+          } else if (hubCropTarget && 'spouseIndex' in hubCropTarget.kind) {
+            const idx = hubCropTarget.kind.spouseIndex;
+            setDraft((prev) => ({
+              ...prev,
+              spouses: prev.spouses.map((sp, sIdx) =>
+                sIdx === idx ? { ...sp, photoUrl: croppedDataUrl } : sp
+              ),
+            }));
+            showNotification(
+              `Foto pasangan tersimpan (${sizeInfo.orig} KB ➔ ${sizeInfo.comp} KB) ⚡`
+            );
+          } else if (hubCropTarget && 'childIndex' in hubCropTarget.kind) {
+            const idx = hubCropTarget.kind.childIndex;
+            setDraft((prev) => ({
+              ...prev,
+              children: prev.children.map((ch, cIdx) =>
+                cIdx === idx ? { ...ch, photoUrl: croppedDataUrl } : ch
+              ),
+            }));
+            showNotification(
+              `Foto anak tersimpan (${sizeInfo.orig} KB ➔ ${sizeInfo.comp} KB) ⚡`
+            );
+          }
+          setHubCropTarget(null);
+        }}
+      />
     </div>
   );
 };

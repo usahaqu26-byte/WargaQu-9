@@ -1643,11 +1643,50 @@ function reconcileCanvasWithMembers(
         return n;
       }
 
-      if (!n.memberId) return n;
+      if (!n.memberId) {
+        // Sinkronkan nama, status & foto pasangan langsung dari tabel
+        const spMatch = n.id.match(/^n_(.+)_sp_(\d+)$/);
+        if (spMatch) {
+          const primaryM = memberMap.get(spMatch[1]);
+          const spIdx = Math.max(0, Number(spMatch[2]) - 1);
+          const sp = primaryM?.spouses?.[spIdx];
+          if (primaryM && sp) {
+            const nextSub = `Pasangan (${
+              sp.status === 'cerai_mati'
+                ? 'Wafat'
+                : sp.status === 'cerai_hidup'
+                ? 'Cerai'
+                : 'Menikah'
+            })`;
+            const nextPhoto = sp.photoUrl || '';
+            const nextWafat = sp.status === 'cerai_mati';
+            const nextGender: 'L' | 'P' | undefined =
+              primaryM.gender === 'L' ? 'P' : primaryM.gender === 'P' ? 'L' : n.gender;
+            if (
+              n.name !== sp.name ||
+              n.sub !== nextSub ||
+              n.photo !== nextPhoto ||
+              n.wafat !== nextWafat ||
+              n.gender !== nextGender
+            ) {
+              changed = true;
+              return {
+                ...n,
+                name: sp.name,
+                sub: nextSub,
+                photo: nextPhoto,
+                wafat: nextWafat,
+                gender: nextGender,
+              };
+            }
+          }
+        }
+        return n;
+      }
       const m = memberMap.get(n.memberId);
       if (!m) return n;
       const nextSub = formatMemberLifeSubtitle(m);
-      const nextPhoto = m.photoUrl || n.photo;
+      const nextPhoto = m.photoUrl ?? n.photo;
       if (
         n.name !== m.name ||
         n.sub !== nextSub ||
@@ -2440,14 +2479,14 @@ export const InteractiveGridCanvasView: React.FC<
     members
       .map(
         (m) =>
-          `${m.id}:${m.name}:${m.gender}:${m.orderIndex || 0}:${m.callName || ''}:${m.birthYear || ''}:${m.deathYear || ''}:${m.isDeceased ? 1 : 0}:${m.photoUrl || ''}:${m.parentId || ''}:${m.generationLevel}:${m.notes || ''}:${(m.spouses || []).map((s) => `${s.name}:${s.status}`).join('|')}`
+          `${m.id}:${m.name}:${m.gender}:${m.orderIndex || 0}:${m.callName || ''}:${m.birthYear || ''}:${m.deathYear || ''}:${m.isDeceased ? 1 : 0}:${m.photoUrl || ''}:${m.parentId || ''}:${m.generationLevel}:${m.notes || ''}:${(m.spouses || []).map((s) => `${s.name}:${s.status}:${s.photoUrl || ''}`).join('|')}`
       )
       .join(';');
 
   const getStructureSig = (members: FamilyMember[]) =>
     [...members]
       .sort((a, b) => a.id.localeCompare(b.id))
-      .map((m) => `${m.id}:${m.parentId || ''}:${m.orderIndex || 0}`)
+      .map((m) => `${m.id}:${m.parentId || ''}:${m.orderIndex || 0}:${(m.spouses || []).length}`)
       .join(';');
 
   const windowedData = useMemo(
@@ -6652,7 +6691,12 @@ export const InteractiveGridCanvasView: React.FC<
       activePresetId === 'sarang_lebah_turun' ||
       activePresetId === 'sarang_lebah_pusat' ||
       activePresetId === 'molekul_organik';
-    if (!isHive && !nodes.some((n) => n.lineageG2Id)) return [];
+    if (
+      !isHive &&
+      activePresetId !== 'tetris_silsilah' &&
+      !nodes.some((n) => n.lineageG2Id)
+    )
+      return [];
 
     const isDarkCanvas = theme === 'dark' || bgStyle !== '';
     const hexLatticeNodes = nodes.filter(
@@ -6733,6 +6777,14 @@ export const InteractiveGridCanvasView: React.FC<
         string,
         { color: string; g2Id?: string; cells: Set<string> }
       >();
+      const cellToG4Meta = new Map<
+        string,
+        { g4Id: string; color: string }
+      >();
+      const g4Groups = new Map<
+        string,
+        { color: string; cells: Set<string> }
+      >();
 
       hexLatticeNodes.forEach((n) => {
         const c = n.hexCol!;
@@ -6793,6 +6845,15 @@ export const InteractiveGridCanvasView: React.FC<
             });
           }
           g3Map.get(n.lineageG3Id)!.cells.add(ck);
+        }
+        if (tier === 'g4plus' && n.lineageG4Id) {
+          const seamColor =
+            n.lineageG4Color || n.lineageG3Color || n.lineageG2Color || '#0ea5e9';
+          cellToG4Meta.set(ck, { g4Id: n.lineageG4Id, color: seamColor });
+          if (!g4Groups.has(n.lineageG4Id)) {
+            g4Groups.set(n.lineageG4Id, { color: seamColor, cells: new Set() });
+          }
+          g4Groups.get(n.lineageG4Id)!.cells.add(ck);
         }
       });
 
@@ -7003,7 +7064,95 @@ export const InteractiveGridCanvasView: React.FC<
         });
       });
 
-      // (Celah antar card G4 & G5 di dalam G3 dibiarkan kosong polos tanpa garis sekat)
+      // 3. Celah internal di DALAM satu keluarga inti G4–G5 (lineageG4Id yang sama) dihubungkan halus;
+      //    celah keluar menuju keluarga inti G4 lain atau ruang kosong tetap dibiarkan polos!
+      const g4SeamSegmentsByFamily = new Map<
+        string,
+        { color: string; parts: string[] }
+      >();
+      cellToG4Meta.forEach((meta, ck) => {
+        const coord = cellToCoord.get(ck);
+        if (!coord) return;
+        const [c, r] = coord;
+        const cv = getCellVerts(c, r);
+        for (let k = 0; k < 6; k++) {
+          const [nc, nr] = getNeighborCell(c, r, k);
+          const nck = cellKey(nc, nr);
+          if (ck >= nck) continue;
+          const nbrMeta = cellToG4Meta.get(nck);
+          if (!nbrMeta || nbrMeta.g4Id !== meta.g4Id) continue;
+          const p1 = vToPx(cv[k][0], cv[k][1]);
+          const p2 = vToPx(cv[(k + 1) % 6][0], cv[(k + 1) % 6][1]);
+          if (!g4SeamSegmentsByFamily.has(meta.g4Id)) {
+            g4SeamSegmentsByFamily.set(meta.g4Id, {
+              color: meta.color,
+              parts: [],
+            });
+          }
+          g4SeamSegmentsByFamily
+            .get(meta.g4Id)!
+            .parts.push(`M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`);
+        }
+      });
+
+      g4SeamSegmentsByFamily.forEach((entry, g4Id) => {
+        if (entry.parts.length === 0) return;
+        out.push({
+          id: `hull-g4-intraseam-${g4Id}`,
+          d: entry.parts.join(' '),
+          fill: 'none',
+          stroke: hexWithAlpha(entry.color, isDarkCanvas ? 0.56 : 0.48),
+          strokeWidth: 2.0,
+          level: 4,
+        });
+      });
+
+      // Jika keluarga inti G4–G5 punya >1 komponen terpisah (mis. ada 1 celah kosong di dalamnya),
+      // hubungkan hanya antar komponen milik keluarga inti yang sama tanpa menyentuh keluarga lain
+      g4Groups.forEach((grp, g4Id) => {
+        if (grp.cells.size < 2) return;
+        const unvisited = new Set(grp.cells);
+        const components: Array<Set<string>> = [];
+        while (unvisited.size > 0) {
+          const seed = unvisited.values().next().value as string;
+          const comp = new Set<string>([seed]);
+          unvisited.delete(seed);
+          const q = [seed];
+          while (q.length > 0) {
+            const cur = q.shift()!;
+            const coord = cellToCoord.get(cur);
+            if (!coord) continue;
+            const [cc, cr] = coord;
+            for (let k = 0; k < 6; k++) {
+              const [nc, nr] = getNeighborCell(cc, cr, k);
+              const nck = cellKey(nc, nr);
+              if (unvisited.has(nck)) {
+                unvisited.delete(nck);
+                comp.add(nck);
+                q.push(nck);
+              }
+            }
+          }
+          components.push(comp);
+        }
+        if (components.length > 1) {
+          const baseVerts = buildPerimeterFromCells(components[0]).verts;
+          for (let i = 1; i < components.length; i++) {
+            const nextVerts = buildPerimeterFromCells(components[i]).verts;
+            const intraBridge = findVoronoiBridgePath(baseVerts, nextVerts);
+            if (intraBridge) {
+              out.push({
+                id: `hull-g4-intrabridge-${g4Id}-${i}`,
+                d: intraBridge,
+                fill: 'none',
+                stroke: hexWithAlpha(grp.color, isDarkCanvas ? 0.52 : 0.45),
+                strokeWidth: 1.8,
+                level: 4,
+              });
+            }
+          }
+        }
+      });
 
       // 4. Bingkai emas G1 dan pembatas G2 jangkar
       const g1Perim = buildPerimeterFromCells(g1Cells);
@@ -7150,6 +7299,81 @@ export const InteractiveGridCanvasView: React.FC<
       segs.push('Z');
       return segs.join(' ');
     };
+
+    if (activePresetId === 'tetris_silsilah') {
+      const tetrisGroups = new Map<
+        string,
+        { borderColor: string; bgColor: string; items: InteractiveNode[] }
+      >();
+      nodes.forEach((n) => {
+        if (!n.groupId) return;
+        if (!tetrisGroups.has(n.groupId)) {
+          tetrisGroups.set(n.groupId, {
+            borderColor: n.customBorderColor || n.lineageG3Color || '#38bdf8',
+            bgColor: n.customBgColor || '#e0f2fe',
+            items: [],
+          });
+        }
+        tetrisGroups.get(n.groupId)!.items.push(n);
+      });
+
+      const outTetris: LineageHullItem[] = [];
+      tetrisGroups.forEach((grp, gid) => {
+        if (grp.items.length < 2) return;
+        const hasGridCoords = grp.items.every(
+          (n) => typeof n.hexCol === 'number' && typeof n.hexRow === 'number'
+        );
+        if (!hasGridCoords) return;
+
+        const first = grp.items[0];
+        const sz = getNodeSize(first, cardDisplayMode, photoFrameSize, cardScale);
+        const gap = first.hexGap ?? 2;
+        const stepX = sz.w + gap;
+        const stepY = sz.h + gap;
+        const originX = first.x - (first.hexCol || 0) * stepX;
+        const originY = first.y - (first.hexRow || 0) * stepY;
+
+        const cellSet = new Set<string>(
+          grp.items.map((n) => `${n.hexCol},${n.hexRow}`)
+        );
+        const pad = 3;
+        const segs: string[] = [];
+
+        grp.items.forEach((n) => {
+          const c = n.hexCol || 0;
+          const r = n.hexRow || 0;
+          const x0 = originX + c * stepX - pad;
+          const y0 = originY + r * stepY - pad;
+          const x1 = originX + c * stepX + sz.w + pad;
+          const y1 = originY + r * stepY + sz.h + pad;
+
+          if (!cellSet.has(`${c},${r - 1}`)) {
+            segs.push(`M ${Math.round(x0)} ${Math.round(y0)} L ${Math.round(x1)} ${Math.round(y0)}`);
+          }
+          if (!cellSet.has(`${c},${r + 1}`)) {
+            segs.push(`M ${Math.round(x0)} ${Math.round(y1)} L ${Math.round(x1)} ${Math.round(y1)}`);
+          }
+          if (!cellSet.has(`${c - 1},${r}`)) {
+            segs.push(`M ${Math.round(x0)} ${Math.round(y0)} L ${Math.round(x0)} ${Math.round(y1)}`);
+          }
+          if (!cellSet.has(`${c + 1},${r}`)) {
+            segs.push(`M ${Math.round(x1)} ${Math.round(y0)} L ${Math.round(x1)} ${Math.round(y1)}`);
+          }
+        });
+
+        if (segs.length > 0) {
+          outTetris.push({
+            id: `hull-tetris-${gid}`,
+            d: segs.join(' '),
+            fill: 'none',
+            stroke: hexWithAlpha(grp.borderColor, isDarkCanvas ? 0.9 : 0.85),
+            strokeWidth: 2.2,
+            level: 3,
+          });
+        }
+      });
+      return outTetris;
+    }
 
     const g2Map = new Map<string, { color: string; nodes: InteractiveNode[] }>();
     const g3Map = new Map<string, { color: string; nodes: InteractiveNode[] }>();
@@ -7606,13 +7830,13 @@ export const InteractiveGridCanvasView: React.FC<
 
     const trunkD = buildTaperPoly(
       trunkPts,
-      110 * woodScale,
-      46 * woodScale
+      118 * woodScale,
+      50 * woodScale
     );
     const trunkInnerD = buildTaperPoly(
       trunkPts,
-      54 * woodScale,
-      20 * woodScale
+      58 * woodScale,
+      22 * woodScale
     );
     if (trunkD) {
       trunkOuterPaths.push({
@@ -7679,7 +7903,7 @@ export const InteractiveGridCanvasView: React.FC<
       }
     );
 
-    // 3. Dahan Utama Melengkung S-Curve (Mengikuti posisi pusat kartu G3 aktual agar selalu menempel)
+    // 3. Dahan Utama Kokoh Pohon Petai per Sayap (1 dahan kokoh per pasangan induk G2 + kiri/kanan)
     const parentEdgeOf = new Map<string, string>();
     edges.forEach((e) => {
       if (e.type === 'child') parentEdgeOf.set(e.to, e.from);
@@ -7690,34 +7914,62 @@ export const InteractiveGridCanvasView: React.FC<
     );
     const trunkSpanY = Math.max(120, trunkBaseY - trunkTopY);
 
-    g3Nodes.forEach((g3, g3Idx) => {
+    const wingBoughGroups = new Map<
+      string,
+      { originX: number; originY: number; tipX: number; tipY: number; wing: -1 | 1; members: InteractiveNode[] }
+    >();
+    g3Nodes.forEach((g3) => {
       const g3c = boxCenter(g3);
-      const wing: -1 | 1 =
-        g3.treeWing ?? (g3c.x >= trunkX ? 1 : -1);
+      const wing: -1 | 1 = g3.treeWing ?? (g3c.x >= trunkX ? 1 : -1);
+      const parentId = parentEdgeOf.get(g3.id) || 'root';
+      const key = `${parentId}__${wing}`;
       const originY =
         g3.treeOriginY ??
         Math.max(
           trunkTopY + 28,
-          Math.min(trunkBaseY - 38, g3c.y + 42)
+          Math.min(trunkBaseY - 38, g3c.y + 32)
         );
       const originX = trunkSpineXAtY(originY);
-      const tipX = Math.round(originX + (g3c.x - originX) * 1.38);
-      const tipY = Math.round(originY + (g3c.y - originY) * 1.38 - 10 * woodScale);
+      const candTipX =
+        g3.treeTipX ?? Math.round(originX + (g3c.x - originX) * 1.32);
+      const candTipY =
+        g3.treeTipY ??
+        Math.round(originY + (g3c.y - originY) * 1.32 - 8 * woodScale);
+      const existing = wingBoughGroups.get(key);
+      if (!existing) {
+        wingBoughGroups.set(key, {
+          originX,
+          originY,
+          tipX: candTipX,
+          tipY: candTipY,
+          wing,
+          members: [g3],
+        });
+      } else {
+        existing.members.push(g3);
+        if (Math.abs(candTipX - originX) > Math.abs(existing.tipX - existing.originX)) {
+          existing.tipX = candTipX;
+          existing.tipY = candTipY;
+        }
+      }
+    });
 
+    Array.from(wingBoughGroups.values()).forEach((grp, bIdx) => {
+      const { originX, originY, tipX, tipY, wing } = grp;
       const tierFrac = Math.max(
         0,
         Math.min(1, (trunkBaseY - originY) / trunkSpanY)
       );
-      const wStart = (68 - tierFrac * 10) * woodScale;
-      const wEnd = (32 - tierFrac * 5) * woodScale;
+      const wStart = (70 - tierFrac * 10) * woodScale;
+      const wEnd = (28 - tierFrac * 4) * woodScale;
 
       const spanX = tipX - originX;
       const spanY = tipY - originY;
-      const lift = Math.max(14, Math.abs(spanX) * 0.14 * curveTensionVal);
+      const lift = Math.max(12, Math.abs(spanX) * 0.1 * curveTensionVal);
       const boughPts = sampleCubic(
         { x: originX, y: originY },
-        { x: originX + spanX * 0.34, y: originY + spanY * 0.12 - lift * 0.45 },
-        { x: originX + spanX * 0.68, y: originY + spanY * 0.86 + lift * 0.55 },
+        { x: originX + spanX * 0.34, y: originY + spanY * 0.16 - lift * 0.4 },
+        { x: originX + spanX * 0.68, y: originY + spanY * 0.84 + lift * 0.35 },
         { x: tipX, y: tipY },
         14
       );
@@ -7725,7 +7977,7 @@ export const InteractiveGridCanvasView: React.FC<
       const innerD = buildTaperPoly(
         boughPts,
         30 * woodScale,
-        13 * woodScale
+        12 * woodScale
       );
 
       if (outerD) {
@@ -7741,29 +7993,30 @@ export const InteractiveGridCanvasView: React.FC<
       const bAngleDeg =
         (Math.atan2(tipY - originY, tipX - originX) * 180) / Math.PI;
       if (showLineArrows) {
-        const arrPt = boughPts[Math.floor(boughPts.length * 0.72)] || g3c;
-        arrowChevrons.push({
-          x: arrPt.x,
-          y: arrPt.y,
-          angleDeg: bAngleDeg,
-          size: Math.max(6.5, 9 * woodScale),
-          color: '#bef264',
-        });
+        const arrPt = boughPts[Math.floor(boughPts.length * 0.55)] || boughPts[0];
+        if (arrPt) {
+          arrowChevrons.push({
+            x: arrPt.x,
+            y: arrPt.y,
+            angleDeg: bAngleDeg,
+            size: Math.max(6.5, 9 * woodScale),
+            color: '#bef264',
+          });
+        }
       }
 
-      // Daun aksen hijau tua di ujung dahan agar kanopi rimbun
       accentLeaves.push({
         cx: tipX + wing * 12 * woodScale,
-        cy: tipY - 8 * woodScale,
+        cy: tipY - 6 * woodScale,
         w: 20 * woodScale,
         h: 32 * woodScale,
-        angleDeg: wing * (48 + (g3Idx % 2) * 12),
+        angleDeg: wing * (48 + (bIdx % 2) * 12),
         fill: accentLeafPrimary,
         stroke: '#4ade80',
       });
     });
 
-    // 4. Ranting Melengkung Organik G4 & G5+ (Selalu melengkung tepat ke pusat kartu anak aktual)
+    // 4. Ranting Kecil G4 & Tangkai Daun Menyirip Petai G5+
     const twigNodes = nodes
       .filter((n) => (n.genLevel ?? 0) >= 3 && !n.id.includes('_sp_'))
       .sort((a, b) => (a.genLevel ?? 0) - (b.genLevel ?? 0));
@@ -7775,14 +8028,23 @@ export const InteractiveGridCanvasView: React.FC<
       const pc = pNode ? boxCenter(pNode) : rc;
       const gen = tn.genLevel ?? 3;
 
-      const originX = pc.x;
-      const originY = pc.y;
-      const dx = tnc.x - originX;
-      const dy = tnc.y - originY;
-      const tipX = Math.round(originX + dx * 1.32);
-      const tipY = Math.round(originY + dy * 1.32 - (gen >= 4 ? 6 : 8) * woodScale);
+      const hasExplicitTwig =
+        typeof tn.treeOriginX === 'number' &&
+        typeof tn.treeOriginY === 'number' &&
+        typeof tn.treeTipX === 'number' &&
+        typeof tn.treeTipY === 'number';
 
-      const arch = (tIdx % 2 === 0 ? 1 : -1) * Math.max(8, Math.hypot(dx, dy) * 0.14 * curveTensionVal);
+      const originX = hasExplicitTwig ? tn.treeOriginX! : pc.x;
+      const originY = hasExplicitTwig ? tn.treeOriginY! : pc.y;
+      const tipX = hasExplicitTwig ? tn.treeTipX! : tnc.x;
+      const tipY = hasExplicitTwig ? tn.treeTipY! : tnc.y;
+      const dx = tipX - originX;
+      const dy = tipY - originY;
+
+      const arch =
+        gen === 3
+          ? (tIdx % 2 === 0 ? 1 : -1) * Math.max(4, Math.hypot(dx, dy) * 0.05)
+          : (tIdx % 2 === 0 ? 1 : -1) * Math.max(4, Math.hypot(dx, dy) * 0.08 * curveTensionVal);
       const perpX = -dy / (Math.hypot(dx, dy) || 1);
       const perpY = dx / (Math.hypot(dx, dy) || 1);
 
@@ -7793,30 +8055,30 @@ export const InteractiveGridCanvasView: React.FC<
           y: originY + dy * 0.36 + perpY * arch,
         },
         {
-          x: originX + dx * 0.72 - perpX * arch * 0.65,
-          y: originY + dy * 0.72 - perpY * arch * 0.65,
+          x: originX + dx * 0.72 - perpX * arch * 0.5,
+          y: originY + dy * 0.72 - perpY * arch * 0.5,
         },
         { x: tipX, y: tipY },
-        12
+        10
       );
-      const startW = (gen >= 4 ? 26 : 42) * woodScale;
-      const endW = (gen >= 4 ? 8 : 16) * woodScale;
+      const startW = (gen >= 4 ? 14 : 30) * woodScale;
+      const endW = (gen >= 4 ? 5 : 12) * woodScale;
       const outerD = buildTaperPoly(twigPts, startW, endW);
-      const innerD = buildTaperPoly(twigPts, startW * 0.4, endW * 0.38);
+      const innerD = buildTaperPoly(twigPts, startW * 0.38, endW * 0.36);
       if (outerD) {
         twigPaths.push({
           d: outerD,
-          color: '#6b3410',
+          color: gen >= 4 ? '#78350f' : '#6b3410',
           strokeColor: '#290f02',
           innerD: innerD || undefined,
-          innerColor: '#d97706',
+          innerColor: gen >= 4 ? '#a16207' : '#d97706',
         });
       }
 
       const tAngleRad = Math.atan2(tipY - originY, tipX - originX);
       const tAngleDeg = (tAngleRad * 180) / Math.PI;
-      if (showLineArrows) {
-        const arrPt = twigPts[Math.floor(twigPts.length * 0.74)] || tnc;
+      if (showLineArrows && gen === 3) {
+        const arrPt = twigPts[Math.floor(twigPts.length * 0.68)] || tnc;
         arrowChevrons.push({
           x: arrPt.x,
           y: arrPt.y,
@@ -7828,11 +8090,11 @@ export const InteractiveGridCanvasView: React.FC<
 
       const wing: -1 | 1 = tn.treeWing ?? (tipX >= trunkX ? 1 : -1);
       accentLeaves.push({
-        cx: tipX + Math.cos(tAngleRad) * 9 * woodScale,
-        cy: tipY + Math.sin(tAngleRad) * 9 * woodScale,
-        w: (gen >= 4 ? 13 : 16) * woodScale,
-        h: (gen >= 4 ? 22 : 26) * woodScale,
-        angleDeg: wing * (36 + (tIdx % 3) * 18),
+        cx: tipX + Math.cos(tAngleRad) * 8 * woodScale,
+        cy: tipY + Math.sin(tAngleRad) * 8 * woodScale,
+        w: (gen >= 4 ? 12 : 15) * woodScale,
+        h: (gen >= 4 ? 20 : 24) * woodScale,
+        angleDeg: wing * (36 + (tIdx % 3) * 16),
         fill: tIdx % 2 === 0 ? accentLeafSecondary : '#84cc16',
         stroke: '#bef264',
       });
@@ -9624,6 +9886,8 @@ export const InteractiveGridCanvasView: React.FC<
                           ? CircleDot
                           : preset.id === 'modular_g3_I' || preset.id === 'modular_g3_L'
                           ? Layers
+                          : preset.id === 'tetris_silsilah'
+                          ? LayoutGrid
                           : preset.id === 'hierarchy_grid_fill'
                           ? LayoutGrid
                           : preset.id === 'subtree_vertical'
@@ -10303,7 +10567,18 @@ export const InteractiveGridCanvasView: React.FC<
                   {paperDim.label} {paperOrientation === 'landscape' ? 'Lanskap' : 'Potret'} ({printPaperWmm}×{printPaperHmm}mm)
                 </span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-black/40 text-white/85">
-                  {designNameInput || activeTrah.name} • {nodes.length} Kartu
+                  {(() => {
+                    const tableCount = activeTrah.members.length;
+                    const spCount = activeTrah.members.reduce(
+                      (s, m) => s + (m.spouses?.length || 0),
+                      0
+                    );
+                    const memberLabel =
+                      windowedMembers.length < tableCount
+                        ? `${windowedMembers.length}/${tableCount} Anggota`
+                        : `${tableCount} Anggota${spCount > 0 ? ` (+${spCount} Pasangan)` : ''}`;
+                    return `${designNameInput || activeTrah.name} • ${memberLabel} • ${nodes.length} Kartu`;
+                  })()}
                 </span>
               </div>
 
@@ -11046,7 +11321,16 @@ export const InteractiveGridCanvasView: React.FC<
                             : 'bg-stone-100 border-stone-300 text-stone-700'
                         }`}
                       >
-                        {nodes.length} Anggota • {paperDim.label}
+                        {(() => {
+                          const tableCount = activeTrah.members.length;
+                          const spCount = activeTrah.members.reduce(
+                            (s, m) => s + (m.spouses?.length || 0),
+                            0
+                          );
+                          return windowedMembers.length < tableCount
+                            ? `${windowedMembers.length}/${tableCount} Anggota • ${paperDim.label}`
+                            : `${tableCount} Anggota${spCount > 0 ? ` (+${spCount} Pasangan)` : ''} • ${paperDim.label}`;
+                        })()}
                       </span>
                     </div>
                     {captionInfo.subtitleNote && (
@@ -12378,6 +12662,8 @@ export const InteractiveGridCanvasView: React.FC<
                         : opt.preset.id === 'sarang_lebah_pusat' ||
                           opt.preset.id === 'molekul_organik'
                         ? '🐝'
+                        : opt.preset.id === 'tetris_silsilah'
+                        ? '🧩'
                         : opt.preset.id === 'modular_g3_I'
                         ? '◫'
                         : opt.preset.id === 'modular_g3_L'
